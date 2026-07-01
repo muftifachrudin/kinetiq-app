@@ -1,0 +1,18 @@
+# Config for the api-gateway service (apps/platform-core/api-gateway).
+# Must live at repo root: Railway's config-as-code file does not follow a
+# service's Root Directory setting, it's always resolved from repo root.
+# Commands below still execute relative to that service's Root Directory
+# (set in Railway dashboard -> Settings -> Source), so paths here are as if
+# cwd is apps/platform-core/api-gateway.
+#
+# If a second Railway service is added later, it needs its own explicit
+# config-as-code path set in the Railway dashboard (Settings -> Config-as-code)
+# pointing at its own toml file, since this one only covers api-gateway.
+
+[build]
+buildCommand = "pip install -e ."
+
+[deploy]
+startCommand = "uvicorn kinetiq_api_gateway.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30

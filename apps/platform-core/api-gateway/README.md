@@ -4,7 +4,7 @@ FastAPI gateway: tenant auth middleware, product+tier plan-gating, request routi
 
 Saat ini baru skeleton minimal (`/health` doang) supaya Railway ada yang bisa di-build/deploy — tenant auth middleware & plan-gating (`deps.py`) menyusul ronde berikutnya.
 
-**Railway**: set service Settings -> Source -> Root Directory ke `apps/platform-core/api-gateway` supaya Railway build folder ini (bukan scan seluruh monorepo). Build/start command sudah dideklarasikan di `railway.toml`.
+**Railway**: set service Settings -> Source -> Root Directory ke `apps/platform-core/api-gateway` supaya Railway build folder ini (bukan scan seluruh monorepo). Build/start command dideklarasikan di `railway.toml` **di root repo** (bukan di folder ini) -- Railway config-as-code tidak ikut Root Directory, harus di root repo, tapi command di dalamnya tetap jalan relatif thd Root Directory yang di-set di dashboard.
 
 ## Local dev
 
