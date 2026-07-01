@@ -1,9 +1,15 @@
+from billing import sync_tenant_plan
 from deps import get_current_user, get_db, require_plan
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from kinetiq_db.models import PlatformUser, Tenant
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 app = FastAPI(title="Kinetiq API Gateway")
+
+
+class SubscribeRequest(BaseModel):
+    plan_tier: str
 
 
 @app.get("/health")
@@ -26,6 +32,21 @@ def me(
         "role": user.role,
         "plan_tier": plan_tier,
     }
+
+
+@app.post("/billing/subscribe")
+def subscribe(
+    body: SubscribeRequest,
+    user: PlatformUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Stopgap self-service tenant/plan provisioning -- see billing.py docstring.
+    Not the real Midtrans/XIDR webhook flow (Section B.16), which doesn't exist yet."""
+    try:
+        tenant = sync_tenant_plan(user, body.plan_tier, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"tenant_id": str(tenant.id), "plan_tier": tenant.plan_tier}
 
 
 @app.get("/trading/auto-execute/status")
