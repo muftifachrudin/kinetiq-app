@@ -3,28 +3,87 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    types: [opened, reopened, synchronize, closed]
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
-  lint-and-test:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages/db + ruff
+        run: pip install -e packages/db ruff
+      - name: Ruff check
+        run: ruff check packages/db/src packages/db/migrations
+
+  # Requires the Neon GitHub integration (Neon Console -> project -> Settings
+  # -> Integrations -> connect this repo), which auto-sets the NEON_API_KEY
+  # secret and NEON_PROJECT_ID variable used below. See docs/prd.md Section
+  # C.3 for the full design and B.11 for why CoinGlass/Neon tier choices
+  # matter here.
+  neon-preview-branch:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Placeholder: replace with real lint/type-check/test commands once
-      # apps/packages have actual code (see docs/prd.md Section C.3 for the
-      # full CI design, including Neon branch-per-PR + schema-diff + the
-      # required-manual-review exception for risk_gate/custody paths).
-      - name: Placeholder check
-        run: echo "CI scaffold — add lint/test/migration-dry-run steps as code lands"
+      - name: Create Neon branch for this PR
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
 
-  # TODO (Fase 0/1, see docs/prd.md Section C.3):
-  #   - neondatabase/create-branch-action: isolated Neon branch per PR
-  #   - neondatabase/schema-diff-action: post schema diff as PR comment
-  #   - run Alembic migration + integration tests against the PR branch
-  #   - neondatabase/delete-branch-action on PR close
-  #   - enable GitHub native auto-merge for required-checks-green PRs,
-  #     EXCEPT PRs touching apps/products/trading/execution/risk_gate.py,
-  #     apps/products/trading/execution/custody/*, or migrations changing
-  #     risk_mandate/tenant_credential — those require manual review.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install migration deps
+        run: pip install -e packages/db
+
+      - name: Run Alembic migration against the PR branch
+        working-directory: packages/db
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: alembic upgrade head
+
+      - name: Post schema diff as a PR comment
+        uses: neondatabase/schema-diff-action@v1
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          compare_branch: preview/pr-${{ github.event.number }}
+          base_branch: main
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+  neon-cleanup-branch:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the Neon branch for this PR
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+# Not yet in this workflow (add as the corresponding code lands):
+#   - unit/integration tests once apps/* have real code
+#   - type-check (mypy) once agent-orchestrator/execution exist
+#
+# Auto-merge policy (set up in GitHub repo Settings, not expressible in this
+# YAML): enable "Allow auto-merge" + branch protection requiring the jobs
+# above to pass on `main`. CODEOWNERS (.github/CODEOWNERS) already forces
+# manual review on risk_gate.py, execution/custody/, and DB migrations, so
+# auto-merge can never silently touch those paths.
+#
+# Railway deploy is intentionally NOT an Action here: connect the GitHub
+# repo directly in each Railway service's Settings -> Source for native
+# auto-deploy on push to main (no secret needed for that basic flow).

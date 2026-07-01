@@ -21,7 +21,6 @@ from sqlalchemy import (
     LargeBinary,
     Numeric,
     SmallInteger,
-    String,
     Text,
     UniqueConstraint,
     func,
