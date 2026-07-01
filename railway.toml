@@ -62,6 +62,25 @@
 # mise-managed Python puts console-script shims on a PATH that the deploy
 # stage's `bash -c` doesn't reliably inherit ("uvicorn: command not found"
 # in practice), but `python` itself is always resolvable.
-startCommand = "PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+#
+# The "(cd packages/db && python -m alembic upgrade head)" prefix runs
+# migrations against DATABASE_URL before the app starts, every deploy.
+# This turned out to be necessary the hard way: nothing in this repo's CI
+# had EVER run a migration against the real persistent Neon "production"
+# branch that Railway's DATABASE_URL points to -- neon-preview-branch only
+# ever runs against ephemeral per-PR branches that get deleted after. The
+# app "worked" through several deploys because every request tested so far
+# either had no auth token (401 before any DB query) or used a mocked
+# dependency locally -- the first genuinely authenticated request in
+# production crashed with `psycopg.errors.UndefinedTable: relation
+# "platform_user" does not exist`. alembic.ini's script_location and
+# prepend_sys_path are relative to packages/db, so alembic must be
+# invoked with that as cwd -- the parens make it a subshell so cwd reverts
+# to repo root afterward for the uvicorn command. alembic itself needs to
+# be in requirements.txt (it's a packages/db dependency, but that
+# pyproject.toml is never pip-installed here, only PYTHONPATH-referenced).
+# Idempotent by design (alembic tracks applied revisions), safe to run on
+# every restart, not just the first one.
+startCommand = "(cd packages/db && python -m alembic upgrade head) && PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
