@@ -128,19 +128,24 @@ function apiBase() {
 }
 
 async function callApi(method, path, body) {
-  const token = await window.Clerk.session.getToken();
-  const resp = await fetch(apiBase() + path, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  let text;
-  try { text = JSON.stringify(await resp.json(), null, 2); }
-  catch { text = await resp.text(); }
-  out(`HTTP ${resp.status}\n\n${text}`);
+  out(`Calling ${method} ${apiBase()}${path} ...`);
+  try {
+    const token = await window.Clerk.session.getToken();
+    const resp = await fetch(apiBase() + path, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let text;
+    try { text = JSON.stringify(await resp.json(), null, 2); }
+    catch { text = await resp.text(); }
+    out(`HTTP ${resp.status}\n\n${text}`);
+  } catch (e) {
+    out(`Request failed before getting a response: ${e}\n\nOpen the browser console (F12) for the full error -- this is almost always CORS (check Network tab for a blocked/failed request) or the API being unreachable.`);
+  }
 }
 
 document.getElementById('btn-load-clerk').onclick = loadClerk;
