@@ -38,13 +38,15 @@ Repo: `kinetiq-app` (di-rename dari `agent-trading-perp`), branch default `main`
 
 **Insiden produksi nyata & fix**: tabel `platform_user` (dan semua tabel lain) ternyata **belum pernah ada** di database Neon `production` asli — CI `neon-preview-branch` cuma pernah jalan ke ephemeral per-PR branch (dihapus stlh PR selesai), gak pernah membuktikan `production` beneran ke-migrate. Ketauan lewat request `/me` pertama dgn token Clerk asli yg berhasil sampai ke query DB (login sebelumnya semua dites tanpa token, jadi selalu berhenti di 401 sblm nyentuh DB) — crash `psycopg.errors.UndefinedTable`. Fix: `railway.toml`'s `startCommand` sekarang jalanin `alembic upgrade head` otomatis sblm `uvicorn` start, tiap deploy (idempotent). Detail lengkap di `docs/deployment-runbook.md` Neon gotcha #0 — **wajib dibaca**, ini kelas bug yg gampang keulang kalau nambah service baru dgn migration sendiri.
 
+**`apps/products/trading/ingestion` — connector pertama yg beneran ada**: Binance USDS-M perpetual futures via CCXT (`connectors/cex/binance_ccxt.py` + `ingest.py`), scope sengaja sempit — `funding_rate` + `ohlcv` doang, 1 venue doang. Auto-provision `venue`/`instrument` (idempotent), upsert time-series via `db.merge()`, tulis `data_source_health` per fetch. Standalone script, **belum di-wire ke Inngest** (belum ada infra Inngest sama sekali di repo ini). Diverifikasi via mocked exchange object + Postgres lokal asli (upsert/idempotency/health-tracking) — **panggilan jaringan asli ke Binance belum pernah dites** (sandbox sesi ini diblokir ke `fapi.binance.com`, sama kelas masalah kayak Neon/Railway sebelumnya), wajib dicoba jalan sungguhan sblm dianggap kelar. Detail di `apps/products/trading/ingestion/README.md`.
+
 **Gap yg masih ada:**
 - pgvector setup (C.1) — belum di-implement.
 - RLS pakai `FORCE ROW LEVEL SECURITY` + session variable krn belum ada role app terpisah (least-privilege, non-owner) — dedicated app role yg beneran non-owner adalah hardening lanjutan yg belum dikerjakan.
 - `api-gateway`: auth middleware & plan-gating sudah ada, tapi endpoint bisnis nyata belum ditulis (`/trading/auto-execute/status` masih placeholder).
 - **Custom domain `kinetiq.app` di-skip dulu untuk fokus MVP** (keputusan user) — `api-gateway` production dipakai lewat domain default Railway (`kinetiq-id.up.railway.app`), bukan custom domain. Riset DNS/CNAME+TXT setup di atas tetap valid & dipakai nanti begitu domain custom mau diaktifkan lagi, bukan dibuang.
 - **XIDR/StraitsX**: belum di-apply/didaftarkan oleh user — actionable items di atas. Sampai ini beres, `POST /billing/subscribe` cuma stopgap self-service (tanpa validasi pembayaran), bukan integrasi asli.
-- `apps/products/trading/*` masih skeleton README-only sepenuhnya — belum ada kode aplikasi nyata (LangGraph, dsb).
+- `apps/products/trading/*` masih skeleton README-only utk `strategy-engine`, `agent-orchestrator`, `execution`, `telegram-bot`, `dashboard`, `inngest-functions` — belum ada kode aplikasi nyata. Cuma `ingestion` (connector Binance CCXT di atas) yg udah py kode sungguhan sejauh ini; belum ada koneksi ke `fapi.binance.com` yg beneran dites krn network policy sandbox sesi ini.
 
 ---
 
