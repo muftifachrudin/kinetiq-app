@@ -15,7 +15,7 @@ Repo saat ini kosong total (belum ada commit) — ini rencana greenfield, branch
 
 ### Status Akses/Kredensial (Fase 0)
 
-Diterima langsung dari user di chat (Project ID + token/API key untuk): **Railway** (project token), **Neon** (project + API key), **OpenRouter** (API key khusus proyek Kinetiq), **CoinGlass Hobby** (API key). Belum ada: **Paddle** (billing), **Clerk** (auth), **KMS master key**.
+Diterima langsung dari user di chat (Project ID + token/API key untuk): **Railway** (project token), **Neon** (project + API key), **OpenRouter** (API key khusus proyek Kinetiq), **CoinGlass Hobby** (API key). Belum ada: **Midtrans** (billing — lihat revisi B.16, gantikan Paddle), **Clerk** (auth), **KMS master key**.
 
 **Catatan keamanan penting**: kredensial di atas dikirim sebagai teks biasa di chat, bukan lewat channel rahasia (mis. env var platform/secret manager) — artinya nilainya kemungkinan tersimpan di riwayat percakapan/log sesi. Rekomendasi ke user: setelah setup awal selesai, **rotate/regenerate token Railway & API key Neon/OpenRouter/CoinGlass ini** dari dashboard masing-masing, lalu simpan nilai baru hanya sbg Railway env var (bukan dikirim ulang lewat chat). Saya sendiri tidak akan menulis nilai kredensial ini ke file apa pun di repo atau di plan file — hanya dipakai sbg env var sementara saat eksekusi CLI/API di sesi ini.
 
@@ -35,6 +35,8 @@ User sudah connect repo `kinetiq-app` ke Railway (production service) dan mulai 
 3. User ubah "Branch connected to production" di Railway dari `claude/trading-bot-architecture-tp2vzj` ke `main`.
 4. User verifikasi manual di GitHub repo Settings → Secrets and variables → Actions bahwa `NEON_API_KEY` (secret) & `NEON_PROJECT_ID` (variable) sudah ada dari proses connect Neon.
 5. Selanjutnya kerja jalan via PR: branch fitur baru → PR ke `main` → trigger `ci.yml` (lint + Neon preview branch + migrate + schema-diff) → merge ke `main` → Railway auto-deploy dari `main`.
+
+**Update status**: dicek via GitHub Actions API — 3 run terakhir di `main` semua **hijau/success** (termasuk run atas commit merge `407b769` yang bawa update B.14/B.15). Job `neon-preview-branch` baru akan ke-trigger saat ada PR (bukan push langsung ke main), jadi belum tervalidasi end-to-end sampai PR pertama dibuat — itu wajar sesuai desain, bukan tanda error.
 
 ---
 
@@ -64,15 +66,15 @@ Ini bagian yang diminta eksplisit ("rekomendasi terbaik untuk menutupi kekuranga
 - **Dua tier**:
   - **Signal tier** (lebih murah, liability rendah): alert via Telegram + dashboard — rebalance proposal, entry-timing signal (Fib+Gann confluence), risk warning (liquidation/funding spike) — user eksekusi manual.
   - **Auto-execute tier** (premium): platform submit order langsung via API key/wallet user, full risk-gate + kill-switch enforcement.
-- **Akun superadmin (founder/personal use)**: role `superadmin` (bukan sekadar admin) yang bypass billing/plan-gating dan pakai resource/API-key/LLM budget milik founder sendiri — dipakai user utk pemakaian pribadi sejak hari pertama tanpa perlu berlangganan produk sendiri. Saat pelanggan baru subscribe & bayar via Paddle, akun `tenant` baru otomatis ter-provision dgn plan sesuai pembayaran — alur self-serve, tidak perlu setup manual (lihat B.13).
-- Harga & billing engine: Paddle subscriptions, plan gating di level API (`packages/config` + middleware `apps/platform-core/api-gateway/deps.py`), usage metering per tenant (jumlah agent aktif, jumlah exchange terhubung) untuk tier-based limit.
+- **Akun superadmin (founder/personal use)**: role `superadmin` (bukan sekadar admin) yang bypass billing/plan-gating dan pakai resource/API-key/LLM budget milik founder sendiri — dipakai user utk pemakaian pribadi sejak hari pertama tanpa perlu berlangganan produk sendiri. Saat pelanggan baru subscribe & bayar via Midtrans (lihat B.16), akun `tenant` baru otomatis ter-provision dgn plan sesuai pembayaran — alur self-serve, tidak perlu setup manual (lihat B.13).
+- Harga & billing engine: Midtrans recurring/subscription payment, plan gating di level API (`packages/config` + middleware `apps/platform-core/api-gateway/deps.py`), usage metering per tenant (jumlah agent aktif, jumlah exchange terhubung) untuk tier-based limit.
 - **Legal workstream (di luar scope teknis, wajib sebelum go-live)**: ToS/disclaimer "not financial advice", data privacy (API key encryption at rest sudah didesain), cek regulasi per-yurisdiksi target (banyak negara mengatur "trading bot" atau "signal service" berbeda dari investment advisory selama non-custodial & user execute sendiri keputusan — tapi ini butuh review hukum aktual, bukan asumsi saya).
 
 ### A.4 Cakupan Fitur per Fase (product view — detail teknis di Part B.9)
 
 | Fase | Fitur produk |
 |---|---|
-| MVP | **Sudah berbentuk bisnis penuh sejak awal**: web app minimal (signup/login, subscribe & bayar via Paddle, superadmin & admin panel) + Telegram signal-tier + Perp & Spot agent + paper trading + Fib+Gann timing overlay + Markowitz-extended portfolio suggestion + agent belajar penuh dari gaya trading founder (lihat B.6b) |
+| MVP | **Sudah berbentuk bisnis penuh sejak awal**: web app minimal (signup/login, subscribe & bayar via Midtrans, superadmin & admin panel) + Telegram signal-tier + Perp & Spot agent + paper trading + Fib+Gann timing overlay + Markowitz-extended portfolio suggestion + agent belajar penuh dari gaya trading founder (lihat B.6b) |
 | V1 | Auto-execute tier (perp+spot live), billing/subscription aktif, web dashboard basic |
 | V2 | Meme-sniper agent (module baru) sbg add-on tier terpisah (risiko lebih tinggi, harga berbeda) |
 | V3 | DLMM agent (module baru), mobile app |
@@ -104,7 +106,7 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | Compute | Railway (multi-service, multi-tenant aware) | fixed constraint user |
 | DB utama | Neon Postgres (serverless, branching) | fixed constraint user |
 | Multi-tenancy | Row-level: `tenant_id`/`account_id` di semua tabel domain (bukan DB-per-tenant — terlalu mahal di Neon utk skala awal), Postgres RLS policy per tenant sbg defense-in-depth | pola standar SaaS row-level multi-tenant, biaya lebih rendah drpd DB terpisah per user |
-| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: **Paddle** (Merchant of Record) Subscriptions + usage records utk metering, di-model per **product+tier** (`trading:signal_only`, `trading:auto_execute`, dst) bukan hardcode trading | **Revisi dari Stripe**: Stripe di Indonesia invite-only/approval sales-team & tidak dukung plugin standar — tidak cocok utk self-serve signup cepat. Paddle sbg Merchant of Record menangani tax/compliance global & bisa terima seller dari Indonesia tanpa proses approval khusus. Xendit (lokal, IDR, GoPay/OVO/DANA/QRIS) jadi opsi tambahan kalau nanti mau rail pembayaran lokal utk pelanggan Indonesia. LemonSqueezy sengaja tidak dipilih krn sedang transisi diakuisisi Stripe (dukungan melambat sejak awal 2026) |
+| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: **dual-provider Midtrans (fiat IDR) + IDRX (stablecoin, jalur cepat uji integrasi)** utk MVP, arsitektur `payment_provider` dinamis/pluggable — lihat B.16 | **Revisi ke-2** (setelah revisi Stripe→Paddle sebelumnya): krn target pasar sementara Indonesia & bisnis belum berbadan hukum (belum PT/CV), Xendit **tidak bisa dipakai dulu** (wajib legal entity). Midtrans jadi jalur utama pelanggan, IDRX jadi jalur cepat validasi teknis + fit alami dgn platform crypto — detail lengkap di B.16 |
 | Platform Core vs Product Vertical | Pisahkan `apps/platform-core/*` (tenant, auth, billing, agent-registry, LLM gateway, notification — agent-agnostic) dari `apps/products/trading/*` (spesifik trading) | visi bisnis user: trading = vertical pertama, agent exam/chatbot/content-creator/task menyusul sbg vertical baru yang reuse Platform Core (lihat A.6) |
 | Time-series | Native Postgres range-partitioning by time (manual, dikelola Inngest) + TimescaleDB (Apache-2, tanpa compression) opsional | Neon dukung timescaledb sejak PG18 (Feb 2026) tapi tanpa compression/tiering — partitioning manual jadi primary bet (terverifikasi) |
 | Orchestration | **Inngest self-hosted di Railway** | self-hosting resmi sejak Inngest 1.0 (terverifikasi), event-driven step function pas utk pola ingest→trigger; dievaluasi vs Trigger.dev/Temporal Cloud/custom-queue-di-Neon dan ditolak (lihat plan versi sebelumnya utk detail — Neon PgBouncer transaction-mode tidak support LISTEN/NOTIFY) |
@@ -127,7 +129,7 @@ agent-trading-perp/
 ├── apps/
 │   ├── platform-core/               # AGENT-AGNOSTIC — reusable utk vertical apapun (trading, exam, chatbot, dst)
 │   │   ├── api-gateway/             # FastAPI: tenant auth middleware, product+tier plan-gating, routing ke tiap product API
-│   │   ├── billing/                 # Paddle webhook handler, subscription state sync -> Neon (per product+tier)
+│   │   ├── billing/                 # dual-provider: providers/{midtrans.py, idrx.py, xendit.py, paddle.py} adapter tipis + sync_tenant_plan() inti, subscription state sync -> Neon (per product+tier, lihat B.16)
 │   │   ├── agent-registry/          # daftar product/vertical aktif per tenant, feature flag per tier
 │   │   ├── llm-gateway/             # satu titik abstraksi provider LLM (OpenAI/Anthropic/DeepSeek/dst) + cost tracking lintas semua vertical
 │   │   ├── notification/            # Telegram/email adapter generik, dipakai semua vertical
@@ -179,8 +181,9 @@ CREATE TABLE tenant (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     plan_tier TEXT NOT NULL DEFAULT 'signal_only',   -- 'signal_only','auto_execute','meme_addon','dlmm_addon'
-    stripe_customer_id TEXT,
-    stripe_subscription_status TEXT,
+    payment_provider TEXT,                            -- 'midtrans' (MVP), 'xendit'/'paddle' (fase lanjutan) -- provider-agnostic, lihat B.16
+    payment_customer_id TEXT,
+    payment_subscription_status TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -264,7 +267,7 @@ Paper/live separation, DB-based kill switch, bounded autonomy via `risk_mandate`
 
 ### B.9 Roadmap Fase (Revisi Final — web app & bentuk bisnis masuk dari MVP)
 
-0. **Bootstrap + Platform Core minimal** (2-3 minggu): monorepo, CI, Railway+Neon, migration awal (termasuk `tenant`/RLS/`role`/`llm_config` dari hari pertama), Inngest self-host, Langfuse Cloud, **web app minimal** (auth via Clerk, halaman signup, Paddle checkout, superadmin+admin panel dasar termasuk konfigurasi LLM per agent — lihat B.13), akun superadmin founder dibuat manual sbg langkah setup pertama. **Fork & adaptasi dari Vibe-Trading (MIT license, dikonfirmasi — lihat catatan riset)**: pola `mcp_server.py` (FastMCP decorator + lazy singleton registry) utk `apps/platform-core/mcp-server/`, dan layered broker-connector abstraction (Profiles→Service→Types + mandate/kill-switch endpoint) utk `apps/products/trading/execution/`.
+0. **Bootstrap + Platform Core minimal** (2-3 minggu): monorepo, CI, Railway+Neon, migration awal (termasuk `tenant`/RLS/`role`/`llm_config` dari hari pertama), Inngest self-host, Langfuse Cloud, **web app minimal** (auth via Clerk, halaman signup, checkout Midtrans+IDRX, superadmin+admin panel dasar termasuk konfigurasi LLM per agent — lihat B.13), akun superadmin founder dibuat manual sbg langkah setup pertama. **Fork & adaptasi dari Vibe-Trading (MIT license, dikonfirmasi — lihat catatan riset)**: pola `mcp_server.py` (FastMCP decorator + lazy singleton registry) utk `apps/platform-core/mcp-server/`, dan layered broker-connector abstraction (Profiles→Service→Types + mandate/kill-switch endpoint) utk `apps/products/trading/execution/`.
 1. **MVP Data Layer** (2-3 minggu, bisa paralel dgn fase 0 bagian akhir): 2 CEX (Binance, Bybit) + 1 DEX perp (Hyperliquid) connector, fallback chain, partitioning otomatis. CoinGlass Hobbyist dipakai sbg sumber tambahan (internal/founder-only, lihat B.11).
 2. **Strategy & Paper Trading + Trader Profile** (3-4 minggu): `markowitz_perp` + `markowitz_spot` + `risk_parity` + **`fib_gann_timing`** + **`market_regime`** + **`trader_profile`/anotasi founder (B.6b)**, backtest funding-aware, LangGraph rebalance graph (paper only), risk gate. **Fork pipeline Shadow Account Vibe-Trading** (`/agent/src/shadow_account/`: journal parse → extract behavior → generate rule → `run_shadow_backtest()` → persist/report) sbg skeleton `trader_profile`, adaptasi rule-extraction dari RSI+prior-return (equities-style) ke Fib-level+Gann-angle (crypto-perp style Anda).
 3. **Signal Tier Launch** (1-2 minggu, paralel fase 2): Telegram bot signal-only terhubung ke tenant yg sudah subscribe via web app fase 0 — **first revenue milestone** (founder sendiri jadi user pertama via akun superadmin, tanpa perlu bayar). **Sebelum fase ini live ke pelanggan bayar: upgrade CoinGlass Hobbyist → Standard ($299/bln)** — wajib krn Hobbyist personal-use-only (lihat B.11/B.12).
@@ -278,7 +281,7 @@ Paper/live separation, DB-based kill switch, bounded autonomy via `risk_mandate`
 Semua poin verification sebelumnya (unit test connector, fallback chain, strategy backtest, risk gate, kill switch drill, Inngest retry test, Langfuse trace, **paper/live boundary test — kritis**, load/latency, disaster recovery) **tetap berlaku**, ditambah:
 
 12. **Tenant isolation test**: 2 tenant dummy, assert query salah satu tenant tidak pernah mengembalikan row tenant lain (test RLS langsung, bukan cuma via ORM).
-13. **Billing/plan-gating test**: assert user di plan `signal_only` tidak bisa hit endpoint auto-execute (403), assert webhook Paddle downgrade plan langsung mematikan akses fitur terkait dalam SLA singkat.
+13. **Billing/plan-gating test**: assert user di plan `signal_only` tidak bisa hit endpoint auto-execute (403), assert notification/webhook Midtrans downgrade plan langsung mematikan akses fitur terkait dalam SLA singkat.
 14. **Fib+Gann backtest validation**: bandingkan sinyal algoritmik vs anotasi manual user pada sample chart historis (sanity check bahwa formalisasi merepresentasikan metode aslinya), lalu walk-forward test independen ≥ 90 hari sebelum dipakai live.
 15. **Token safety gate test**: fixture token dgn kombinasi flag (liquidity unlocked, mint not renounced, honeypot simulasi gagal) → assert snipe di-block di setiap kasus, tidak ada bypass.
 
@@ -311,7 +314,7 @@ Sudah diverifikasi via riset terkini (bukan asumsi lama): **CCXT Pro sudah digab
 | Data derivatif | CCXT + native WS + Coinalyze + CoinGecko (gratis) **+ CoinGlass Hobbyist** (internal/founder-only, Fase 0-2) ≈ **$29/bln** | **Wajib naik ke CoinGlass Standard sebelum Fase 3** (Hobbyist personal-use-only per ToS, tidak boleh dipakai layani pelanggan bayar — lihat B.11) ≈ **$299/bln**, naik ke Professional kalau volume Fase 6 (meme-sniper) butuh rate limit lebih tinggi |
 | Auth (Clerk) | Free tier ≈ **$0** | Paid tier seiring MAU naik ≈ **$25-100/bln** |
 | KMS (envelope encryption master key) | ≈ **$1-5/bln** | ≈ **$5-15/bln** |
-| Paddle (Merchant of Record, gantikan Stripe krn Indonesia invite-only — lihat Section A.3) | Tanpa biaya bulanan, ~5%+$0.50 per transaksi | sama (scales with revenue) |
+| Midtrans (via Midtrans GO/WhatsApp Onboarding, gantikan Paddle krn target market Indonesia — lihat Section B.16) | Tanpa biaya bulanan/setup, cuma biaya per transaksi sukses (persis kisaran, perlu cek tabel harga resmi Midtrans saat integrasi) | sama, mungkin migrasi ke skema Xendit/Midtrans tier lebih tinggi begitu PT/CV resmi (scales with revenue) |
 | Domain/SSL | ≈ **$1/bln** (tahunan) | sama |
 | LLM API (via OpenRouter — model murah/cepat utk task rutin, model lebih mahal khusus keputusan strategi) | **$20-50/bln** (volume rendah, testing/founder-only) | **$200-1000+/bln** — **variable cost terbesar**, tergantung jumlah tenant aktif & frekuensi agent invocation |
 | **Total estimasi** | **≈ $115-230/bln** | **≈ $870-2420+/bln** (naik ~$270/bln dari revisi CoinGlass Standard sblm Fase 3; tetap didominasi LLM usage saat tenant bertambah) |
@@ -405,9 +408,30 @@ ALTER TABLE tenant ADD COLUMN token_package_id INT REFERENCES token_package(id);
 - **Diskon**: field `discount_pct` di `token_package` mendukung diskon per-paket (mis. bundle tahunan, promo) — admin yg atur, bukan logic hardcoded di kode.
 - **Founder/superadmin bebas tanpa batasan token**: `platform-core/llm-gateway` budget-enforcement middleware (C.1) **skip cek `tenant_token_ledger` kalau `platform_user.role == 'superadmin'`** — konsisten dgn keputusan awal bahwa superadmin bypass billing/plan-gating (A.3/B.13), sekarang eksplisit juga cakup token cap.
 - **Dokumentasi transparansi utk pengguna** (wajib, item baru): halaman publik `docs/token-usage.md` (ditampilkan juga di dashboard tenant) yg jelaskan dlm bahasa awam: apa itu "token" di konteks Kinetiq, estimasi token per jenis interaksi (mis. 1x cek sinyal vs 1x analisis rebalance penuh — angka pasti perlu dikalibrasi dari data pemakaian nyata Fase 2-3, jangan janjikan angka spesifik sebelum ada data), sisa kuota real-time (query `tenant_token_ledger`), riwayat pemakaian, kapan reset bulanan, cara beli top-up. Prinsipnya: pengguna harus bisa lihat persis kenapa kuota mereka berkurang — sama spt Anthropic Console kasih usage breakdown.
-- **Alur beli/top-up**: paket dasar bulanan via Paddle subscription (auto-reset `tenant_token_ledger` tiap siklus billing), top-up token pack via Paddle one-time charge (nambah `delta_tokens` positif langsung, tidak nunggu reset bulanan).
+- **Alur beli/top-up**: paket dasar bulanan via Midtrans recurring payment (auto-reset `tenant_token_ledger` tiap siklus billing), top-up token pack via Midtrans one-time charge (nambah `delta_tokens` positif langsung, tidak nunggu reset bulanan).
 
 **Roadmap placement**: desain skema di atas masuk **Fase 0** (sekalian dgn `llm_config`/`platform_user`, krn sama-sama fondasi billing dinamis), tapi angka konkret tiap paket (harga, alokasi token) **baru difinalisasi Fase 2-3** setelah ada data pemakaian LLM nyata dari paper trading (B.9) — supaya harga tidak asal tebak.
+
+### B.16 Revisi Payment Gateway: Dual-Provider Midtrans + IDRX utk MVP Indonesia-First (Dinamis)
+
+User klarifikasi beberapa hal penting yang mengubah keputusan billing sebelumnya (B.1/A.3, sebelumnya Paddle):
+1. **Xendit tidak bisa dipakai sekarang** — dikonfirmasi user & terverifikasi riset: Xendit **mewajibkan legal entity** (minimal sole proprietorship/CV/PT terdaftar), **tidak menerima akun bisnis perorangan murni**. Krn bisnis Kinetiq belum berbadan hukum, Xendit baru bisa dipakai setelah PT/CV resmi berdiri.
+2. **Target pasar sementara adalah Indonesia**, bukan global — mengubah prioritas dari rekomendasi Paddle sebelumnya (Merchant of Record, bagus utk global/USD tapi tidak native ke metode pembayaran lokal Indonesia).
+3. **User mau 2 jalur pembayaran sekaligus**, salah satunya **IDRX** (stablecoin Rupiah Indonesia) sbg jalur cepat utk **uji coba teknis** apakah integrasi payment gateway berhasil — sambil onboarding Midtrans (yg butuh verifikasi KTP beberapa hari kerja) berjalan paralel. Prinsip **arsitektur tetap dinamis/multi-provider**, supaya begitu Xendit approve (setelah badan hukum resmi), tinggal plug-in provider baru tanpa rombak.
+
+**Provider #1 — Midtrans (fiat IDR, jalur utama utk pelanggan)**: via **Midtrans GO / WhatsApp Onboarding** (verifikasi KTP, tanpa perlu badan hukum). Recurring/subscription payment native, tanpa biaya bulanan/setup (cuma biaya per transaksi sukses), metode lokal (GoPay, VA bank transfer, QRIS) — detail lengkap sama seperti draft sebelumnya.
+
+**Provider #2 — IDRX (stablecoin, jalur cepat utk uji integrasi + fit alami dgn platform crypto)**: IDRX adalah stablecoin Rupiah 1:1 (fully-backed fiat reserve + obligasi pemerintah, terverifikasi via situs resmi & docs.idrx.co), tersedia multi-chain (Polygon, Base, Lisk, dst), dgn **Transaction/Payment API** — alurnya mirip payment gateway biasa: redirect user ke payment URL → user bayar (transfer IDRX dari wallet) → redirect balik ke return URL → **callback/webhook saat settlement**. Kenapa cocok:
+- **Tidak butuh approval business-entity spt Xendit** (sifatnya crypto payment, bukan PSP fiat tradisional) — bisa langsung diintegrasi & ditest tanpa nunggu proses KYC bisnis yg lama.
+- **Selaras dgn positioning Kinetiq** yg sudah crypto-native/non-custodial — pelanggan (trader crypto) sudah biasa pakai wallet, jadi bayar pakai stablecoin bukan friksi tambahan.
+- **Bagus utk validasi teknis cepat**: karena alur redirect+callback-nya mirip PSP biasa, ini jadi cara termudah memvalidasi bahwa arsitektur webhook→`tenant.plan_tier` sync (B.1/B.15) benar-benar jalan end-to-end, sebelum Midtrans selesai onboarding.
+- **Catatan due-diligence** (belum diverifikasi mendalam, perlu dicek saat implementasi Fase 0): kemungkinan tetap ada syarat KYC/verifikasi dari sisi IDRX utk merchant — jangan asumsikan 100% tanpa verifikasi apa pun, cek dokumentasi resmi `docs.idrx.co` saat mulai integrasi.
+
+**Keputusan desain — arsitektur dinamis/multi-provider** (extend dari B.3):
+- Kolom `tenant.payment_provider` (sudah digeneralisasi dari `stripe_*`/`paddle_*`) mendukung nilai `'midtrans' | 'idrx' | 'xendit' | 'paddle'` — bukan enum tetap di kode, tapi row-based config spt `token_package`/`llm_config`, supaya nambah provider baru = nambah adapter baru, bukan rombak skema.
+- Tiap provider py adapter tipis sendiri di `apps/platform-core/billing/providers/{midtrans.py, idrx.py, xendit.py, paddle.py}` yg implement kontrak sama (`verify_webhook()`, `parse_payment_event()`, `create_checkout_link()`) — funnel ke logic inti yg sama (`sync_tenant_plan()`, update `tenant_token_ledger`) — pola identik dgn `DerivativesDataSource` connector abstraction (B.11) & `ExchangeExecutionAdapter` (B.7), konsisten dgn prinsip arsitektur yg sudah dipakai di seluruh rencana ini.
+- **Xendit** tetap dicatat sbg provider masa depan (Fase lanjutan, setelah PT Perorangan/CV resmi via OSS) — begitu approve, tinggal tambah `providers/xendit.py`, tidak perlu ubah `tenant`/`billing` core.
+- **Paddle** didemote jadi opsi ekspansi global (bukan MVP) — tetap relevan kalau nanti target pelanggan meluas ke luar Indonesia (crypto trader cenderung global), dicatat bukan dibuang.
 
 ---
 
@@ -470,7 +494,7 @@ Mengaitkan tema besar rencana ini (matematika/Markowitz, analogi fisika pasar da
 - `apps/products/trading/agent-orchestrator/skills/strategy/fib_gann_timing.py` — formalisasi metode trading user, paling sensitif secara bisnis (core IP)
 - `apps/products/trading/agent-orchestrator/graphs/portfolio_rebalance_graph.py` — mengikat strategy engine + risk gate + execution (perp & spot)
 - `apps/products/trading/execution/risk_gate.py` — mandatory checkpoint guardrail
-- `apps/platform-core/billing/` — Paddle webhook → tenant.plan_tier sync per product, dasar monetisasi
+- `apps/platform-core/billing/providers/{midtrans.py, idrx.py}` (+ `xendit.py`/`paddle.py` fase lanjutan) — adapter dual-provider → `sync_tenant_plan()` inti, dasar monetisasi dinamis (Section B.16)
 - `apps/platform-core/llm-gateway/resolve_config.py` — resolve `llm_config` hierarchy (tenant→product→global) & panggil OpenRouter, dasar fleksibilitas model per agent (Section B.13)
 - `apps/products/trading/agent-orchestrator/skills/strategy/trader_profile.py` — kalibrasi `fib_gann_timing` terhadap anotasi trading founder (Section B.6b)
 - `apps/platform-core/agent-sdk/base_agent_graph.py` — kontrak dasar LangGraph yang dipakai ulang semua vertical (Section C.1)
