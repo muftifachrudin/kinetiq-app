@@ -4,7 +4,22 @@ First real connector (Section B.11: CCXT as the primary CEX data source).
 Scope is deliberately narrow -- funding rate + OHLCV for a fixed symbol
 list -- native-WS fallback, other venues, and other data types (open
 interest, liquidations, orderbook) are not built yet (see ingestion README).
+
+funding_rate and ohlcv are both PUBLIC Binance endpoints -- no API key is
+required to fetch them. BINANCE_API_KEY/BINANCE_API_SECRET are optional
+and only useful for a separate, higher per-key rate limit; they must be a
+**read-only** key (Binance API Management -> create key -> leave "Enable
+Trading"/"Enable Futures"/"Enable Withdrawals" all unchecked, only
+"Enable Reading" on) -- this script never places orders, so a
+trade-capable key here would be pure unnecessary blast radius.
+BINANCE_PROXY_URL is separate from the API key and solves a different
+problem (Binance blocking/rate-limiting requests from certain cloud/
+datacenter IPs, e.g. Railway's) -- an authenticated request from a
+blocked IP is still blocked; only routing through an allowed IP (e.g. a
+residential/datacenter proxy like Webshare.io) fixes that.
 """
+
+import os
 
 import ccxt
 
@@ -12,7 +27,21 @@ FUNDING_INTERVAL_HOURS = 8  # Binance USDS-M standard; ccxt doesn't expose this 
 
 
 def make_exchange() -> ccxt.Exchange:
-    return ccxt.binanceusdm()
+    config = {}
+    api_key = os.environ.get("BINANCE_API_KEY")
+    api_secret = os.environ.get("BINANCE_API_SECRET")
+    if api_key and api_secret:
+        config["apiKey"] = api_key
+        config["secret"] = api_secret
+
+    exchange = ccxt.binanceusdm(config)
+
+    proxy_url = os.environ.get("BINANCE_PROXY_URL")
+    if proxy_url:
+        exchange.httpProxy = proxy_url
+        exchange.httpsProxy = proxy_url
+
+    return exchange
 
 
 def fetch_funding_rate(exchange: ccxt.Exchange, venue_symbol: str) -> dict:

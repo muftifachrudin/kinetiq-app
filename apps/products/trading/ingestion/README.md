@@ -17,8 +17,14 @@ cd apps/products/trading/ingestion
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export DATABASE_URL="postgresql://<user>:<pass>@<host>/<db>"   # +psycopg dipaksa otomatis, lihat kinetiq_db.engine
+# Opsional -- lihat .env.example utk penjelasan lengkap:
+# export BINANCE_API_KEY="..."       # HARUS read-only key, funding_rate/ohlcv itu public endpoint
+# export BINANCE_API_SECRET="..."
+# export BINANCE_PROXY_URL="http://user:pass@proxy-host:port"   # mis. Webshare.io, kalau IP ke-block Binance
 PYTHONPATH=../../../../packages/db/src python ingest.py --symbols "BTC/USDT:USDT" "ETH/USDT:USDT" --timeframe 1h --limit 100
 ```
+
+`BINANCE_API_KEY`/`BINANCE_PROXY_URL` menyelesaikan dua masalah yg beda: API key (harus read-only, jangan pernah kasih izin trading/withdrawal — script ini gak pernah submit order) cuma soal rate limit; proxy soal IP yg mungkin di-block/dibatasi Binance (mis. IP cloud/datacenter kayak Railway) — request yg udah authenticated dari IP yg di-block tetap ke-block, jadi API key doang gak nyelesain masalah blocking.
 
 Cek hasilnya:
 ```sql
