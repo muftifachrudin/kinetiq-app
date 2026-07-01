@@ -44,8 +44,10 @@ class Tenant(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(Text, unique=True, nullable=False)
     plan_tier = Column(Text, nullable=False, server_default="signal_only")
-    paddle_customer_id = Column(Text)
-    paddle_subscription_status = Column(Text)
+    payment_provider = Column(Text)  # 'midtrans' (MVP), 'idrx', 'xendit'/'paddle' (fase lanjutan)
+    payment_customer_id = Column(Text)
+    payment_subscription_status = Column(Text)
+    token_package_id = Column(Integer, ForeignKey("token_package.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -91,6 +93,44 @@ class LlmConfig(Base):
 
     __table_args__ = (
         CheckConstraint("scope in ('global','product','tenant')", name="ck_llm_config_scope"),
+    )
+
+
+class TokenPackage(Base):
+    """Admin-configurable token package/top-up (Section B.15) — dynamic, not hardcoded."""
+
+    __tablename__ = "token_package"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    package_key = Column(Text, unique=True, nullable=False)
+    name = Column(Text, nullable=False)
+    monthly_token_allowance = Column(BigInteger, nullable=False)
+    price_usd = Column(Numeric(10, 2), nullable=False)
+    discount_pct = Column(Numeric(5, 2), server_default="0")
+    is_addon_topup = Column(Boolean, server_default="false")
+    is_active = Column(Boolean, server_default="true")
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("platform_user.id"))
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TenantTokenLedger(Base):
+    """Append-only token usage/topup ledger (Section B.15) — same pattern as OrderAuditLog."""
+
+    __tablename__ = "tenant_token_ledger"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    ts = Column(DateTime(timezone=True), server_default=func.now())
+    delta_tokens = Column(BigInteger, nullable=False)
+    reason = Column(Text, nullable=False)
+    agent_skill_key = Column(Text)
+    balance_after = Column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "reason in ('monthly_reset','consumption','topup_purchase','admin_adjustment')",
+            name="ck_tenant_token_ledger_reason",
+        ),
     )
 
 

@@ -32,8 +32,9 @@ def upgrade() -> None:
             email TEXT UNIQUE NOT NULL,
             plan_tier TEXT NOT NULL DEFAULT 'signal_only'
                 CHECK (plan_tier IN ('signal_only','auto_execute','meme_addon','dlmm_addon')),
-            paddle_customer_id TEXT,
-            paddle_subscription_status TEXT,
+            payment_provider TEXT,
+            payment_customer_id TEXT,
+            payment_subscription_status TEXT,
             created_at TIMESTAMPTZ DEFAULT now()
         )
         """
@@ -64,6 +65,39 @@ def upgrade() -> None:
             params JSONB,
             updated_by UUID REFERENCES platform_user(id),
             updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """
+    )
+
+    op.execute(
+        """
+        CREATE TABLE token_package (
+            id SERIAL PRIMARY KEY,
+            package_key TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            monthly_token_allowance BIGINT NOT NULL,
+            price_usd NUMERIC(10,2) NOT NULL,
+            discount_pct NUMERIC(5,2) DEFAULT 0,
+            is_addon_topup BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT TRUE,
+            updated_by UUID REFERENCES platform_user(id),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """
+    )
+
+    op.execute("ALTER TABLE tenant ADD COLUMN token_package_id INT REFERENCES token_package(id)")
+
+    op.execute(
+        """
+        CREATE TABLE tenant_token_ledger (
+            id BIGSERIAL PRIMARY KEY,
+            tenant_id UUID REFERENCES tenant(id) NOT NULL,
+            ts TIMESTAMPTZ DEFAULT now(),
+            delta_tokens BIGINT NOT NULL,
+            reason TEXT NOT NULL CHECK (reason IN ('monthly_reset','consumption','topup_purchase','admin_adjustment')),
+            agent_skill_key TEXT,
+            balance_after BIGINT NOT NULL
         )
         """
     )
@@ -386,6 +420,8 @@ def downgrade() -> None:
         "data_source_health",
         "instrument",
         "venue",
+        "tenant_token_ledger",
+        "token_package",
         "llm_config",
         "platform_user",
         "tenant",

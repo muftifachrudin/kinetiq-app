@@ -11,32 +11,21 @@ Proyek ini awalnya dirancang sebagai bot trading perpetual futures pribadi, pene
 3. **Pivot scope**: bukan lagi bot pribadi single-asset, tapi **platform SaaS multi-agent** yang mencakup spot, perp/futures, meme-sniper, dan DLMM (liquidity provision) — dengan alasan bisnis: banyak trader mau bayar untuk bot semacam ini, apalagi era tokenisasi saham/equity akan memperluas pasar.
 4. Keputusan bisnis yang sudah dikonfirmasi user: **(a)** monetisasi = subscription, **non-custodial** (user pegang API key/wallet sendiri, kita tidak pernah pegang dana — menghindari beban regulasi custodian/fund manager); **(b)** MVP = **Perp + Spot dulu**, Meme-sniper & DLMM menyusul sebagai modul agent terpisah; **(c)** dua tier layanan: **signal-only** (alert, tanpa eksekusi) dan **auto-execute** (eksekusi penuh via API key/wallet user).
 
-Repo saat ini kosong total (belum ada commit) — ini rencana greenfield, branch `claude/trading-bot-architecture-tp2vzj`.
+Repo: `kinetiq-app` (di-rename dari `agent-trading-perp`), branch default `main`, sudah tidak greenfield-kosong lagi — lihat **Status Implementasi** di bawah utk apa yg sudah nyata vs baru rencana.
 
-### Status Akses/Kredensial (Fase 0)
+### Status Implementasi (live, di-update tiap ada progres nyata — bukan cuma rencana)
 
-Diterima langsung dari user di chat (Project ID + token/API key untuk): **Railway** (project token), **Neon** (project + API key), **OpenRouter** (API key khusus proyek Kinetiq), **CoinGlass Hobby** (API key). Belum ada: **Midtrans** (billing — lihat revisi B.16, gantikan Paddle), **Clerk** (auth), **KMS master key**.
+**Sudah jalan & terverifikasi:**
+- Repo `kinetiq-app`, branch `main` (default), CI (`​.github/workflows/ci.yml`) hijau — job `lint` jalan tiap push; job `neon-preview-branch`/`neon-cleanup-branch` baru akan tereksekusi begitu ada PR pertama (belum tervalidasi end-to-end, bukan tanda error — memang trigger-nya `pull_request`).
+- `.github/CODEOWNERS` aktif — wajib review manual utk `execution/risk_gate.py`, `execution/custody/`, `packages/db/migrations/`.
+- **Skema DB Fase 0 sudah ditulis & diverifikasi** (`packages/db/src/kinetiq_db/models.py` + `migrations/versions/0001_initial_schema.py`): 32 objek (25 tabel reguler + 7 tabel partisi), termasuk `tenant` (dgn `payment_provider`/`payment_customer_id`/`payment_subscription_status` generalized — bukan `stripe_*`/`paddle_*` lagi), `platform_user`, `llm_config`, `token_package`, `tenant_token_ledger`, seluruh tabel time-series derivatif, dan `trade_annotation`. Sudah di-test upgrade→downgrade→upgrade thd PostgreSQL 16 lokal (belum thd Neon asli — lihat gap di bawah).
+- Kredensial diterima (Fase 0): **Railway** (project token), **Neon** (project + API key), **OpenRouter** (API key khusus proyek Kinetiq), **CoinGlass Hobby** (API key) — **rekomendasi rotate/regenerate** dari dashboard masing-masing krn sempat dikirim via chat (bukan channel rahasia).
 
-**Catatan keamanan penting**: kredensial di atas dikirim sebagai teks biasa di chat, bukan lewat channel rahasia (mis. env var platform/secret manager) — artinya nilainya kemungkinan tersimpan di riwayat percakapan/log sesi. Rekomendasi ke user: setelah setup awal selesai, **rotate/regenerate token Railway & API key Neon/OpenRouter/CoinGlass ini** dari dashboard masing-masing, lalu simpan nilai baru hanya sbg Railway env var (bukan dikirim ulang lewat chat). Saya sendiri tidak akan menulis nilai kredensial ini ke file apa pun di repo atau di plan file — hanya dipakai sbg env var sementara saat eksekusi CLI/API di sesi ini.
-
-Begitu keluar dari plan mode, langkah eksekusi berikutnya: pakai Railway token + project ID utk mulai bikin service pertama (mis. `packages/db` migration runner / api-gateway skeleton), pakai Neon API key utk jalankan migrasi awal (tabel `tenant`, `venue`, `instrument`, dst dari Section B.3) ke branch Neon yg sesuai.
-
-### Status Setup CI/CD (per screenshot user, Juli 2026) — Gap Ditemukan
-
-User sudah connect repo `kinetiq-app` ke Railway (production service) dan mulai proses GitHub integration di Neon Console. Dari screenshot + pengecekan `git branch -a`/`git ls-remote` (read-only), ditemukan **gap struktural**:
-
-1. **Repo belum punya branch `main` sama sekali** — satu-satunya branch yang ada (dan jadi default branch GitHub) adalah `claude/trading-bot-architecture-tp2vzj` (branch kerja Claude Code). Ini kenapa Railway cuma nawarin branch itu sbg opsi "Branch connected to production" — bukan bug, memang belum ada `main` utk dipilih.
-2. **Konsekuensi**: `.github/workflows/ci.yml` yang sudah dibuat men-trigger di `branches: [main]` — karena `main` belum ada, **workflow ini belum pernah jalan sama sekali**. "Apakah semua sudah di-setup GitHub Action?" — jawabannya: **kode workflow-nya sudah ada & benar, tapi belum pernah tereksekusi krn tidak ada branch `main` yang jadi target trigger-nya.**
-3. Neon GitHub integration (screenshot ke-2) menampilkan instruksi template `neon_workflow.yml` generik milik Neon (create/delete branch saja) — **tidak perlu ditambahkan terpisah** krn `.github/workflows/ci.yml` yang sudah ada sudah mencakup pola yang sama (create-branch + migrate + schema-diff + delete) plus lint. Yang perlu dipastikan cuma: apakah proses connect Neon ini sudah men-generate secret `NEON_API_KEY` & variable `NEON_PROJECT_ID` di repo GitHub (Settings → Secrets and variables → Actions) — ini tidak bisa saya cek langsung (GitHub API tidak expose isi/keberadaan secret ke tool saya), user perlu cek manual.
-
-**Rencana perbaikan (dieksekusi setelah approve, di luar plan mode):**
-1. Buat branch `main` dari kondisi `claude/trading-bot-architecture-tp2vzj` saat ini (base awal proyek), push ke origin.
-2. Set `main` sbg default branch repo di GitHub (Settings → Branches → Default branch).
-3. User ubah "Branch connected to production" di Railway dari `claude/trading-bot-architecture-tp2vzj` ke `main`.
-4. User verifikasi manual di GitHub repo Settings → Secrets and variables → Actions bahwa `NEON_API_KEY` (secret) & `NEON_PROJECT_ID` (variable) sudah ada dari proses connect Neon.
-5. Selanjutnya kerja jalan via PR: branch fitur baru → PR ke `main` → trigger `ci.yml` (lint + Neon preview branch + migrate + schema-diff) → merge ke `main` → Railway auto-deploy dari `main`.
-
-**Update status**: dicek via GitHub Actions API — 3 run terakhir di `main` semua **hijau/success** (termasuk run atas commit merge `407b769` yang bawa update B.14/B.15). Job `neon-preview-branch` baru akan ke-trigger saat ada PR (bukan push langsung ke main), jadi belum tervalidasi end-to-end sampai PR pertama dibuat — itu wajar sesuai desain, bukan tanda error.
+**Gap yg diketahui, belum dikerjakan** (bukan salah desain, cuma belum ada waktu/akses):
+- **Koneksi Neon asli**: sesi ini network policy-nya blokir `console.neon.tech`/`backboard.railway.app`, jadi migrasi di atas belum pernah dijalankan ke Neon beneran — masih perlu `alembic upgrade head` manual thd `DATABASE_URL` Neon (lihat `packages/db/README.md`).
+- **RLS policy (B.4)**, **append-only grant `order_audit_log`**, **pgvector setup (C.1)** — didesain tapi belum di-implement di migration (butuh akses Neon dulu utk role/permission management yg lebih granular).
+- **Clerk, Midtrans, IDRX**: belum ada akun/API key sama sekali — lihat pertanyaan "apa yg dibutuhkan" di bawah.
+- **`apps/platform-core/*` & `apps/products/trading/*` masih skeleton README-only** — belum ada kode aplikasi nyata (FastAPI, LangGraph, dsb), cuma struktur direktori (B.2) yg sudah dibuat.
 
 ---
 
