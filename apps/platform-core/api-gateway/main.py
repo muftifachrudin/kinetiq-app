@@ -1,11 +1,24 @@
 from billing import sync_tenant_plan
 from deps import get_current_user, get_db, require_plan
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from kinetiq_db.models import PlatformUser, Tenant
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 app = FastAPI(title="Kinetiq API Gateway")
+
+# Wide open for now: no dashboard-shell frontend exists yet with a known
+# domain to allowlist, and auth here is bearer-token based (not cookies), so
+# allow_credentials stays False -- there's no CSRF exposure from allowing any
+# origin. Tighten to the real frontend domain(s) once dashboard-shell ships.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class SubscribeRequest(BaseModel):
