@@ -4,9 +4,11 @@ SQLAlchemy models (`src/kinetiq_db/models.py`) + Alembic migrations (`migrations
 schema (tenant/RLS, time-series derivatif, trading domain). See `docs/prd.md` Section B.3/B.6b/B.13.
 
 Verified end-to-end (upgrade -> downgrade -> upgrade) against local PostgreSQL 16 on 2026-07-01:
-30 objects created (23 regular tables + 7 range-partitioned tables, each with a `_default` catch-all
+32 objects created (25 regular tables + 7 range-partitioned tables, each with a `_default` catch-all
 partition so the parent is usable before `infra/neon/partitioning/` rolls forward proper time-range
-partitions).
+partitions). Includes `token_package`/`tenant_token_ledger` (Section B.15, token-based usage billing)
+and the generalized `tenant.payment_provider`/`payment_customer_id`/`payment_subscription_status`
+columns (Section B.16 — provider-agnostic, not locked to any single payment gateway).
 
 Not yet done (needs a DB connection to Neon, which this session's network policy currently blocks
 — see chat history): Postgres Row-Level Security policies (Section B.4), the append-only grant on
