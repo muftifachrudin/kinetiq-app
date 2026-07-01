@@ -35,8 +35,12 @@ production connection): cross-tenant reads return zero rows, cross-tenant writes
 `docs/deployment-runbook.md` for the full verification method and a real gotcha this surfaced
 (`SET x = :param` doesn't accept bind parameters in Postgres; use `set_config()` instead).
 
-Still not done: the append-only grant on `order_audit_log` (revoke UPDATE/DELETE from the app role)
-and pgvector setup (Section C.1).
+**`order_audit_log` is now genuinely append-only** as of `0003_order_audit_log_append_only.py`: not
+via `REVOKE` (a no-op against the table's owner, same reasoning as why RLS needed `FORCE` above), but
+a `BEFORE UPDATE OR DELETE` trigger that unconditionally raises -- verified locally to reject both
+operations even when connected as the `postgres` superuser/owner, with no bypass for any role.
+
+Still not done: pgvector setup (Section C.1).
 
 ## Local dev
 

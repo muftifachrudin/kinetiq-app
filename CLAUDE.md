@@ -56,6 +56,12 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
   `NULLIF(current_setting(...), '')` before casting. Full RLS gotchas
   (including why `FORCE ROW LEVEL SECURITY` is required and why
   `platform_user` has no RLS policy) are in `docs/deployment-runbook.md`.
+- Don't use `REVOKE UPDATE, DELETE ...` to make a table append-only if the
+  app's role owns that table -- object owners always retain full privileges
+  regardless of GRANT/REVOKE (no `FORCE`-like override exists for this,
+  unlike RLS). Use a `BEFORE UPDATE OR DELETE` trigger that raises instead --
+  it enforces even against the owner. See `order_audit_log`'s trigger in
+  migration 0003 and `docs/deployment-runbook.md`.
 
 ## Before pushing any infra/config change
 
