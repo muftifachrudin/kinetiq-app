@@ -41,15 +41,15 @@ Ini bagian yang diminta eksplisit ("rekomendasi terbaik untuk menutupi kekuranga
 - **Dua tier**:
   - **Signal tier** (lebih murah, liability rendah): alert via Telegram + dashboard — rebalance proposal, entry-timing signal (Fib+Gann confluence), risk warning (liquidation/funding spike) — user eksekusi manual.
   - **Auto-execute tier** (premium): platform submit order langsung via API key/wallet user, full risk-gate + kill-switch enforcement.
-- **Akun superadmin (founder/personal use)**: role `superadmin` (bukan sekadar admin) yang bypass billing/plan-gating dan pakai resource/API-key/LLM budget milik founder sendiri — dipakai user utk pemakaian pribadi sejak hari pertama tanpa perlu berlangganan produk sendiri. Saat pelanggan baru subscribe & bayar via Stripe, akun `tenant` baru otomatis ter-provision dgn plan sesuai pembayaran — alur self-serve, tidak perlu setup manual (lihat B.13).
-- Harga & billing engine: Stripe subscriptions, plan gating di level API (`packages/config` + middleware `apps/platform-core/api-gateway/deps.py`), usage metering per tenant (jumlah agent aktif, jumlah exchange terhubung) untuk tier-based limit.
+- **Akun superadmin (founder/personal use)**: role `superadmin` (bukan sekadar admin) yang bypass billing/plan-gating dan pakai resource/API-key/LLM budget milik founder sendiri — dipakai user utk pemakaian pribadi sejak hari pertama tanpa perlu berlangganan produk sendiri. Saat pelanggan baru subscribe & bayar via Paddle, akun `tenant` baru otomatis ter-provision dgn plan sesuai pembayaran — alur self-serve, tidak perlu setup manual (lihat B.13).
+- Harga & billing engine: Paddle subscriptions, plan gating di level API (`packages/config` + middleware `apps/platform-core/api-gateway/deps.py`), usage metering per tenant (jumlah agent aktif, jumlah exchange terhubung) untuk tier-based limit.
 - **Legal workstream (di luar scope teknis, wajib sebelum go-live)**: ToS/disclaimer "not financial advice", data privacy (API key encryption at rest sudah didesain), cek regulasi per-yurisdiksi target (banyak negara mengatur "trading bot" atau "signal service" berbeda dari investment advisory selama non-custodial & user execute sendiri keputusan — tapi ini butuh review hukum aktual, bukan asumsi saya).
 
 ### A.4 Cakupan Fitur per Fase (product view — detail teknis di Part B.9)
 
 | Fase | Fitur produk |
 |---|---|
-| MVP | **Sudah berbentuk bisnis penuh sejak awal**: web app minimal (signup/login, subscribe & bayar via Stripe, superadmin & admin panel) + Telegram signal-tier + Perp & Spot agent + paper trading + Fib+Gann timing overlay + Markowitz-extended portfolio suggestion + agent belajar penuh dari gaya trading founder (lihat B.6b) |
+| MVP | **Sudah berbentuk bisnis penuh sejak awal**: web app minimal (signup/login, subscribe & bayar via Paddle, superadmin & admin panel) + Telegram signal-tier + Perp & Spot agent + paper trading + Fib+Gann timing overlay + Markowitz-extended portfolio suggestion + agent belajar penuh dari gaya trading founder (lihat B.6b) |
 | V1 | Auto-execute tier (perp+spot live), billing/subscription aktif, web dashboard basic |
 | V2 | Meme-sniper agent (module baru) sbg add-on tier terpisah (risiko lebih tinggi, harga berbeda) |
 | V3 | DLMM agent (module baru), mobile app |
@@ -81,7 +81,7 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | Compute | Railway (multi-service, multi-tenant aware) | fixed constraint user |
 | DB utama | Neon Postgres (serverless, branching) | fixed constraint user |
 | Multi-tenancy | Row-level: `tenant_id`/`account_id` di semua tabel domain (bukan DB-per-tenant — terlalu mahal di Neon utk skala awal), Postgres RLS policy per tenant sbg defense-in-depth | pola standar SaaS row-level multi-tenant, biaya lebih rendah drpd DB terpisah per user |
-| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: Stripe Subscriptions + Stripe usage records utk metering, di-model per **product+tier** (`trading:signal_only`, `trading:auto_execute`, dst) bukan hardcode trading | standar industri SaaS; product+tier model supaya siap ditambah vertical baru (exam/chatbot/content) tanpa rombak billing |
+| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: **Paddle** (Merchant of Record) Subscriptions + usage records utk metering, di-model per **product+tier** (`trading:signal_only`, `trading:auto_execute`, dst) bukan hardcode trading | **Revisi dari Stripe**: Stripe di Indonesia invite-only/approval sales-team & tidak dukung plugin standar — tidak cocok utk self-serve signup cepat. Paddle sbg Merchant of Record menangani tax/compliance global & bisa terima seller dari Indonesia tanpa proses approval khusus. Xendit (lokal, IDR, GoPay/OVO/DANA/QRIS) jadi opsi tambahan kalau nanti mau rail pembayaran lokal utk pelanggan Indonesia. LemonSqueezy sengaja tidak dipilih krn sedang transisi diakuisisi Stripe (dukungan melambat sejak awal 2026) |
 | Platform Core vs Product Vertical | Pisahkan `apps/platform-core/*` (tenant, auth, billing, agent-registry, LLM gateway, notification — agent-agnostic) dari `apps/products/trading/*` (spesifik trading) | visi bisnis user: trading = vertical pertama, agent exam/chatbot/content-creator/task menyusul sbg vertical baru yang reuse Platform Core (lihat A.6) |
 | Time-series | Native Postgres range-partitioning by time (manual, dikelola Inngest) + TimescaleDB (Apache-2, tanpa compression) opsional | Neon dukung timescaledb sejak PG18 (Feb 2026) tapi tanpa compression/tiering — partitioning manual jadi primary bet (terverifikasi) |
 | Orchestration | **Inngest self-hosted di Railway** | self-hosting resmi sejak Inngest 1.0 (terverifikasi), event-driven step function pas utk pola ingest→trigger; dievaluasi vs Trigger.dev/Temporal Cloud/custom-queue-di-Neon dan ditolak (lihat plan versi sebelumnya utk detail — Neon PgBouncer transaction-mode tidak support LISTEN/NOTIFY) |
@@ -103,7 +103,7 @@ agent-trading-perp/
 ├── apps/
 │   ├── platform-core/               # AGENT-AGNOSTIC — reusable utk vertical apapun (trading, exam, chatbot, dst)
 │   │   ├── api-gateway/             # FastAPI: tenant auth middleware, product+tier plan-gating, routing ke tiap product API
-│   │   ├── billing/                 # Stripe webhook handler, subscription state sync -> Neon (per product+tier)
+│   │   ├── billing/                 # Paddle webhook handler, subscription state sync -> Neon (per product+tier)
 │   │   ├── agent-registry/          # daftar product/vertical aktif per tenant, feature flag per tier
 │   │   ├── llm-gateway/             # satu titik abstraksi provider LLM (OpenAI/Anthropic/DeepSeek/dst) + cost tracking lintas semua vertical
 │   │   ├── notification/            # Telegram/email adapter generik, dipakai semua vertical
@@ -240,7 +240,7 @@ Paper/live separation, DB-based kill switch, bounded autonomy via `risk_mandate`
 
 ### B.9 Roadmap Fase (Revisi Final — web app & bentuk bisnis masuk dari MVP)
 
-0. **Bootstrap + Platform Core minimal** (2-3 minggu): monorepo, CI, Railway+Neon, migration awal (termasuk `tenant`/RLS/`role`/`llm_config` dari hari pertama), Inngest self-host, Langfuse Cloud, **web app minimal** (auth via Clerk, halaman signup, Stripe checkout, superadmin+admin panel dasar termasuk konfigurasi LLM per agent — lihat B.13), akun superadmin founder dibuat manual sbg langkah setup pertama.
+0. **Bootstrap + Platform Core minimal** (2-3 minggu): monorepo, CI, Railway+Neon, migration awal (termasuk `tenant`/RLS/`role`/`llm_config` dari hari pertama), Inngest self-host, Langfuse Cloud, **web app minimal** (auth via Clerk, halaman signup, Paddle checkout, superadmin+admin panel dasar termasuk konfigurasi LLM per agent — lihat B.13), akun superadmin founder dibuat manual sbg langkah setup pertama.
 1. **MVP Data Layer** (2-3 minggu, bisa paralel dgn fase 0 bagian akhir): 2 CEX (Binance, Bybit) + 1 DEX perp (Hyperliquid) connector, fallback chain, partitioning otomatis.
 2. **Strategy & Paper Trading + Trader Profile** (3-4 minggu): `markowitz_perp` + `markowitz_spot` + `risk_parity` + **`fib_gann_timing`** + **`market_regime`** + **`trader_profile`/anotasi founder (B.6b)**, backtest funding-aware, LangGraph rebalance graph (paper only), risk gate.
 3. **Signal Tier Launch** (1-2 minggu, paralel fase 2): Telegram bot signal-only terhubung ke tenant yg sudah subscribe via web app fase 0 — **first revenue milestone** (founder sendiri jadi user pertama via akun superadmin, tanpa perlu bayar).
@@ -254,7 +254,7 @@ Paper/live separation, DB-based kill switch, bounded autonomy via `risk_mandate`
 Semua poin verification sebelumnya (unit test connector, fallback chain, strategy backtest, risk gate, kill switch drill, Inngest retry test, Langfuse trace, **paper/live boundary test — kritis**, load/latency, disaster recovery) **tetap berlaku**, ditambah:
 
 12. **Tenant isolation test**: 2 tenant dummy, assert query salah satu tenant tidak pernah mengembalikan row tenant lain (test RLS langsung, bukan cuma via ORM).
-13. **Billing/plan-gating test**: assert user di plan `signal_only` tidak bisa hit endpoint auto-execute (403), assert webhook Stripe downgrade plan langsung mematikan akses fitur terkait dalam SLA singkat.
+13. **Billing/plan-gating test**: assert user di plan `signal_only` tidak bisa hit endpoint auto-execute (403), assert webhook Paddle downgrade plan langsung mematikan akses fitur terkait dalam SLA singkat.
 14. **Fib+Gann backtest validation**: bandingkan sinyal algoritmik vs anotasi manual user pada sample chart historis (sanity check bahwa formalisasi merepresentasikan metode aslinya), lalu walk-forward test independen ≥ 90 hari sebelum dipakai live.
 15. **Token safety gate test**: fixture token dgn kombinasi flag (liquidity unlocked, mint not renounced, honeypot simulasi gagal) → assert snipe di-block di setiap kasus, tidak ada bypass.
 
@@ -285,7 +285,7 @@ Sudah diverifikasi via riset terkini (bukan asumsi lama): **CCXT Pro sudah digab
 | Data derivatif | CCXT + native WS + Coinalyze + CoinGecko (gratis) **+ CoinGlass Hobbyist** (direvisi masuk MVP krn budget sudah disiapkan) ≈ **$29/bln** | CoinGlass Startup begitu masuk Fase 6 (meme-sniper) ≈ **$79/bln** |
 | Auth (Clerk) | Free tier ≈ **$0** | Paid tier seiring MAU naik ≈ **$25-100/bln** |
 | KMS (envelope encryption master key) | ≈ **$1-5/bln** | ≈ **$5-15/bln** |
-| Stripe | Tanpa biaya bulanan, 2.9%+$0.30 per transaksi | sama (scales with revenue) |
+| Paddle (Merchant of Record) | Tanpa biaya bulanan, ~5%+$0.50 per transaksi (lebih tinggi drpd Stripe krn Paddle menanggung tax/compliance global) | sama (scales with revenue) |
 | Domain/SSL | ≈ **$1/bln** (tahunan) | sama |
 | LLM API (via OpenRouter — model murah/cepat utk task rutin, model lebih mahal khusus keputusan strategi) | **$20-50/bln** (volume rendah, testing/founder-only) | **$200-1000+/bln** — **variable cost terbesar**, tergantung jumlah tenant aktif & frekuensi agent invocation |
 | **Total estimasi** | **≈ $115-230/bln** | **≈ $600-2150+/bln** (didominasi LLM usage saat tenant bertambah) |
@@ -379,7 +379,7 @@ Mengaitkan tema besar rencana ini (matematika/Markowitz, analogi fisika pasar da
 - `apps/products/trading/agent-orchestrator/skills/strategy/fib_gann_timing.py` — formalisasi metode trading user, paling sensitif secara bisnis (core IP)
 - `apps/products/trading/agent-orchestrator/graphs/portfolio_rebalance_graph.py` — mengikat strategy engine + risk gate + execution (perp & spot)
 - `apps/products/trading/execution/risk_gate.py` — mandatory checkpoint guardrail
-- `apps/platform-core/billing/` — Stripe webhook → tenant.plan_tier sync per product, dasar monetisasi
+- `apps/platform-core/billing/` — Paddle webhook → tenant.plan_tier sync per product, dasar monetisasi
 - `apps/platform-core/llm-gateway/resolve_config.py` — resolve `llm_config` hierarchy (tenant→product→global) & panggil OpenRouter, dasar fleksibilitas model per agent (Section B.13)
 - `apps/products/trading/agent-orchestrator/skills/strategy/trader_profile.py` — kalibrasi `fib_gann_timing` terhadap anotasi trading founder (Section B.6b)
 - `apps/platform-core/agent-sdk/base_agent_graph.py` — kontrak dasar LangGraph yang dipakai ulang semua vertical (Section C.1)
