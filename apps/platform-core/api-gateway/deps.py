@@ -10,7 +10,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 from jwt import PyJWKClient
 from kinetiq_db.engine import normalize_db_url
-from kinetiq_db.models import PlatformUser
+from kinetiq_db.models import PlatformUser, Tenant
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -59,3 +59,32 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Platfor
         db.execute(text("SET app.tenant_id = :tenant_id"), {"tenant_id": str(user.tenant_id)})
 
     return user
+
+
+def require_plan(*allowed_tiers: str):
+    """Dependency factory: gate an endpoint by the caller's `tenant.plan_tier`.
+
+    `role='superadmin'` always bypasses (Section A.3/B.13: founder isn't
+    subject to billing/plan-gating). Any other user must have a tenant whose
+    `plan_tier` is one of `allowed_tiers`, or the request is rejected with 403.
+    """
+
+    def _check(
+        user: PlatformUser = Depends(get_current_user), db: Session = Depends(get_db)
+    ) -> Tenant | None:
+        if user.role == "superadmin":
+            return None
+
+        if user.tenant_id is None:
+            raise HTTPException(status_code=403, detail="No tenant associated with this account")
+
+        tenant = db.get(Tenant, user.tenant_id)
+        if tenant is None or tenant.plan_tier not in allowed_tiers:
+            current = tenant.plan_tier if tenant else None
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requires plan tier {allowed_tiers}, current plan is {current!r}",
+            )
+        return tenant
+
+    return _check
