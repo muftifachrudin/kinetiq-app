@@ -38,7 +38,12 @@ def make_exchange() -> ccxt.Exchange:
 
     proxy_url = os.environ.get("BINANCE_PROXY_URL")
     if proxy_url:
-        exchange.httpProxy = proxy_url
+        # Only set httpsProxy, not both -- ccxt's check_proxy_settings() raises
+        # InvalidProxySettings("...multiple conflicting proxy settings...") if
+        # httpProxy and httpsProxy are both set, even to the identical value.
+        # Binance's API is always https://, so httpsProxy is the one that
+        # actually matters (it's keyed off the target URL's scheme, not the
+        # proxy server's own transport).
         exchange.httpsProxy = proxy_url
 
     return exchange
