@@ -494,6 +494,7 @@ Mengaitkan tema besar rencana ini (matematika/Markowitz, analogi fisika pasar da
 ---
 
 ### Critical Files untuk Implementasi
+- `CLAUDE.md` (baru) + `docs/deployment-runbook.md` (baru) — memory & gotcha operasional Railway/Neon/CI dari kejadian nyata (saga 4-bug Railway + 2-bug Neon), wajib dibaca sebelum ubah `railway.toml`/`ci.yml` lagi di sesi mana pun
 - `packages/db/models.py` + migrations — skema lengkap termasuk `tenant`, RLS policy (Section B.3/B.4)
 - `apps/platform-core/api-gateway/{main.py, requirements.txt}` (baru; sengaja flat, bukan `src/`+`pyproject.toml` — lihat komentar di `railway.toml`) — skeleton minimal (health-check dulu) supaya Railway build sukses; `deps.py` (tenant context middleware + product+tier plan-gating) menyusul ronde berikutnya (Section A.6/B.2)
 - `railway.toml` (baru, di **root repo**, bukan di dalam folder service) — Railway config-as-code tidak ikut Root Directory, wajib di root repo per dokumentasi resmi; command di dalamnya tetap relatif thd Root Directory yg di-set di dashboard
