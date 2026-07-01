@@ -32,6 +32,16 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
 - This session's sandbox may not be able to reach `console.neon.tech`
   directly, but GitHub Actions runners always can -- a PR is the real
   integration test for DB/migration changes, not "can I curl it from here."
+- **CI passing does NOT mean the real `production` Neon branch is
+  migrated.** `neon-preview-branch` only ever runs against a fresh,
+  ephemeral, per-PR branch that gets deleted when the PR closes -- it says
+  nothing about whether `alembic upgrade head` has ever run against
+  whatever branch Railway's `DATABASE_URL` actually points to. This bit
+  production for real: `platform_user` (and every other table) never
+  existed there at all until `railway.toml`'s `startCommand` was changed
+  to run `(cd packages/db && python -m alembic upgrade head)` before
+  `uvicorn` starts, every deploy. Every prior deploy "worked" only because
+  no request had yet reached a real DB query with a real auth token.
 - When a Railway deploy fails, get **both** Build Logs (dependency install
   success/failure) and Deploy Logs (actual container stdout, crash traces,
   healthcheck attempts) -- they show different failure classes and a

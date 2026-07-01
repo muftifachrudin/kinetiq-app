@@ -40,6 +40,14 @@ via `REVOKE` (a no-op against the table's owner, same reasoning as why RLS neede
 a `BEFORE UPDATE OR DELETE` trigger that unconditionally raises -- verified locally to reject both
 operations even when connected as the `postgres` superuser/owner, with no bypass for any role.
 
+**Migrations now run automatically as part of the `api-gateway` deploy** (`railway.toml`'s
+`startCommand` runs `alembic upgrade head` before `uvicorn` starts, every deploy). This had to be added
+after a real production incident: CI's `neon-preview-branch` only ever exercises a fresh, ephemeral,
+per-PR Neon branch, so it had never actually proven that `production` (the real persistent branch
+`DATABASE_URL` points to) was migrated -- and it wasn't. `platform_user` didn't exist there at all until
+this was fixed; every prior deploy "worked" only because no request had reached a real DB query with a
+real auth token yet. See `docs/deployment-runbook.md` Neon gotcha #0 for the full incident writeup.
+
 Still not done: pgvector setup (Section C.1).
 
 ## Local dev

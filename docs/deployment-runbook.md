@@ -21,6 +21,35 @@ mechanics only.
 
 ## Neon gotchas
 
+0. **CI's `neon-preview-branch` has never once run a migration against the
+   real persistent `production` Neon branch -- and nothing else was
+   running migrations against it either.** This cost real production
+   downtime: the first genuinely authenticated request that reached a
+   database query in `api-gateway` (`GET /me` with a real Clerk session
+   JWT, well after `FORCE ROW LEVEL SECURITY` and the auto-provision
+   flow were already deployed) crashed with
+   `psycopg.errors.UndefinedTable: relation "platform_user" does not
+   exist`. Every prior deploy had "worked" only because every request
+   tested so far either had no auth token (401 raised before any DB
+   query) or exercised the code via a mocked `dependency_overrides` in a
+   local `TestClient`, never a real query against the real database.
+   `neon-preview-branch` only ever creates a **fresh, ephemeral, per-PR**
+   branch, runs migrations against *that*, and deletes it once the PR
+   closes -- it says nothing about whether `production` (or whatever
+   Neon branch Railway's `DATABASE_URL` actually points to) has ever had
+   `alembic upgrade head` run against it. Passing CI is not the same
+   claim as "the real database is migrated." **Fix**: `railway.toml`'s
+   `startCommand` now runs `(cd packages/db && python -m alembic upgrade
+   head)` before starting `uvicorn`, every deploy (idempotent --
+   alembic tracks applied revisions in `alembic_version`, a no-op once
+   already at head). `alembic` had to be added to the root
+   `requirements.txt` too, since `packages/db/pyproject.toml` (which
+   lists it as a dependency) is never pip-installed by this service, only
+   `PYTHONPATH`-referenced. Any future service with its own migrations
+   needs the same "run migrations as part of startCommand" treatment --
+   don't assume CI passing means the target database is actually
+   migrated.
+
 1. **`DATABASE_URL` driver mismatch.** Neon's `create-branch-action` (and
    Railway) hand out a bare `postgresql://...` connection string. SQLAlchemy
    defaults a bare `postgresql://` scheme to the `psycopg2` dialect, but this
