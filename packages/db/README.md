@@ -10,9 +10,17 @@ partitions). Includes `token_package`/`tenant_token_ledger` (Section B.15, token
 and the generalized `tenant.payment_provider`/`payment_customer_id`/`payment_subscription_status`
 columns (Section B.16 — provider-agnostic, not locked to any single payment gateway).
 
-Not yet done (needs a DB connection to Neon, which this session's network policy currently blocks
-— see chat history): Postgres Row-Level Security policies (Section B.4), the append-only grant on
-`order_audit_log` (revoke UPDATE/DELETE from the app role), and pgvector setup (Section C.1).
+CI's `neon-preview-branch` job (real Neon, not local Postgres) has actually created Neon branches
+successfully against the project's real `NEON_API_KEY`/`NEON_PROJECT_ID` — connectivity is proven.
+The migration step itself failed there with `ModuleNotFoundError: No module named 'psycopg2'`
+because `create-branch-action`'s output is a bare `postgresql://` URL, which makes SQLAlchemy default
+to the psycopg2 dialect instead of the `psycopg` (v3) driver this project actually depends on. Fixed
+in `migrations/env.py` by forcing the `+psycopg` drivername on whatever `DATABASE_URL` is passed in
+(verified locally against a bare `postgresql://` DSN, not just the `+psycopg` form).
+
+Not yet done (needs Postgres role/permission work best done directly against Neon): Row-Level
+Security policies (Section B.4), the append-only grant on `order_audit_log` (revoke UPDATE/DELETE
+from the app role), and pgvector setup (Section C.1).
 
 ## Local dev
 
@@ -20,7 +28,7 @@ Not yet done (needs a DB connection to Neon, which this session's network policy
 cd packages/db
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-export DATABASE_URL="postgresql+psycopg://<user>:<pass>@<host>/<db>"
+export DATABASE_URL="postgresql://<user>:<pass>@<host>/<db>"   # +psycopg is forced automatically, see migrations/env.py
 alembic upgrade head      # apply
 alembic downgrade base    # roll back everything
 alembic current           # check applied revision

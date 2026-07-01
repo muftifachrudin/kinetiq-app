@@ -3,6 +3,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from kinetiq_db.models import Base
 
@@ -11,10 +12,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# DATABASE_URL is a Neon connection string, never hardcoded/committed.
+# DATABASE_URL is a Neon connection string, never hardcoded/committed. Neon's
+# create-branch-action outputs a bare "postgresql://" URL, which makes
+# SQLAlchemy default to the psycopg2 driver — not installed here, since this
+# project depends on psycopg (v3). Force the +psycopg driver regardless of
+# what scheme the caller passes in.
 db_url = os.environ.get("DATABASE_URL")
 if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
+    forced_url = make_url(db_url).set(drivername="postgresql+psycopg")
+    config.set_main_option("sqlalchemy.url", forced_url.render_as_string(hide_password=False))
 
 target_metadata = Base.metadata
 
