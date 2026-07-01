@@ -1,15 +1,21 @@
 # Config for the api-gateway service (apps/platform-core/api-gateway).
 # Must live at repo root: Railway's config-as-code file does not follow a
 # service's Root Directory setting, it's always resolved from repo root.
-# Commands below still execute relative to that service's Root Directory
-# (set in Railway dashboard -> Settings -> Source), so paths here are as if
-# cwd is apps/platform-core/api-gateway.
+#
+# REQUIRED Railway dashboard setting for this config to work: Settings ->
+# Source -> Root Directory must be EMPTY (repo root), not
+# "apps/platform-core/api-gateway". Commands below assume cwd = repo root.
+# This is a deliberate change from the service's original setup -- see
+# failure #4 below for why.
 #
 # If a second Railway service is added later, it needs its own explicit
 # config-as-code path set in the Railway dashboard (Settings -> Config-as-code)
-# pointing at its own toml file, since this one only covers api-gateway.
+# pointing at its own toml file, since this one only covers api-gateway. Since
+# only one railway.toml can live at repo root, and this design now also wants
+# a repo-root requirements.txt (see failure #4), a second Python service will
+# need its own solution here -- don't just copy this pattern blindly.
 #
-# History of two failed approaches, for anyone tempted to "fix" this again:
+# History of failed approaches, for anyone tempted to "fix" this again:
 # 1. A custom [build] buildCommand = "pip install -e ." on a pyproject.toml
 #    (src-layout) project: pip install succeeded in the build log, but the
 #    installed package never made it into the runtime image
@@ -27,21 +33,35 @@
 #
 # 3. A "-e ../../../packages/db" line in requirements.txt, to reuse the
 #    shared kinetiq_db SQLAlchemy models: failed with "not a valid editable
-#    requirement". Railpack's native install step copies ONLY
-#    requirements.txt into an isolated layer before running pip install (a
-#    Docker layer-caching optimization), so sibling directories outside the
-#    service folder don't exist yet at that point -- the full repo (which
-#    does include packages/db) is only copied in a later step, after
-#    install already ran and failed. Fix: don't let pip install the sibling
-#    package at all -- point PYTHONPATH at its source directory instead, so
-#    it's just imported at runtime (by which point the full repo has been
-#    copied in) rather than installed at build time.
+#    requirement". (Original theory was that this was just a build-layer
+#    ordering quirk fixable by referencing the sibling package via PYTHONPATH
+#    instead of pip -- that theory was WRONG, see #4.)
+#
+# 4. PYTHONPATH=../../../packages/db/src (relative to the OLD Root Directory
+#    apps/platform-core/api-gateway): deployed fine, but crashed at runtime
+#    with "ModuleNotFoundError: No module named 'kinetiq_db'". Root cause,
+#    confirmed by reproducing locally with only the api-gateway folder
+#    present on disk (no monorepo siblings) and hitting the identical
+#    traceback: Railway's "Root Directory" setting scopes the ENTIRE build
+#    AND runtime context to just that subfolder -- sibling directories like
+#    packages/db are NEVER present in the container, at any build stage or
+#    at runtime. This is standard behavior for "root directory"/"working
+#    directory" features across PaaS platforms generally, not a Railway-
+#    specific quirk or a layer-caching timing issue. Neither pip-installing
+#    nor PYTHONPATH-referencing a sibling directory can ever work while
+#    Root Directory is scoped to a subfolder.
+# Real fix: Root Directory must be the repo root (see REQUIRED setting
+# above), requirements.txt moved to repo root so Railpack's zero-config
+# Python detection still fires natively (no custom buildCommand needed,
+# avoiding failure #1/#2 above), and startCommand's PYTHONPATH lists both
+# packages/db/src and the api-gateway folder itself (needed since main.py
+# is no longer cwd-adjacent by default once Root Directory = repo root).
 
 [deploy]
 # Use "python -m uvicorn" rather than the bare "uvicorn" binary: Railpack's
 # mise-managed Python puts console-script shims on a PATH that the deploy
 # stage's `bash -c` doesn't reliably inherit ("uvicorn: command not found"
 # in practice), but `python` itself is always resolvable.
-startCommand = "PYTHONPATH=../../../packages/db/src python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+startCommand = "PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30

@@ -111,26 +111,49 @@ mechanics only.
    investigating just because a plausible Railway community fix exists for a
    similarly-worded symptom -- confirm against Deploy Logs first.
 
-7. **A sibling monorepo package (`-e ../../../packages/db` in
-   `requirements.txt`) fails with `ERROR: ../../../packages/db is not a
-   valid editable requirement`.** Railpack's native install step copies
-   *only* `requirements.txt` into an isolated build layer before running
-   `pip install` (a standard Docker layer-caching trick: install deps
-   before copying the rest of the source, so code-only changes don't
-   invalidate the dependency-install cache layer). At that point, nothing
-   outside the service's own directory exists yet -- sibling directories
-   like `packages/db` aren't copied in until a later step, well after
-   `pip install -r requirements.txt` already ran (and failed). This means
-   **pip-installing a sibling monorepo package from `requirements.txt`
-   doesn't work on Railpack**, full stop -- not a path-syntax mistake, a
-   structural build-order issue. Fix: don't have pip install it at all.
-   Point `PYTHONPATH` at the sibling package's source directory in
-   `startCommand` instead (e.g.
-   `PYTHONPATH=../../../packages/db/src python -m uvicorn main:app ...`)
-   so it's imported at *runtime*, by which point the full repo (including
-   `packages/db`) has been copied into the container. Any future service
-   that needs to reuse `packages/db`'s models should use this pattern, not
-   an editable pip install.
+7. **A sibling monorepo package (e.g. `packages/db`, referenced from a
+   service whose Root Directory is a subfolder like
+   `apps/platform-core/api-gateway`) is never reachable, by any method --
+   not via `-e ../../../packages/db` in `requirements.txt` (fails with
+   `ERROR: ../../../packages/db is not a valid editable requirement`), and
+   not via `PYTHONPATH=../../../packages/db/src` in `startCommand` either
+   (deploys fine, then crashes at runtime with `ModuleNotFoundError: No
+   module named 'kinetiq_db'`).** Root cause, confirmed by reproducing the
+   exact traceback locally with *only* the service's own folder present on
+   disk (no monorepo siblings): Railway's "Root Directory" setting scopes
+   the **entire** build *and* runtime context to that one subfolder --
+   sibling directories are never copied in, at any build stage or at
+   runtime. (The original theory here -- that this was just a Docker
+   layer-caching timing issue, fixable by deferring the sibling reference
+   from build-time pip-install to runtime-time `PYTHONPATH` -- was wrong.
+   It's not a timing issue, the sibling directory categorically does not
+   exist in that container, ever.) This matches how "root directory"/
+   "working directory" scoping works on most PaaS platforms generally, not
+   a Railpack-specific quirk.
+   **Fix**: change the service's Root Directory in the Railway dashboard
+   (Settings -> Source) to the **repo root** (empty), not the service
+   subfolder. Move the service's `requirements.txt` to the **repo root**
+   too, so Railpack's zero-config Python detection still fires natively
+   (no custom `[build] buildCommand` needed -- see gotcha #3 above for why
+   that's worth avoiding). Then in `startCommand`, set `PYTHONPATH` to
+   include *both* the sibling package's source dir and the service's own
+   folder (relative to repo root now, e.g.
+   `PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m
+   uvicorn main:app ...`) -- the service folder needs to be on
+   `PYTHONPATH` explicitly now too, since `main.py` is no longer
+   automatically on `sys.path`/cwd once Root Directory is the repo root.
+   Verify this by reproducing the container's actual file layout locally
+   (copy *just* the service folder to an empty temp dir and run from
+   there) before trusting any "should work" theory about Railway's build
+   context -- that's what caught this bug's wrong first fix.
+   Any future service that needs to reuse `packages/db` (or any other
+   shared package) should use this Root-Directory-at-repo-root + combined
+   `PYTHONPATH` pattern, not an editable pip install and not a
+   subfolder-relative `PYTHONPATH`. Only one `railway.toml` and one root
+   `requirements.txt` can exist at repo root, so a second Python service
+   with this same need will require a different solution (e.g. a
+   dedicated Railpack config or its own repo-root marker file scheme) --
+   don't copy this pattern blindly for service #2.
 
 ## GitHub push-to-`main` workaround (situational, not evergreen)
 
