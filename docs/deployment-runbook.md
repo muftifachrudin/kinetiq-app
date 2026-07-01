@@ -111,6 +111,27 @@ mechanics only.
    investigating just because a plausible Railway community fix exists for a
    similarly-worded symptom -- confirm against Deploy Logs first.
 
+7. **A sibling monorepo package (`-e ../../../packages/db` in
+   `requirements.txt`) fails with `ERROR: ../../../packages/db is not a
+   valid editable requirement`.** Railpack's native install step copies
+   *only* `requirements.txt` into an isolated build layer before running
+   `pip install` (a standard Docker layer-caching trick: install deps
+   before copying the rest of the source, so code-only changes don't
+   invalidate the dependency-install cache layer). At that point, nothing
+   outside the service's own directory exists yet -- sibling directories
+   like `packages/db` aren't copied in until a later step, well after
+   `pip install -r requirements.txt` already ran (and failed). This means
+   **pip-installing a sibling monorepo package from `requirements.txt`
+   doesn't work on Railpack**, full stop -- not a path-syntax mistake, a
+   structural build-order issue. Fix: don't have pip install it at all.
+   Point `PYTHONPATH` at the sibling package's source directory in
+   `startCommand` instead (e.g.
+   `PYTHONPATH=../../../packages/db/src python -m uvicorn main:app ...`)
+   so it's imported at *runtime*, by which point the full repo (including
+   `packages/db`) has been copied into the container. Any future service
+   that needs to reuse `packages/db`'s models should use this pattern, not
+   an editable pip install.
+
 ## GitHub push-to-`main` workaround (situational, not evergreen)
 
 Earlier in this project, this session's git relay returned a persistent 503
