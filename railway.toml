@@ -24,12 +24,24 @@
 # with a plain requirements.txt, which Railpack's Python provider has
 # first-class native support for -- it generates its own install step that
 # correctly persists into the runtime image.
+#
+# 3. A "-e ../../../packages/db" line in requirements.txt, to reuse the
+#    shared kinetiq_db SQLAlchemy models: failed with "not a valid editable
+#    requirement". Railpack's native install step copies ONLY
+#    requirements.txt into an isolated layer before running pip install (a
+#    Docker layer-caching optimization), so sibling directories outside the
+#    service folder don't exist yet at that point -- the full repo (which
+#    does include packages/db) is only copied in a later step, after
+#    install already ran and failed. Fix: don't let pip install the sibling
+#    package at all -- point PYTHONPATH at its source directory instead, so
+#    it's just imported at runtime (by which point the full repo has been
+#    copied in) rather than installed at build time.
 
 [deploy]
 # Use "python -m uvicorn" rather than the bare "uvicorn" binary: Railpack's
 # mise-managed Python puts console-script shims on a PATH that the deploy
 # stage's `bash -c` doesn't reliably inherit ("uvicorn: command not found"
 # in practice), but `python` itself is always resolvable.
-startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+startCommand = "PYTHONPATH=../../../packages/db/src python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30

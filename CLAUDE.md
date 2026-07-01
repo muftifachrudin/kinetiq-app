@@ -37,6 +37,12 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
   healthcheck attempts) -- they show different failure classes and a
   healthcheck failure looks identical whether the app crashed instantly or
   it's a real networking issue.
+- Never pip-install a sibling monorepo package (e.g. `-e ../../../packages/db`)
+  from a service's `requirements.txt` -- Railpack's native install step copies
+  only `requirements.txt` into an isolated layer before the rest of the repo
+  exists, so it fails with "not a valid editable requirement". Instead point
+  `PYTHONPATH` at the sibling's source dir in `startCommand` (see
+  `railway.toml`) so it's imported at runtime, once the full repo is present.
 
 ## Before pushing any infra/config change
 
