@@ -1,0 +1,389 @@
+"""SQLAlchemy models — source of truth schema for Kinetiq.
+
+Mirrors docs/prd.md Section B.3 (data model), B.13 (role/LLM config),
+and B.6b (trader profile). Time-series tables (funding_rate,
+open_interest, price_basis, orderbook_snapshot, liquidation_event,
+market_sentiment, ohlcv) are range-partitioned by `ts` — see
+migrations/versions/0001_initial_schema.py for the partition DDL and
+infra/neon/partitioning/ for the ongoing partition-rollover job.
+"""
+
+import uuid
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+# --- Platform Core (agent-agnostic) ---------------------------------------
+
+
+class Tenant(Base):
+    """A paying customer account (or the founder's superadmin tenant)."""
+
+    __tablename__ = "tenant"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(Text, unique=True, nullable=False)
+    plan_tier = Column(Text, nullable=False, server_default="signal_only")
+    paddle_customer_id = Column(Text)
+    paddle_subscription_status = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "plan_tier in ('signal_only','auto_execute','meme_addon','dlmm_addon')",
+            name="ck_tenant_plan_tier",
+        ),
+    )
+
+
+class PlatformUser(Base):
+    """Login identity. role='tenant' links to a paying Tenant via tenant_id;
+    superadmin/admin are platform operators and may have tenant_id NULL."""
+
+    __tablename__ = "platform_user"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=True)
+    email = Column(Text, unique=True, nullable=False)
+    role = Column(Text, nullable=False, server_default="tenant")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role in ('superadmin','admin','tenant')", name="ck_platform_user_role"),
+    )
+
+
+class LlmConfig(Base):
+    """Dynamic per-agent LLM routing, resolved tenant -> product -> global."""
+
+    __tablename__ = "llm_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope = Column(Text, nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=True)
+    product_key = Column(Text, nullable=True)
+    agent_skill_key = Column(Text, nullable=False)
+    provider = Column(Text, nullable=False, server_default="openrouter")
+    model = Column(Text, nullable=False)
+    params = Column(JSONB)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("platform_user.id"))
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("scope in ('global','product','tenant')", name="ck_llm_config_scope"),
+    )
+
+
+# --- Trading vertical: dimensions ------------------------------------------
+
+
+class Venue(Base):
+    __tablename__ = "venue"
+
+    id = Column(SmallInteger, primary_key=True, autoincrement=True)
+    name = Column(Text, unique=True, nullable=False)
+    venue_type = Column(Text, nullable=False)
+    is_active = Column(Boolean, server_default="true")
+
+    __table_args__ = (CheckConstraint("venue_type in ('cex','dex')", name="ck_venue_type"),)
+
+
+class Instrument(Base):
+    __tablename__ = "instrument"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    venue_id = Column(SmallInteger, ForeignKey("venue.id"), nullable=False)
+    symbol = Column(Text, nullable=False)
+    venue_symbol = Column(Text, nullable=False)
+    base_asset = Column(Text, nullable=False)
+    quote_asset = Column(Text, nullable=False)
+    contract_type = Column(Text, nullable=False)
+
+    __table_args__ = (UniqueConstraint("venue_id", "venue_symbol", name="uq_instrument_venue_symbol"),)
+
+
+class DataSourceHealth(Base):
+    __tablename__ = "data_source_health"
+
+    venue_id = Column(SmallInteger, ForeignKey("venue.id"), primary_key=True)
+    data_type = Column(Text, primary_key=True)
+    last_success_at = Column(DateTime(timezone=True))
+    last_failure_at = Column(DateTime(timezone=True))
+    consecutive_failures = Column(Integer, server_default="0")
+
+
+# --- Trading vertical: time-series (range-partitioned by ts) --------------
+# NOTE: partition DDL (PARTITION BY RANGE) and the default catch-all
+# partition are created in the migration via raw SQL, matching docs/prd.md
+# Section B.3. These ORM classes describe the parent table shape only.
+
+
+class FundingRate(Base):
+    __tablename__ = "funding_rate"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    funding_rate = Column(Numeric(12, 10), nullable=False)
+    predicted_next_rate = Column(Numeric(12, 10))
+    funding_interval_hours = Column(SmallInteger, nullable=False)
+    mark_price = Column(Numeric(24, 10))
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+
+
+class OpenInterest(Base):
+    __tablename__ = "open_interest"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    oi_contracts = Column(Numeric(24, 8), nullable=False)
+    oi_usd = Column(Numeric(24, 4))
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+
+
+class PriceBasis(Base):
+    __tablename__ = "price_basis"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    mark_price = Column(Numeric(24, 10), nullable=False)
+    index_price = Column(Numeric(24, 10), nullable=False)
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+    # basis / basis_pct are GENERATED ALWAYS columns, added via raw SQL in
+    # the migration (SQLAlchemy Column doesn't model generated columns
+    # portably across dialects).
+
+
+class OrderbookSnapshot(Base):
+    __tablename__ = "orderbook_snapshot"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    bids = Column(JSONB, nullable=False)
+    asks = Column(JSONB, nullable=False)
+    bid_depth_usd_1pct = Column(Numeric(24, 4))
+    ask_depth_usd_1pct = Column(Numeric(24, 4))
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+
+
+class LiquidationEvent(Base):
+    __tablename__ = "liquidation_event"
+
+    id = Column(BigInteger, primary_key=True)
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    side = Column(Text, nullable=False)
+    qty = Column(Numeric(24, 8), nullable=False)
+    price = Column(Numeric(24, 10), nullable=False)
+    notional_usd = Column(Numeric(24, 4))
+
+    __table_args__ = (
+        CheckConstraint("side in ('long','short')", name="ck_liquidation_event_side"),
+        {"postgresql_partition_by": "RANGE (ts)"},
+    )
+
+
+class MarketSentiment(Base):
+    __tablename__ = "market_sentiment"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    long_short_ratio = Column(Numeric(10, 4))
+    top_trader_long_short_ratio = Column(Numeric(10, 4))
+    taker_buy_vol = Column(Numeric(24, 8))
+    taker_sell_vol = Column(Numeric(24, 8))
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+
+
+class Ohlcv(Base):
+    __tablename__ = "ohlcv"
+
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), primary_key=True)
+    timeframe = Column(Text, primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    open = Column(Numeric(24, 10))
+    high = Column(Numeric(24, 10))
+    low = Column(Numeric(24, 10))
+    close = Column(Numeric(24, 10))
+    volume = Column(Numeric(24, 8))
+
+    __table_args__ = {"postgresql_partition_by": "RANGE (ts)"}
+
+
+# --- Trading vertical: domain / trading state ------------------------------
+
+
+class Strategy(Base):
+    __tablename__ = "strategy"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    name = Column(Text, nullable=False)
+    type = Column(Text, nullable=False)
+    params = Column(JSONB, nullable=False)
+    is_paper = Column(Boolean, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioTarget(Base):
+    __tablename__ = "portfolio_target"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    strategy_id = Column(Integer, ForeignKey("strategy.id"), nullable=False)
+    computed_at = Column(DateTime(timezone=True), nullable=False)
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
+    target_weight = Column(Numeric(8, 6))
+    target_leverage = Column(Numeric(6, 3))
+    expected_return_components = Column(JSONB)
+
+
+class Position(Base):
+    __tablename__ = "position"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    account_id = Column(Integer, nullable=False)
+    venue_id = Column(SmallInteger, ForeignKey("venue.id"), nullable=False)
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
+    is_paper = Column(Boolean, server_default="true")
+    side = Column(Text)
+    qty = Column(Numeric(24, 8))
+    entry_price = Column(Numeric(24, 10))
+    leverage = Column(Numeric(6, 3))
+    liquidation_price = Column(Numeric(24, 10))
+    opened_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (CheckConstraint("side in ('long','short')", name="ck_position_side"),)
+
+
+class OrderAuditLog(Base):
+    """Append-only. INSERT-only DB grant enforced in the migration, not the ORM."""
+
+    __tablename__ = "order_audit_log"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    ts = Column(DateTime(timezone=True), server_default=func.now())
+    account_id = Column(Integer, nullable=False)
+    actor = Column(Text, nullable=False)
+    action = Column(Text, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    is_paper = Column(Boolean, nullable=False)
+    result = Column(Text)
+
+
+class RiskMandate(Base):
+    __tablename__ = "risk_mandate"
+
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), primary_key=True)
+    account_id = Column(Integer, primary_key=True)
+    max_leverage = Column(Numeric(6, 3), server_default="3")
+    max_position_notional_usd = Column(Numeric(24, 4))
+    max_daily_loss_usd = Column(Numeric(24, 4))
+    max_drawdown_pct = Column(Numeric(6, 4), server_default="0.15")
+    symbol_universe = Column(ARRAY(Text))
+    kill_switch_active = Column(Boolean, server_default="false")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TenantCredential(Base):
+    """Envelope-encrypted per-tenant API key / agent-wallet. Never store a
+    raw secret here — encrypted_payload + data_key_encrypted only."""
+
+    __tablename__ = "tenant_credential"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    venue_id = Column(SmallInteger, ForeignKey("venue.id"), nullable=False)
+    credential_type = Column(Text, nullable=False)
+    encrypted_payload = Column(LargeBinary, nullable=False)
+    data_key_encrypted = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "credential_type in ('api_key_trade_only','agent_wallet')",
+            name="ck_tenant_credential_type",
+        ),
+    )
+
+
+# --- Meme-sniper (V2) -------------------------------------------------------
+
+
+class TokenLaunchEvent(Base):
+    __tablename__ = "token_launch_event"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    chain = Column(Text, nullable=False)
+    token_address = Column(Text, nullable=False)
+    pair_address = Column(Text)
+    detected_at = Column(DateTime(timezone=True), nullable=False)
+    initial_liquidity_usd = Column(Numeric(24, 4))
+    safety_score = Column(Numeric(5, 2))
+    safety_flags = Column(JSONB)
+
+
+# --- DLMM (V3) ---------------------------------------------------------------
+
+
+class DlmmPosition(Base):
+    __tablename__ = "dlmm_position"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    pool_address = Column(Text, nullable=False)
+    lower_bin = Column(Integer)
+    upper_bin = Column(Integer)
+    liquidity_usd = Column(Numeric(24, 4))
+    fees_earned_usd = Column(Numeric(24, 4), server_default="0")
+    impermanent_loss_usd = Column(Numeric(24, 4), server_default="0")
+    opened_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True))
+
+
+# --- Trader profile / Shadow Account (Section B.6b) -------------------------
+
+
+class TradeAnnotation(Base):
+    """Founder (MVP) trade annotations used to calibrate fib_gann_timing."""
+
+    __tablename__ = "trade_annotation"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False)
+    swing_ref = Column(JSONB)
+    fib_level = Column(Numeric(8, 6))
+    gann_angle = Column(Text)
+    action = Column(Text, nullable=False)
+    rationale_text = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
