@@ -1,0 +1,7 @@
+# Path sensitif yang WAJIB manual review sebelum merge — jangan pernah
+# auto-merge murni (lihat docs/prd.md Section C.3). Ganti @muftifachrudin
+# di bawah kalau nanti ada anggota tim lain yang jadi reviewer wajib.
+
+/apps/products/trading/execution/risk_gate.py         @muftifachrudin
+/apps/products/trading/execution/custody/              @muftifachrudin
+/packages/db/migrations/                                @muftifachrudin
