@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Placeholder: replace with real lint/type-check/test commands once
+      # apps/packages have actual code (see docs/prd.md Section C.3 for the
+      # full CI design, including Neon branch-per-PR + schema-diff + the
+      # required-manual-review exception for risk_gate/custody paths).
+      - name: Placeholder check
+        run: echo "CI scaffold — add lint/test/migration-dry-run steps as code lands"
+
+  # TODO (Fase 0/1, see docs/prd.md Section C.3):
+  #   - neondatabase/create-branch-action: isolated Neon branch per PR
+  #   - neondatabase/schema-diff-action: post schema diff as PR comment
+  #   - run Alembic migration + integration tests against the PR branch
+  #   - neondatabase/delete-branch-action on PR close
+  #   - enable GitHub native auto-merge for required-checks-green PRs,
+  #     EXCEPT PRs touching apps/products/trading/execution/risk_gate.py,
+  #     apps/products/trading/execution/custody/*, or migrations changing
+  #     risk_mandate/tenant_credential — those require manual review.
