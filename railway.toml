@@ -13,6 +13,10 @@
 buildCommand = "pip install -e ."
 
 [deploy]
-startCommand = "uvicorn kinetiq_api_gateway.main:app --host 0.0.0.0 --port $PORT"
+# Use "python -m uvicorn" rather than the bare "uvicorn" binary: Railpack's
+# mise-managed Python puts console-script shims on a PATH that the deploy
+# stage's `bash -c` doesn't reliably inherit ("uvicorn: command not found"
+# in practice), but `python` itself is always resolvable.
+startCommand = "python -m uvicorn kinetiq_api_gateway.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
