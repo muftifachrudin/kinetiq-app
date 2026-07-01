@@ -23,9 +23,12 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
 - Neon's default/primary branch is named **`production`**, not `main` --
   don't assume git and Neon branch names match (`schema-diff-action`'s
   `base_branch` needs the Neon name).
-- `DATABASE_URL` from Neon's GitHub Action is a bare `postgresql://` URL;
-  SQLAlchemy will default that to `psycopg2` unless forced to `psycopg` (v3)
-  -- see the driver-normalization in `packages/db/migrations/env.py`.
+- `DATABASE_URL` from Neon/Railway is a bare `postgresql://` URL; SQLAlchemy
+  will default that to `psycopg2` unless forced to `psycopg` (v3). Every
+  service must call `kinetiq_db.engine.normalize_db_url()` rather than
+  `create_engine(os.environ["DATABASE_URL"])` directly -- this bit two
+  separate services (`packages/db/migrations/env.py` and
+  `apps/platform-core/api-gateway/deps.py`) before it was made shared.
 - This session's sandbox may not be able to reach `console.neon.tech`
   directly, but GitHub Actions runners always can -- a PR is the real
   integration test for DB/migration changes, not "can I curl it from here."

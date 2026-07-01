@@ -20,13 +20,17 @@ mechanics only.
 
 ## Neon gotchas
 
-1. **`DATABASE_URL` driver mismatch.** Neon's `create-branch-action` outputs a
-   bare `postgresql://...` connection string. SQLAlchemy defaults a bare
-   `postgresql://` scheme to the `psycopg2` dialect, but this project depends
-   on `psycopg` (v3), so migrations failed with
-   `ModuleNotFoundError: No module named 'psycopg2'`. Fixed in
-   `packages/db/migrations/env.py`: it forces the `postgresql+psycopg` driver
-   via `make_url(...).set(drivername=...)` regardless of the scheme passed in.
+1. **`DATABASE_URL` driver mismatch.** Neon's `create-branch-action` (and
+   Railway) hand out a bare `postgresql://...` connection string. SQLAlchemy
+   defaults a bare `postgresql://` scheme to the `psycopg2` dialect, but this
+   project depends on `psycopg` (v3), so migrations failed with
+   `ModuleNotFoundError: No module named 'psycopg2'` -- and the exact same
+   thing bit `api-gateway/deps.py` independently later, since it's a separate
+   service with its own `create_engine()` call. Fixed once, shared everywhere:
+   `kinetiq_db.engine.normalize_db_url()` forces the `postgresql+psycopg`
+   driver via `make_url(...).set(drivername=...)` regardless of the scheme
+   passed in -- every service that opens a DB connection should call this
+   instead of `create_engine(os.environ["DATABASE_URL"])` directly.
    Gotcha within the gotcha: use `.render_as_string(hide_password=False)`, not
    `str(url)` -- the latter masks the password as `***` and silently breaks auth.
 

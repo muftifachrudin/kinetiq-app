@@ -66,6 +66,7 @@ class PlatformUser(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=True)
+    clerk_user_id = Column(Text, unique=True, nullable=False)
     email = Column(Text, unique=True, nullable=False)
     role = Column(Text, nullable=False, server_default="tenant")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
