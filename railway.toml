@@ -9,20 +9,27 @@
 # config-as-code path set in the Railway dashboard (Settings -> Config-as-code)
 # pointing at its own toml file, since this one only covers api-gateway.
 #
-# Deliberately no [build] buildCommand override: overriding it with a raw
-# "pip install -e ." replaced Railpack's own native Python install step,
-# which is the one that knows how to carry installed site-packages into the
-# final runtime image. With the override, the build succeeded but the
-# runtime image ended up without uvicorn installed ("No module named
-# uvicorn") even though pip install had just reported success. Leaving
-# [build] unset lets Railpack's own detected install step handle it, since
-# it already auto-detects this as a Python/pyproject.toml project correctly.
+# History of two failed approaches, for anyone tempted to "fix" this again:
+# 1. A custom [build] buildCommand = "pip install -e ." on a pyproject.toml
+#    (src-layout) project: pip install succeeded in the build log, but the
+#    installed package never made it into the runtime image
+#    ("No module named uvicorn" despite a "Successfully installed" build
+#    line moments earlier).
+# 2. Removing the buildCommand entirely: Railpack's zero-config Python
+#    detection recognizes pyproject.toml/setuptools projects but does NOT
+#    auto-generate an install step for them (no Poetry/uv lockfile it
+#    natively understands) -- the build log showed no install step ran at
+#    all, so nothing was ever installed.
+# Fix: the app is now a flat main.py (no src/ package, no pyproject.toml)
+# with a plain requirements.txt, which Railpack's Python provider has
+# first-class native support for -- it generates its own install step that
+# correctly persists into the runtime image.
 
 [deploy]
 # Use "python -m uvicorn" rather than the bare "uvicorn" binary: Railpack's
 # mise-managed Python puts console-script shims on a PATH that the deploy
 # stage's `bash -c` doesn't reliably inherit ("uvicorn: command not found"
 # in practice), but `python` itself is always resolvable.
-startCommand = "python -m uvicorn kinetiq_api_gateway.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
