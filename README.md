@@ -15,14 +15,15 @@ packages/
   db/                # SQLAlchemy models + Alembic migrations
   config/            # shared env/feature-flag config
 infra/
-  railway/           # per-service Railway config
+  railway/           # per-service Railway config (catatan/docs; config-as-code aktual ada di railway.toml root repo)
   neon/              # migrations + time-series partitioning scripts
 docs/
   prd.md             # PRD + rencana teknis (sumber kebenaran)
+railway.toml         # Railway config-as-code utk service pertama (api-gateway) -- wajib di root repo, lihat catatan di file itu
 ```
 
 Setiap direktori `apps/**` punya `README.md` singkat yang menjelaskan tanggung jawabnya dan merujuk ke bagian PRD yang relevan.
 
 ## Status
 
-Proyek masih di tahap bootstrap (Fase 0 di roadmap `docs/prd.md`). Struktur direktori sudah di-scaffold; implementasi kode (koneksi Railway/Neon/Stripe/Clerk/OpenRouter, migrasi awal, CI penuh) menyusul secara bertahap.
+Fase 0 (bootstrap) sedang berjalan -- lihat "Status Implementasi" di `docs/prd.md` untuk state paling update (apa yang sudah nyata jalan vs baru rencana). Ringkas: CI hijau thd Neon asli, skema DB Fase 0 lengkap, `api-gateway` skeleton pertama sudah live di Railway. Auth (Clerk), billing (Midtrans+XIDR), dan sisa service lain menyusul.
