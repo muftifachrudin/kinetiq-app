@@ -9,40 +9,40 @@
   (see setup steps below) to click through the flow instead of using curl.
 
   SETUP (one-time):
-  1. Replace REPLACE_WITH_YOUR_PUBLISHABLE_KEY below with your Clerk
-     Publishable Key (Clerk Dashboard -> API Keys -> Publishable key,
-     starts with pk_test_ or pk_live_). This is safe to put in a plain
-     file -- it's meant to be public/client-side, unlike the Secret Key.
-  2. Serve this file over http(s), don't just double-click it -- Clerk's
+  1. Serve this file over http(s), don't just double-click it -- Clerk's
      SDK generally needs a real http(s) origin, not file://. Easiest:
-        cd tools && python3 -m http.server 8080
+        cd tools && python -m http.server 8080
      then open http://localhost:8080/manual-test-console.html
+     (use `python3` instead of `python` on macOS/Linux if needed)
+  2. Paste your Clerk Publishable Key below (Clerk Dashboard -> API Keys
+     -> Publishable key, starts with pk_test_ or pk_live_) and click
+     "Load Clerk". This key is safe to use in a plain page -- it's meant
+     to be public/client-side, unlike the Secret Key.
   3. If Clerk shows an origin/domain error, add that localhost URL under
      Clerk Dashboard -> Configure -> Domains (or "Allowed origins").
+
+  Why not the generic cdn.clerk.io/clerk.js loader: that bundle doesn't
+  include Clerk's UI components, so mountSignIn() fails with "Clerk was
+  not loaded with UI components". The Publishable Key itself encodes your
+  Clerk Frontend API domain (base64, after stripping the pk_test_/pk_live_
+  prefix and trailing $) -- Clerk's own bundle must be loaded from that
+  domain instead, per Clerk's own script-tag quickstart.
 -->
-<script
-  async
-  crossorigin="anonymous"
-  data-clerk-publishable-key="REPLACE_WITH_YOUR_PUBLISHABLE_KEY"
-  src="https://cdn.clerk.io/clerk.js"
-></script>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
-  #api-base { width: 100%; padding: 0.4rem; margin-bottom: 1rem; }
+  input { width: 100%; padding: 0.4rem; margin-bottom: 0.5rem; box-sizing: border-box; }
   button { margin: 0.25rem 0.25rem 0.25rem 0; padding: 0.5rem 0.8rem; cursor: pointer; }
   pre { background: #111; color: #0f0; padding: 1rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
-  .warn { background: #fffbe6; border: 1px solid #e6c200; padding: 0.75rem; margin-bottom: 1rem; }
   #status { font-weight: bold; }
+  label { display: block; margin-top: 0.75rem; }
 </style>
 </head>
 <body>
 <h1>Kinetiq Manual Test Console</h1>
 
-<div class="warn" id="key-warning">
-  Edit this file first: replace <code>REPLACE_WITH_YOUR_PUBLISHABLE_KEY</code>
-  in the &lt;script&gt; tag near the top with your real Clerk Publishable Key,
-  then reload this page.
-</div>
+<label for="pub-key">Clerk Publishable Key (pk_test_... or pk_live_...)</label>
+<input id="pub-key" placeholder="pk_test_..." />
+<button id="btn-load-clerk">Load Clerk</button>
 
 <label for="api-base">API base URL</label>
 <input id="api-base" value="https://kinetiq-id.up.railway.app" />
@@ -62,61 +62,98 @@
 <pre id="output">(nothing yet)</pre>
 
 <script>
-async function boot() {
-  if (!window.Clerk) {
-    document.getElementById('output').textContent =
-      'Clerk.js did not load. Check the publishable key in the <script> tag and that this page is served over http(s), not file://.';
-    return;
-  }
-  document.getElementById('key-warning').style.display =
-    document.querySelector('script[data-clerk-publishable-key]').dataset.clerkPublishableKey.startsWith('REPLACE_WITH')
-      ? 'block' : 'none';
+const out = (text) => { document.getElementById('output').textContent = text; };
 
-  await window.Clerk.load();
-
-  function render() {
-    const user = window.Clerk.user;
-    if (user) {
-      document.getElementById('sign-in').style.display = 'none';
-      document.getElementById('signed-in').style.display = 'block';
-      document.getElementById('status').textContent = `Signed in as ${user.primaryEmailAddress?.emailAddress ?? user.id}`;
-    } else {
-      document.getElementById('sign-in').style.display = 'block';
-      document.getElementById('signed-in').style.display = 'none';
-      window.Clerk.mountSignIn(document.getElementById('sign-in'));
-    }
-  }
-  render();
-  window.Clerk.addListener(render);
-
-  function apiBase() {
-    return document.getElementById('api-base').value.replace(/\/$/, '');
-  }
-
-  async function callApi(method, path, body) {
-    const token = await window.Clerk.session.getToken();
-    const resp = await fetch(apiBase() + path, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    let text;
-    try { text = JSON.stringify(await resp.json(), null, 2); }
-    catch { text = await resp.text(); }
-    document.getElementById('output').textContent = `HTTP ${resp.status}\n\n${text}`;
-  }
-
-  document.getElementById('btn-me').onclick = () => callApi('GET', '/me');
-  document.getElementById('btn-sub-auto').onclick = () => callApi('POST', '/billing/subscribe', { plan_tier: 'auto_execute' });
-  document.getElementById('btn-sub-signal').onclick = () => callApi('POST', '/billing/subscribe', { plan_tier: 'signal_only' });
-  document.getElementById('btn-gated').onclick = () => callApi('GET', '/trading/auto-execute/status');
-  document.getElementById('btn-signout').onclick = () => window.Clerk.signOut();
+function frontendApiFromKey(key) {
+  const withoutPrefix = key.replace(/^pk_(test|live)_/, '');
+  const decoded = atob(withoutPrefix).replace(/\$$/, '');
+  return `https://${decoded}`;
 }
 
-window.addEventListener('load', boot);
+function loadScript(src, publishableKey) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.crossOrigin = 'anonymous';
+    s.dataset.clerkPublishableKey = publishableKey;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
+}
+
+async function loadClerk() {
+  const key = document.getElementById('pub-key').value.trim();
+  if (!key) { out('Paste your Clerk Publishable Key first.'); return; }
+  localStorage.setItem('kinetiq_pub_key', key);
+
+  let frontendApi;
+  try {
+    frontendApi = frontendApiFromKey(key);
+  } catch (e) {
+    out(`Could not decode Frontend API domain from that key -- is it a valid pk_test_/pk_live_ key?\n${e}`);
+    return;
+  }
+
+  out(`Loading Clerk from ${frontendApi} ...`);
+  try {
+    await loadScript(`${frontendApi}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js`, key);
+    await window.Clerk.load();
+  } catch (e) {
+    out(`Clerk failed to load: ${e}\n\nIf this mentions a blocked origin/domain, add this page's URL under Clerk Dashboard -> Configure -> Domains.`);
+    return;
+  }
+
+  out('Clerk loaded.');
+  render();
+  window.Clerk.addListener(render);
+}
+
+function render() {
+  const user = window.Clerk.user;
+  if (user) {
+    document.getElementById('sign-in').style.display = 'none';
+    document.getElementById('signed-in').style.display = 'block';
+    document.getElementById('status').textContent = `Signed in as ${user.primaryEmailAddress?.emailAddress ?? user.id}`;
+  } else {
+    document.getElementById('sign-in').style.display = 'block';
+    document.getElementById('signed-in').style.display = 'none';
+    window.Clerk.mountSignIn(document.getElementById('sign-in'));
+  }
+}
+
+function apiBase() {
+  return document.getElementById('api-base').value.replace(/\/$/, '');
+}
+
+async function callApi(method, path, body) {
+  const token = await window.Clerk.session.getToken();
+  const resp = await fetch(apiBase() + path, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let text;
+  try { text = JSON.stringify(await resp.json(), null, 2); }
+  catch { text = await resp.text(); }
+  out(`HTTP ${resp.status}\n\n${text}`);
+}
+
+document.getElementById('btn-load-clerk').onclick = loadClerk;
+document.getElementById('btn-me').onclick = () => callApi('GET', '/me');
+document.getElementById('btn-sub-auto').onclick = () => callApi('POST', '/billing/subscribe', { plan_tier: 'auto_execute' });
+document.getElementById('btn-sub-signal').onclick = () => callApi('POST', '/billing/subscribe', { plan_tier: 'signal_only' });
+document.getElementById('btn-gated').onclick = () => callApi('GET', '/trading/auto-execute/status');
+document.getElementById('btn-signout').onclick = () => window.Clerk.signOut();
+
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('kinetiq_pub_key');
+  if (saved) document.getElementById('pub-key').value = saved;
+});
 </script>
 </body>
 </html>
