@@ -33,7 +33,8 @@ Repo: `kinetiq-app` (di-rename dari `agent-trading-perp`), branch default `main`
 **Gap yg masih ada:**
 - RLS policy (B.4), append-only grant `order_audit_log`, pgvector setup (C.1) — belum di-implement.
 - `api-gateway`: auth middleware sudah ada, tapi **plan-gating** (cek `tenant.plan_tier` per endpoint) & endpoint bisnis nyata belum ditulis.
-- **XIDR/StraitsX & domain kinetiq.app**: belum di-apply/didaftarkan oleh user — actionable items di atas.
+- **Custom domain `kinetiq.app` di-skip dulu untuk fokus MVP** (keputusan user) — `api-gateway` production dipakai lewat domain default Railway (`kinetiq-id.up.railway.app`), bukan custom domain. Riset DNS/CNAME+TXT setup di atas tetap valid & dipakai nanti begitu domain custom mau diaktifkan lagi, bukan dibuang.
+- **XIDR/StraitsX**: belum di-apply/didaftarkan oleh user — actionable items di atas.
 - `apps/products/trading/*` masih skeleton README-only sepenuhnya — belum ada kode aplikasi nyata (LangGraph, dsb).
 
 ---
