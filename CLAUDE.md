@@ -37,12 +37,16 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
   healthcheck attempts) -- they show different failure classes and a
   healthcheck failure looks identical whether the app crashed instantly or
   it's a real networking issue.
-- Never pip-install a sibling monorepo package (e.g. `-e ../../../packages/db`)
-  from a service's `requirements.txt` -- Railpack's native install step copies
-  only `requirements.txt` into an isolated layer before the rest of the repo
-  exists, so it fails with "not a valid editable requirement". Instead point
-  `PYTHONPATH` at the sibling's source dir in `startCommand` (see
-  `railway.toml`) so it's imported at runtime, once the full repo is present.
+- A service whose Railway Root Directory is a subfolder (e.g.
+  `apps/platform-core/api-gateway`) can **never** reach a sibling directory
+  like `packages/db` -- not via `-e ../../../packages/db` in
+  `requirements.txt`, not via a subfolder-relative `PYTHONPATH` either.
+  Root Directory scopes the entire build+runtime context to that one
+  subfolder; siblings are never copied in, period. Fix: set Root Directory
+  to the **repo root**, move `requirements.txt` to repo root too (so
+  Railpack's zero-config Python detection still fires), and set
+  `PYTHONPATH` in `startCommand` to include both the sibling package's
+  source dir and the service's own folder (see `railway.toml`).
 
 ## Before pushing any infra/config change
 
