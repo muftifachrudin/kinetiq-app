@@ -236,6 +236,34 @@ mechanics only.
    only appear once you exercise a *second*, previously-unused session
    (e.g. a fresh superadmin session that never called `set_config` itself).
 
+## Append-only `order_audit_log` (`packages/db/migrations/versions/0003_order_audit_log_append_only.py`)
+
+**`REVOKE UPDATE, DELETE ON order_audit_log FROM <role>` would be a silent
+no-op**, for the exact same reason `FORCE ROW LEVEL SECURITY` was required in
+0002: Postgres object owners always retain full privileges on objects they
+own, regardless of any `GRANT`/`REVOKE` -- and unlike RLS, there's no `FORCE`
+equivalent for privileges to override that. The app's `DATABASE_URL` role
+owns `order_audit_log`, so a plain `REVOKE` would look like it did something
+but change nothing.
+
+**Fix used instead: a `BEFORE UPDATE OR DELETE` trigger that unconditionally
+raises an exception.** Triggers fire regardless of role or ownership -- there
+is no owner exemption, no `is_superadmin` bypass, nothing. Verified locally
+by connecting as the `postgres` superuser (owner of the table) and
+confirming both `UPDATE` and `DELETE` are rejected with `order_audit_log is
+append-only: <OP> is not allowed`, while a normal `INSERT` still succeeds.
+This is intentional, not a gap to fix later: an audit trail that any role
+(including the most trusted one) can edit through the normal app path isn't
+actually an audit trail. If a genuine correction is ever needed, it's a new
+compensating row, not an edit to history -- and if a real emergency schema
+fix is ever needed, that's a deliberate, separately-auditable
+`ALTER TABLE order_audit_log DISABLE TRIGGER order_audit_log_append_only`
+by a DBA, not something any session variable can quietly opt out of.
+
+If a future table needs the same "insert-only, no edits/deletes ever"
+guarantee, reach for this same trigger pattern directly -- don't reach for
+`REVOKE` first and rediscover this the hard way.
+
 ## GitHub push-to-`main` workaround (situational, not evergreen)
 
 Earlier in this project, this session's git relay returned a persistent 503
