@@ -8,9 +8,15 @@
 # If a second Railway service is added later, it needs its own explicit
 # config-as-code path set in the Railway dashboard (Settings -> Config-as-code)
 # pointing at its own toml file, since this one only covers api-gateway.
-
-[build]
-buildCommand = "pip install -e ."
+#
+# Deliberately no [build] buildCommand override: overriding it with a raw
+# "pip install -e ." replaced Railpack's own native Python install step,
+# which is the one that knows how to carry installed site-packages into the
+# final runtime image. With the override, the build succeeded but the
+# runtime image ended up without uvicorn installed ("No module named
+# uvicorn") even though pip install had just reported success. Leaving
+# [build] unset lets Railpack's own detected install step handle it, since
+# it already auto-detects this as a Python/pyproject.toml project correctly.
 
 [deploy]
 # Use "python -m uvicorn" rather than the bare "uvicorn" binary: Railpack's
