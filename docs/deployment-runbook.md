@@ -13,7 +13,8 @@ mechanics only.
 
 - Repo: `kinetiq-app`, default branch `main`.
 - Railway project has one service so far (`kinetiq-app`), Root Directory set to
-  `apps/platform-core/api-gateway` in the dashboard (Settings -> Source).
+  **repo root** (empty) in the dashboard (Settings -> Source) -- see Railpack
+  gotcha #7 below for why it's the repo root and not the service subfolder.
 - Neon project's default/primary branch is named **`production`**, not `main`.
   Git branch names and Neon branch names are two independent naming schemes --
   don't assume they match.
@@ -44,6 +45,37 @@ mechanics only.
 3. **`schema-diff-action`'s `base_branch` must be the Neon branch name**
    (`production`), not the git branch name (`main`). Confirmed by an
    `##[error]Branch main not found in project` failure.
+
+4. **`SET x = :param` doesn't accept bind parameters -- Postgres rejects it
+   with a syntax error at the protocol level** (`SET app.tenant_id = $1` ->
+   `syntax error at or near "$1"`), because `SET` is a utility statement, not
+   a regular DML statement eligible for the extended query protocol's
+   parameter substitution. This had been sitting unnoticed in
+   `api-gateway/deps.py` (`SET app.tenant_id = :tenant_id`) since the tenant
+   auth middleware PR -- it never actually threw, because no real login with
+   a non-null `tenant_id` had gone through it yet (every real request so far
+   either had no token at all, or no tenant assigned). It surfaced the moment
+   RLS policies started actually being queried in a test with a real tenant
+   session. Fix: use `SELECT set_config('app.tenant_id', :tenant_id, false)`
+   instead -- `set_config()` is a regular function call, so normal bind-
+   parameter substitution works. Any future code that sets a Postgres session
+   GUC from a Python variable must use `set_config()`, never string-formatted
+   or parameterized `SET`.
+
+5. **A custom (`app.*`-namespaced) GUC that's never been `SET` in the
+   *current* session can read back as `''` (empty string) via
+   `current_setting(name, true)`, not `NULL`** -- once any session on the
+   server has ever used that GUC name, Postgres registers it as a known
+   placeholder variable, and an unset instance of it in a fresh session then
+   defaults to `''` rather than genuinely missing/`NULL`. This broke a
+   `tenant_id = current_setting('app.tenant_id', true)::uuid` RLS policy
+   expression with `invalid input syntax for type uuid: ""` the first time a
+   session hit it without ever having called `set_config('app.tenant_id', ...)`
+   itself (e.g. a superadmin session, which never sets `app.tenant_id` at
+   all). Fix: `NULLIF(current_setting(name, true), '')::uuid` -- collapses
+   both the never-set-anywhere (`NULL`) and set-elsewhere-but-not-here (`''`)
+   cases to `NULL` before casting, instead of letting either reach the cast
+   directly.
 
 ## Railway / Railpack gotchas
 
@@ -154,6 +186,55 @@ mechanics only.
    with this same need will require a different solution (e.g. a
    dedicated Railpack config or its own repo-root marker file scheme) --
    don't copy this pattern blindly for service #2.
+
+## Row-Level Security (RLS) gotchas (`packages/db/migrations/versions/0002_add_rls_policies.py`)
+
+1. **`FORCE ROW LEVEL SECURITY` is required, not optional, given today's
+   connection setup.** Postgres exempts a table's *owner* from RLS entirely
+   unless `FORCE` is also set. The app's `DATABASE_URL` currently connects as
+   the same role that owns every table (no separate least-privilege app role
+   exists yet) -- without `FORCE`, every policy added here would be a
+   complete no-op against the app's own queries, while still looking "on" in
+   `\d <table>`. `FORCE` only affects DML (SELECT/INSERT/UPDATE/DELETE);
+   migrations are DDL and are unaffected by it.
+
+2. **`platform_user` intentionally has no RLS policy**, even though it has a
+   `tenant_id` column. `api-gateway/deps.py`'s `get_current_user()` looks a
+   caller up by `clerk_user_id` *before* any `tenant_id` is known -- that
+   lookup is how it discovers the tenant in the first place. A tenant-scoped
+   policy on `platform_user` would make every login's own self-lookup
+   invisible to itself (RLS denies by default when the session var isn't set
+   yet), breaking auth for every user on every request. If a real need for
+   restricting `platform_user` visibility ever comes up, it isn't this simple
+   `tenant_id = ...` pattern.
+
+3. **`llm_config` needs a different policy shape than the other tenant
+   tables**: `tenant_id IS NULL OR tenant_id = current_setting(...)`, not a
+   strict match. Its `NULL` `tenant_id` rows are `scope='global'`/`'product'`
+   shared config (Section B.13's tenant->product->global resolution
+   hierarchy), not "nobody's data" -- a strict policy would make every tenant
+   session blind to the global/product defaults it's supposed to fall back
+   to.
+
+4. **Manual `psql`/admin inserts against RLS-protected tables need
+   `SELECT set_config('app.is_superadmin', 'true', false);` run first in the
+   same session**, or they'll be rejected by the policy's `WITH CHECK`
+   clause (e.g. bootstrapping the very first superadmin/tenant rows, before
+   any app code has run to set session context). This isn't a workaround --
+   it's the intended admin escape hatch, same mechanism the app itself uses.
+
+5. **How this was actually verified locally** (worth reusing for any future
+   RLS policy work, since testing as the `postgres` superuser role proves
+   nothing -- Postgres superusers bypass RLS unconditionally, full stop,
+   regardless of `FORCE`): create a dedicated non-superuser role, reassign
+   table ownership to it (`ALTER TABLE ... OWNER TO ...`), connect as that
+   role, and confirm (a) a fresh connection with no session vars set at all
+   sees zero rows (fails closed), (b) a tenant-scoped session only sees its
+   own rows, (c) a cross-tenant `INSERT` is rejected, and (d)
+   `app.is_superadmin = 'true'` sees everything. This exact sequence is what
+   caught both gotchas #4 and #5 in the Neon gotchas section above -- they
+   only appear once you exercise a *second*, previously-unused session
+   (e.g. a fresh superadmin session that never called `set_config` itself).
 
 ## GitHub push-to-`main` workaround (situational, not evergreen)
 
