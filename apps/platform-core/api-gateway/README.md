@@ -2,7 +2,7 @@
 
 FastAPI gateway: tenant auth middleware, product+tier plan-gating, request routing ke tiap product API. Agent-agnostic — dipakai semua vertical (trading, dan vertical masa depan).
 
-`deps.py` punya `get_current_user()`: verifikasi Clerk session JWT (via JWKS, `PyJWKClient`), auto-provision row `platform_user` di login pertama, dan set `app.tenant_id` per-session utk RLS policy (Section B.4, belum diimplementasi di migration — placeholder yg sudah siap dipakai begitu RLS ditambahkan). `plan-gating` (cek `tenant.plan_tier` per endpoint) menyusul ronde berikutnya.
+`deps.py` punya `get_current_user()`: verifikasi Clerk session JWT (via JWKS, `PyJWKClient`), auto-provision row `platform_user` di login pertama, dan set `app.tenant_id` per-session utk RLS policy (Section B.4, belum diimplementasi di migration — placeholder yg sudah siap dipakai begitu RLS ditambahkan). `require_plan(*allowed_tiers)`: dependency factory yg cek `tenant.plan_tier` — `role='superadmin'` selalu bypass, user tanpa tenant atau plan tidak cocok dapat 403. `GET /trading/auto-execute/status` di `main.py` adalah placeholder yg gated ke tier `auto_execute`, bukti alur plan-gating jalan end-to-end — bukan business logic asli, nunggu `apps/products/trading/*` beneran ditulis.
 
 Sengaja **flat `main.py`**, bukan `src/` package + `pyproject.toml`: Railpack (builder Railway) punya dukungan native yang jauh lebih reliable utk `requirements.txt` drpd pyproject.toml/setuptools polos (yg auto-detect-nya sempat gagal generate step install sama sekali). `requirements.txt` sendiri sekarang tinggal di **root repo** (bukan folder ini) — lihat kenapa di bawah.
 
