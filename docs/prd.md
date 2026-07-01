@@ -21,6 +21,21 @@ Diterima langsung dari user di chat (Project ID + token/API key untuk): **Railwa
 
 Begitu keluar dari plan mode, langkah eksekusi berikutnya: pakai Railway token + project ID utk mulai bikin service pertama (mis. `packages/db` migration runner / api-gateway skeleton), pakai Neon API key utk jalankan migrasi awal (tabel `tenant`, `venue`, `instrument`, dst dari Section B.3) ke branch Neon yg sesuai.
 
+### Status Setup CI/CD (per screenshot user, Juli 2026) — Gap Ditemukan
+
+User sudah connect repo `kinetiq-app` ke Railway (production service) dan mulai proses GitHub integration di Neon Console. Dari screenshot + pengecekan `git branch -a`/`git ls-remote` (read-only), ditemukan **gap struktural**:
+
+1. **Repo belum punya branch `main` sama sekali** — satu-satunya branch yang ada (dan jadi default branch GitHub) adalah `claude/trading-bot-architecture-tp2vzj` (branch kerja Claude Code). Ini kenapa Railway cuma nawarin branch itu sbg opsi "Branch connected to production" — bukan bug, memang belum ada `main` utk dipilih.
+2. **Konsekuensi**: `.github/workflows/ci.yml` yang sudah dibuat men-trigger di `branches: [main]` — karena `main` belum ada, **workflow ini belum pernah jalan sama sekali**. "Apakah semua sudah di-setup GitHub Action?" — jawabannya: **kode workflow-nya sudah ada & benar, tapi belum pernah tereksekusi krn tidak ada branch `main` yang jadi target trigger-nya.**
+3. Neon GitHub integration (screenshot ke-2) menampilkan instruksi template `neon_workflow.yml` generik milik Neon (create/delete branch saja) — **tidak perlu ditambahkan terpisah** krn `.github/workflows/ci.yml` yang sudah ada sudah mencakup pola yang sama (create-branch + migrate + schema-diff + delete) plus lint. Yang perlu dipastikan cuma: apakah proses connect Neon ini sudah men-generate secret `NEON_API_KEY` & variable `NEON_PROJECT_ID` di repo GitHub (Settings → Secrets and variables → Actions) — ini tidak bisa saya cek langsung (GitHub API tidak expose isi/keberadaan secret ke tool saya), user perlu cek manual.
+
+**Rencana perbaikan (dieksekusi setelah approve, di luar plan mode):**
+1. Buat branch `main` dari kondisi `claude/trading-bot-architecture-tp2vzj` saat ini (base awal proyek), push ke origin.
+2. Set `main` sbg default branch repo di GitHub (Settings → Branches → Default branch).
+3. User ubah "Branch connected to production" di Railway dari `claude/trading-bot-architecture-tp2vzj` ke `main`.
+4. User verifikasi manual di GitHub repo Settings → Secrets and variables → Actions bahwa `NEON_API_KEY` (secret) & `NEON_PROJECT_ID` (variable) sudah ada dari proses connect Neon.
+5. Selanjutnya kerja jalan via PR: branch fitur baru → PR ke `main` → trigger `ci.yml` (lint + Neon preview branch + migrate + schema-diff) → merge ke `main` → Railway auto-deploy dari `main`.
+
 ---
 
 ## PART A — Product (PRD)
@@ -89,7 +104,7 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | Compute | Railway (multi-service, multi-tenant aware) | fixed constraint user |
 | DB utama | Neon Postgres (serverless, branching) | fixed constraint user |
 | Multi-tenancy | Row-level: `tenant_id`/`account_id` di semua tabel domain (bukan DB-per-tenant — terlalu mahal di Neon utk skala awal), Postgres RLS policy per tenant sbg defense-in-depth | pola standar SaaS row-level multi-tenant, biaya lebih rendah drpd DB terpisah per user |
-| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: **Paddle** (Merchant of Record) Subscriptions + usage records utk metering, di-model per **product+tier** (`trading:signal_only`, `trading:auto_execute`, dst) bukan hardcode trading | standar industri SaaS; product+tier model supaya siap ditambah vertical baru (exam/chatbot/content) tanpa rombak billing |
+| Auth & Billing | Auth: Clerk atau Auth.js (session/JWT) — pilih Clerk kalau mau cepat (built-in org/user management cocok utk B2C SaaS). Billing: **Paddle** (Merchant of Record) Subscriptions + usage records utk metering, di-model per **product+tier** (`trading:signal_only`, `trading:auto_execute`, dst) bukan hardcode trading | **Revisi dari Stripe**: Stripe di Indonesia invite-only/approval sales-team & tidak dukung plugin standar — tidak cocok utk self-serve signup cepat. Paddle sbg Merchant of Record menangani tax/compliance global & bisa terima seller dari Indonesia tanpa proses approval khusus. Xendit (lokal, IDR, GoPay/OVO/DANA/QRIS) jadi opsi tambahan kalau nanti mau rail pembayaran lokal utk pelanggan Indonesia. LemonSqueezy sengaja tidak dipilih krn sedang transisi diakuisisi Stripe (dukungan melambat sejak awal 2026) |
 | Platform Core vs Product Vertical | Pisahkan `apps/platform-core/*` (tenant, auth, billing, agent-registry, LLM gateway, notification — agent-agnostic) dari `apps/products/trading/*` (spesifik trading) | visi bisnis user: trading = vertical pertama, agent exam/chatbot/content-creator/task menyusul sbg vertical baru yang reuse Platform Core (lihat A.6) |
 | Time-series | Native Postgres range-partitioning by time (manual, dikelola Inngest) + TimescaleDB (Apache-2, tanpa compression) opsional | Neon dukung timescaledb sejak PG18 (Feb 2026) tapi tanpa compression/tiering — partitioning manual jadi primary bet (terverifikasi) |
 | Orchestration | **Inngest self-hosted di Railway** | self-hosting resmi sejak Inngest 1.0 (terverifikasi), event-driven step function pas utk pola ingest→trigger; dievaluasi vs Trigger.dev/Temporal Cloud/custom-queue-di-Neon dan ditolak (lihat plan versi sebelumnya utk detail — Neon PgBouncer transaction-mode tidak support LISTEN/NOTIFY) |
@@ -97,9 +112,10 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | CEX data/exec | CCXT + CCXT Pro (WS) unified, native WS fallback per exchange utk liquidation feed | 100+ exchange, minim maintenance |
 | DEX data/exec | Native SDK per protokol: Hyperliquid, dYdX v4, GMX, Vertex, Drift (perp); Meteora DLMM SDK (LP); Solana/EVM new-pair listener (meme-sniper) | tidak ada unifikasi matang utk on-chain |
 | Backend | Python 3.11+ (FastAPI, LangGraph) utk data layer, strategy engine, agent orchestration | ekosistem quant/ML, ikut pola Vibe-Trading |
-| Job glue & frontend | TypeScript: Inngest functions + Next.js dashboard + billing webhook handler | konsisten dgn pola Vibe-Trading |
-| Interface MVP | Telegram bot (signal tier) | latency rendah, effort kecil, akses darimana saja |
-| Interface lanjutan | Web dashboard (Next.js, + billing/plan management) → Mobile app | dashboard utk riset/backtest visual + subscription management |
+| Job glue & frontend | TypeScript: Inngest functions + Next.js dashboard (+ shadcn/ui, lihat B.14) + billing webhook handler | konsisten dgn pola Vibe-Trading |
+| Interface MVP | Telegram bot (Python, signal tier) — **hybrid conversational** (natural language utk monitoring, structured confirm/tombol wajib utk aksi nyata) | latency rendah, effort kecil, akses darimana saja; conversational krn positioning "agent" bukan "bot command" (lihat B.14) |
+| Interface lanjutan | Web dashboard (Next.js + shadcn/ui, + billing/plan management) → Mobile app | dashboard utk riset/backtest visual + subscription management |
+| UI/UX & Branding | shadcn/ui + Tailwind (bukan fase desain Figma terpisah), branding minimal bertema "kinetic" dulu | prioritas kecepatan solo-founder ke MVP drpd investasi desain penuh di awal (lihat B.14) |
 | Custody | Non-custodial per-tenant: API key trade-only/no-withdraw (CEX), agent-wallet/session-key (DEX), envelope encryption per-tenant (data key unik per tenant, master key di KMS/Railway secret) | dikonfirmasi user; isolasi per-tenant mencegah satu key bocor berdampak ke tenant lain |
 | LLM Provider | **OpenRouter** sbg provider utama (satu API key, akses banyak model/vendor sekaligus) diakses lewat `platform-core/llm-gateway`, dgn adapter interface tetap provider-agnostic (bisa tambah direct OpenAI/Anthropic/DeepSeek API key nanti tanpa ubah kontrak) | dikonfirmasi user (paket all-in-one OpenRouter), plus jaga fleksibilitas kalau nanti mau direct API utk model tertentu (lebih murah/cepat) |
 | Role & Access | 3 level: **superadmin** (founder, bypass billing, pakai resource sendiri, kontrol penuh konfigurasi platform) — **admin** (mengatur LLM/model per agent & per tier, feature flag, monitoring — bisa didelegasikan ke tim nanti) — **tenant/customer** (subscriber biasa, akses sesuai plan yg dibayar) | wajib disebut eksplisit oleh user; jadi dasar `llm_config` dinamis per agent (lihat B.13) |
@@ -141,7 +157,7 @@ agent-trading-perp/
 │           ├── execution/                  # unified order/position adapter + risk_gate.py + custody/ (per-tenant key vault)
 │           ├── inngest-functions/          # ingest-*, rebalance-check, risk-halt-monitor, new-pair-watchdog, dlmm-rebalance-check
 │           ├── dashboard/                  # Next.js: positions, strategies (mount di dashboard-shell sbg product page)
-│           └── telegram-bot/               # MVP interface, plan-gated command via platform-core notification
+│           └── telegram-bot/               # Python (python-telegram-bot) — MVP interface, hybrid conversational + structured confirm utk aksi nyata (lihat B.14)
 │
 ├── packages/
 │   ├── schemas/                    # Pydantic + Zod
@@ -328,6 +344,71 @@ CREATE TABLE llm_config (
 
 `platform-core/llm-gateway` resolve config ini di runtime tiap kali agent-orchestrator memanggil skill — jadi admin bisa ganti model utk skill tertentu (mis. turunkan biaya `market_regime` pakai model murah, tapi `portfolio_rebalance` tetap model kuat) tanpa deploy ulang kode, cukup lewat admin panel di `dashboard-shell`. Karena provider utama OpenRouter (satu API key, banyak model), ganti `model` field saja cukup — tidak perlu urus API key berbeda per provider di tahap awal.
 
+### B.14 UI/UX, Branding, Tech Stack Konsolidasi, & Conversational Interface Telegram
+
+**UI/UX & Branding** — sebelumnya belum direncanakan (gap yang diangkat user). Keputusan: **jalur cepat**, bukan fase desain Figma terpisah — pakai **shadcn/ui + Tailwind** (component library siap pakai, langsung cocok dgn Next.js yg sudah dipilih di B.1) utk `apps/platform-core/dashboard-shell/` & `apps/products/trading/dashboard/`. Branding minimal dulu (logo + palet warna bertema "kinetic"/fisika: gradient dinamis, nuansa gerak/momentum, konsisten dgn narasi nama "Kinetiq"), investasi desain lebih serius ditunda sampai ada revenue/traksi nyata — supaya tidak menahan kecepatan solo-founder ke MVP. Flow UX inti yg wajib ada sebelum Fase 5 (Web Dashboard Lengkap): onboarding/signup, connect API key exchange, lihat posisi & sinyal, approve/reject rebalance, konfigurasi `risk_mandate`.
+
+**Tech Stack Konsolidasi** (rangkuman dari keputusan yg sudah tersebar di B.1, disatukan di sini atas permintaan user):
+
+| Layer | Bahasa/Tools |
+|---|---|
+| Backend/data/agent (platform-core + trading vertical) | Python 3.11 — FastAPI, LangGraph, SQLAlchemy+Alembic, CCXT |
+| Job orchestration | TypeScript — Inngest functions |
+| Web dashboard | TypeScript — Next.js + React + Tailwind + **shadcn/ui** |
+| Database | PostgreSQL (Neon) |
+| Infra-as-code | YAML (GitHub Actions), Railway config |
+| **Telegram bot** | **Python** (`python-telegram-bot`) — keputusan baru, lihat di bawah |
+
+**Telegram — tidak perlu Telegram Premium/Business**: terverifikasi, Bot API Telegram 100% gratis, tanpa tier berbayar utk fungsi dasar (kirim/terima pesan, inline button). Rate limit default (1 pesan/detik per chat, ~30 pesan/detik broadcast) jauh di atas kebutuhan Kinetiq di skala MVP. Opsi "paid broadcast" (Telegram Stars) cuma relevan kalau nanti broadcast >30 pesan/detik — bukan kebutuhan sekarang.
+
+**Conversational Interface (ide baru user, disetujui dgn 1 syarat)**: Telegram bot tidak lagi command-only (`/positions`, `/pnl`), tapi **hybrid conversational**:
+- Percakapan bebas natural-language utk monitoring/tanya-jawab (mis. "gimana performa BTC gue minggu ini?") — LLM interpret via `agent-orchestrator`.
+- **Wajib structured confirmation** (tombol Ya/Tidak eksplisit atas proposal yg jelas) utk SEMUA aksi yg mengubah state/uang riil (eksekusi trade, ubah `risk_mandate`, kill switch) — natural language cuma jadi "pintu masuk" yg lebih ramah, TETAP wajib lewat `risk_gate.py` yg sama (Section B.7), tidak boleh jadi jalan pintas yg melewati gate.
+- **Implikasi bahasa**: Telegram bot diimplementasi di **Python** (bukan TypeScript spt draft awal), jadi wrapper tipis yg langsung manggil `agent-orchestrator`/LangGraph, bukan logic terpisah — update `apps/products/trading/telegram-bot/` dari TS ke Python.
+- **Implikasi biaya**: percakapan bebas = tiap pesan butuh LLM utk interpretasi (lebih mahal drpd command-matching biasa) — inilah yg jadi alasan model monetisasi berbasis token di bawah, bukan cuma flat-fee per tier.
+
+### B.15 Model Monetisasi Berbasis Token (mengikuti pola API billing Claude/Anthropic)
+
+User minta konsekuensi biaya LLM (dari conversational interface B.14) **dibebankan ke pengguna lewat model token**, mirip cara Anthropic/OpenAI jual API credit — bukan cuma flat subscription per tier (signal_only/auto_execute). Ini jadi **lapisan monetisasi tambahan**, bukan pengganti tier fitur yg sudah ada di B.3/A.3 (tier tetap menentukan fitur apa yg bisa diakses; paket token menentukan berapa banyak agent/LLM invocation yg bisa dipakai bulan itu).
+
+**Skema baru** (`packages/db`, extend dari B.3):
+
+```sql
+CREATE TABLE token_package (            -- dikonfigurasi admin, dinamis, bukan hardcode
+    id SERIAL PRIMARY KEY,
+    package_key TEXT UNIQUE NOT NULL,        -- 'starter','growth','scale', dst
+    name TEXT NOT NULL,
+    monthly_token_allowance BIGINT NOT NULL,
+    price_usd NUMERIC(10,2) NOT NULL,
+    discount_pct NUMERIC(5,2) DEFAULT 0,     -- mis. diskon beli tahunan/bundle
+    is_addon_topup BOOLEAN DEFAULT FALSE,    -- true kalau ini paket top-up tambahan (bukan paket dasar bulanan)
+    is_active BOOLEAN DEFAULT TRUE,
+    updated_by UUID REFERENCES platform_user(id),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE tenant_token_ledger (       -- append-only, transparan & auditable (pola sama spt order_audit_log)
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID REFERENCES tenant(id) NOT NULL,
+    ts TIMESTAMPTZ DEFAULT now(),
+    delta_tokens BIGINT NOT NULL,            -- positif (topup/reset bulanan) atau negatif (consumption)
+    reason TEXT NOT NULL CHECK (reason IN ('monthly_reset','consumption','topup_purchase','admin_adjustment')),
+    agent_skill_key TEXT,                    -- skill mana yg konsumsi token ini (NULL kalau bukan consumption)
+    balance_after BIGINT NOT NULL
+);
+
+ALTER TABLE tenant ADD COLUMN token_package_id INT REFERENCES token_package(id);
+```
+
+**Keputusan desain (sesuai arahan user):**
+- **Paket token dinamis**: admin atur `monthly_token_allowance`, `price_usd`, `discount_pct` per paket kapan saja lewat admin panel `dashboard-shell`, tanpa deploy ulang — pola sama persis dgn `llm_config` (B.13), bukan hardcode.
+- **Diskon**: field `discount_pct` di `token_package` mendukung diskon per-paket (mis. bundle tahunan, promo) — admin yg atur, bukan logic hardcoded di kode.
+- **Founder/superadmin bebas tanpa batasan token**: `platform-core/llm-gateway` budget-enforcement middleware (C.1) **skip cek `tenant_token_ledger` kalau `platform_user.role == 'superadmin'`** — konsisten dgn keputusan awal bahwa superadmin bypass billing/plan-gating (A.3/B.13), sekarang eksplisit juga cakup token cap.
+- **Dokumentasi transparansi utk pengguna** (wajib, item baru): halaman publik `docs/token-usage.md` (ditampilkan juga di dashboard tenant) yg jelaskan dlm bahasa awam: apa itu "token" di konteks Kinetiq, estimasi token per jenis interaksi (mis. 1x cek sinyal vs 1x analisis rebalance penuh — angka pasti perlu dikalibrasi dari data pemakaian nyata Fase 2-3, jangan janjikan angka spesifik sebelum ada data), sisa kuota real-time (query `tenant_token_ledger`), riwayat pemakaian, kapan reset bulanan, cara beli top-up. Prinsipnya: pengguna harus bisa lihat persis kenapa kuota mereka berkurang — sama spt Anthropic Console kasih usage breakdown.
+- **Alur beli/top-up**: paket dasar bulanan via Paddle subscription (auto-reset `tenant_token_ledger` tiap siklus billing), top-up token pack via Paddle one-time charge (nambah `delta_tokens` positif langsung, tidak nunggu reset bulanan).
+
+**Roadmap placement**: desain skema di atas masuk **Fase 0** (sekalian dgn `llm_config`/`platform_user`, krn sama-sama fondasi billing dinamis), tapi angka konkret tiap paket (harga, alokasi token) **baru difinalisasi Fase 2-3** setelah ada data pemakaian LLM nyata dari paper trading (B.9) — supaya harga tidak asal tebak.
+
 ---
 
 ## PART C — Agentic Engineering Stack, MCP, & DevOps Otomasi
@@ -397,3 +478,6 @@ Mengaitkan tema besar rencana ini (matematika/Markowitz, analogi fisika pasar da
 - `.github/workflows/ci.yml` + `.github/workflows/deploy.yml` — CI dgn Neon branch-per-PR, auto-merge dgn pengecualian path sensitif (Section C.3)
 - `infra/neon/partitioning/*.sql` — strategi partitioning time-series
 - `THIRD_PARTY_LICENSES.md` (baru, Fase 0) — wajib catat atribusi MIT Vibe-Trading (HKUDS) utk tiap modul yang di-fork/adaptasi (mcp-server, broker-connector, shadow-account) sesuai keputusan reuse-kode di atas
+- `apps/platform-core/llm-gateway/token_budget.py` (baru) — enforce `tenant_token_ledger` per invocation, skip cek kalau role superadmin (Section B.15)
+- `docs/token-usage.md` (baru) — dokumentasi transparansi token utk pengguna (Section B.15)
+- `apps/products/trading/telegram-bot/` — Python (`python-telegram-bot`), bukan TypeScript spt draft awal (Section B.14)
