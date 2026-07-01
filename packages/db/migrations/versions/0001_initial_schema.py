@@ -45,6 +45,7 @@ def upgrade() -> None:
         CREATE TABLE platform_user (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             tenant_id UUID REFERENCES tenant(id),
+            clerk_user_id TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             role TEXT NOT NULL DEFAULT 'tenant' CHECK (role IN ('superadmin','admin','tenant')),
             created_at TIMESTAMPTZ DEFAULT now()
