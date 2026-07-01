@@ -60,7 +60,7 @@ jobs:
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           compare_branch: preview/pr-${{ github.event.number }}
-          base_branch: main
+          base_branch: production
           api_key: ${{ secrets.NEON_API_KEY }}
 
   neon-cleanup-branch:
