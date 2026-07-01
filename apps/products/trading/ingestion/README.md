@@ -8,7 +8,7 @@ Worker Python: connector CEX (CCXT+native WS) & DEX (Hyperliquid, dYdX v4, GMX, 
 
 Standalone script utk sekarang, **belum di-wire ke Inngest** (self-hosted job scheduler yg direncanakan di B.1/B.9 — belum ada infra-nya sama sekali di repo ini). Jalankan manual/cron sementara.
 
-**Catatan verifikasi**: logic upsert/idempotency/health-tracking sudah diverifikasi via mocked exchange object + Postgres lokal asli (sandbox sesi ini diblokir network policy-nya ke `fapi.binance.com`, mirip kasus Neon/Railway sebelumnya) — tapi **panggilan jaringan asli ke Binance belum pernah dites**. Wajib coba jalankan sungguhan (lihat "Local dev" di bawah) sebelum dianggap kelar.
+**Catatan verifikasi**: logic upsert/idempotency/health-tracking diverifikasi lewat mocked exchange object + Postgres lokal (dari sandbox Claude Code, yg diblokir network policy-nya ke `fapi.binance.com`). **Panggilan jaringan asli ke Binance + Neon production sudah dites user sendiri & BERHASIL** (`BTC/USDT:USDT` & `ETH/USDT:USDT`, funding_rate + ohlcv, lewat proxy Webshare.io) — lihat gotcha proxy di bawah kalau nemu `InvalidProxySettings`/`407 Proxy Authentication Required` pas setup pertama kali.
 
 ## Local dev
 
@@ -25,6 +25,14 @@ PYTHONPATH=../../../../packages/db/src python ingest.py --symbols "BTC/USDT:USDT
 ```
 
 `BINANCE_API_KEY`/`BINANCE_PROXY_URL` menyelesaikan dua masalah yg beda: API key (harus read-only, jangan pernah kasih izin trading/withdrawal — script ini gak pernah submit order) cuma soal rate limit; proxy soal IP yg mungkin di-block/dibatasi Binance (mis. IP cloud/datacenter kayak Railway) — request yg udah authenticated dari IP yg di-block tetap ke-block, jadi API key doang gak nyelesain masalah blocking.
+
+**Gotcha proxy yg kejadian pas setup real pertama kali** (keduanya sudah fixed di kode/didokumentasikan di sini biar gak keulang):
+- `ccxt.base.errors.InvalidProxySettings: ...multiple conflicting proxy settings...` — sudah di-fix di `binance_ccxt.py` (cuma set `httpsProxy`, jangan `httpProxy` bareng, krn Binance API selalu `https://`).
+- `407 Proxy Authentication Required` — ini BUKAN soal concurrent user/plan Webshare, murni salah copy username/password proxy (`user:pass@host:port`). Test isolasi paling gampang, gak perlu Python sama sekali:
+  ```bash
+  curl.exe --proxy "http://user:pass@host:port/" https://ipv4.webshare.io/
+  ```
+  Kalau ini balikin sebuah IP address, kredensial proxy-nya valid dan masalahnya ada di tempat lain (mis. `DATABASE_URL` yg salah, bukan proxy).
 
 Cek hasilnya:
 ```sql
