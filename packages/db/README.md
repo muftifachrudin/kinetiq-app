@@ -18,9 +18,25 @@ to the psycopg2 dialect instead of the `psycopg` (v3) driver this project actual
 in `migrations/env.py` by forcing the `+psycopg` drivername on whatever `DATABASE_URL` is passed in
 (verified locally against a bare `postgresql://` DSN, not just the `+psycopg` form).
 
-Not yet done (needs Postgres role/permission work best done directly against Neon): Row-Level
-Security policies (Section B.4), the append-only grant on `order_audit_log` (revoke UPDATE/DELETE
-from the app role), and pgvector setup (Section C.1).
+**Row-Level Security (Section B.4) is now live** as of `0002_add_rls_policies.py`: `tenant_isolation`
+policies on the 9 tenant-owned domain tables (`tenant_token_ledger`, `strategy`, `portfolio_target`,
+`position`, `order_audit_log`, `risk_mandate`, `tenant_credential`, `dlmm_position`, `trade_annotation`)
+plus `llm_config` (with a NULL-tenant_id exception so global/product-scope rows stay visible to every
+tenant, per the resolution hierarchy in Section B.13). `platform_user` deliberately has no RLS policy
+-- `api-gateway/deps.py` looks a caller up by `clerk_user_id` *before* any tenant_id is known, and
+scoping that lookup would break login entirely. Uses `FORCE ROW LEVEL SECURITY` because the app's
+`DATABASE_URL` role is currently the same role that owns these tables (no separate least-privilege
+app role provisioned yet) -- without FORCE, Postgres exempts the owner from RLS and the policies
+would be silent no-ops against the app's own queries. A dedicated non-owner app role (a stronger
+defense-in-depth layer than FORCE + session variables alone) remains a good future hardening step,
+not done here. Verified locally end-to-end against a non-superuser owner role (mirroring the
+production connection): cross-tenant reads return zero rows, cross-tenant writes are rejected by
+`WITH CHECK`, and a session with no tenant context set at all sees nothing (fails closed) -- see
+`docs/deployment-runbook.md` for the full verification method and a real gotcha this surfaced
+(`SET x = :param` doesn't accept bind parameters in Postgres; use `set_config()` instead).
+
+Still not done: the append-only grant on `order_audit_log` (revoke UPDATE/DELETE from the app role)
+and pgvector setup (Section C.1).
 
 ## Local dev
 

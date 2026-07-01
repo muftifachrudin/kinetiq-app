@@ -47,6 +47,15 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
   Railpack's zero-config Python detection still fires), and set
   `PYTHONPATH` in `startCommand` to include both the sibling package's
   source dir and the service's own folder (see `railway.toml`).
+- Never `SET x = :param` with a bind parameter -- Postgres rejects it as a
+  syntax error (`SET` isn't DML, no extended-protocol parameter support).
+  Use `SELECT set_config('x', :param, false)` instead. Also: an `app.*`
+  custom GUC that's never been set *in the current session* can read back
+  as `''` rather than `NULL` via `current_setting(name, true)` once any
+  session anywhere has used that GUC name -- wrap with
+  `NULLIF(current_setting(...), '')` before casting. Full RLS gotchas
+  (including why `FORCE ROW LEVEL SECURITY` is required and why
+  `platform_user` has no RLS policy) are in `docs/deployment-runbook.md`.
 
 ## Before pushing any infra/config change
 

@@ -54,9 +54,19 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Platfor
         db.commit()
         db.refresh(user)
 
-    # RLS policies (Section B.4) key off this session-local setting.
+    # RLS policies (Section B.4) key off these session-local settings. Plain
+    # `SET x = :param` doesn't accept bind parameters (Postgres rejects it as
+    # a syntax error at the protocol level -- SET isn't a regular DML
+    # statement) -- `set_config()` is the parameterizable equivalent.
+    db.execute(
+        text("SELECT set_config('app.is_superadmin', :val, false)"),
+        {"val": "true" if user.role == "superadmin" else "false"},
+    )
     if user.tenant_id is not None:
-        db.execute(text("SET app.tenant_id = :tenant_id"), {"tenant_id": str(user.tenant_id)})
+        db.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, false)"),
+            {"tenant_id": str(user.tenant_id)},
+        )
 
     return user
 
