@@ -408,3 +408,60 @@ Kalau tidak tercapai, hasil tetap valuable sebagai input kalibrasi ulang `trader
 - Range terlalu pendek — harus return list kosong dengan jelas, bukan infinite loop
 - `step_months != test_months` (overlapping windows) — pastikan intentional, validator punya flag `allow_test_overlap`
 - Regression test: commit config MARKOVIZ V5 saat ini, assert output window generator baru identik dengan versi lama
+
+## 9. Roadmap "prediksi perjalanan trade" — arah, target, durasi, reversal, sesi, fuel (3 Juli 2026)
+
+> **Verifikasi Claude Code**: founder minta agent trading punya kemampuan
+> lebih dari sekadar "sinyal masuk" — harus bisa memprediksi ke mana harga
+> akan pergi (TP, seberapa jauh dlm %), kalau gagal (SL) apakah harga
+> balik ke rumah (retrace ke entry) atau malah lanjut jadi tujuan baru
+> arah berlawanan (reversal), berapa lama itu semua bakal makan waktu, dan
+> pola behavior trader per jam (mis. sesi Asia sering long) yg
+> divisualisasikan sbg peta/chart — "bahan bakar"-nya volume & open
+> interest. Dipecah jadi 4 kapabilitas konkret, dipetakan ke yg udah ada
+> vs belum:
+>
+> 1. **Prediksi durasi (time-to-target)** — **DIPILIH founder sbg
+>    prioritas round berikutnya.** Datanya udah ada di
+>    `label_triple_barrier()`'s `bars_held`/`exit_ts`, tinggal dibangun
+>    agregator/prediktor: distribusi jumlah bar sampai TP/SL/timeout,
+>    dikelompokkan per arah trade + skor confluence (+ nanti sesi jam,
+>    kalau bag. 3 di bawah udah ada). BELUM dibangun — dijeda dulu atas
+>    permintaan founder utk dokumentasi + riset CoinGlass ini duluan.
+> 2. **Reversal vs continuation setelah SL** ("pulang" vs "tujuan baru
+>    arah berlawanan") — classifier baru, manfaatin `market_structure.py`
+>    CHoCH detector yg udah ada persis di titik SL. BELUM dibangun.
+> 3. **Bias sesi jam (Asia/London/NY)** — perlu candle GRANULARITY
+>    intraday (jam/menit) utk tagging sesi yg akurat. BELUM dibangun, DAN
+>    **terblokir data** (lihat probe CoinGlass di bawah — Hobbyist cuma
+>    kasih data harian, gak cukup granular utk analisis per-jam).
+> 4. **Volume & Open Interest sbg "bahan bakar"** — belum di-wire ke
+>    confluence scoring. Divalidasi arahnya via probe data real di bawah.
+
+### Probe data real CoinGlass Hobbyist (3 Juli 2026) — `COINGLASS_API_KEY` sudah ada di env, `open-api-v4.coinglass.com` reachable dari sandbox Claude Code (beda dari `fapi.binance.com`/`console.neon.tech` yg diblokir)
+
+Endpoint yg dicoba & hasilnya (semua `code: 0`, sukses) thd BTC, 90 hari terakhir:
+- `futures/open-interest/aggregated-history` (interval `1d`) — OK
+- `futures/price/history` (interval `1d`) — OK
+- `futures/funding-rate/history` (interval `1d`) — OK
+- `futures/liquidation/aggregated-history` (interval `1d`, wajib param `exchange_list`) — OK
+- `futures/taker-buy-sell-volume/history` (interval `1d`, symbol format `BTCUSDT` bukan `BTC`) — OK
+- `futures/liquidation/heatmap` — 404, endpoint gak ada/beda nama dari yg diasumsikan, belum diinvestigasi lanjut
+
+**Konfirmasi langsung (bukan cuma baca ToS docs kayak riset PRD B.11 sebelumnya)**: request `interval=1h`/`15m` ke endpoint yg sama balikin data, TAPI granularity aslinya di plan Hobbyist tetap harian per dokumentasi CoinGlass sendiri — **belum dites eksplisit di sesi ini apakah `1h` benar2 granular jam-per-jam atau di-downsample diam2 ke harian**, jadi klaim "Hobbyist = daily-only" di B.11/tabel budget **masih berdiri sbg batasan yg harus diasumsikan berlaku** (bukan dikonfirmasi ulang lewat percobaan langsung interval jam) sampai ada verifikasi eksplisit — dicatat di sini biar gak diklaim "udah diverifikasi" padahal cuma daily endpoint yg beneran dicoba.
+
+**Validasi teori "OI sbg bahan bakar" (kapabilitas #4 di atas) thd 89 hari data harian real BTC/USDT**:
+| Kuadran (arah harga × arah OI) | n hari | rata² \|gerak harga\| |
+|---|---|---|
+| price↓ + OI↓ (long liquidation/capitulation) | 33 | 1.52% |
+| price↑ + OI↑ (fresh longs — fuel confirmed) | 26 | 2.05% |
+| price↑ + OI↓ (short covering — rally lemah) | 17 | 0.66% |
+| price↓ + OI↑ (fresh shorts — fuel confirmed) | 13 | 1.64% |
+
+Rata² gerak harga hari² yg OI-nya SEARAH sama harga (fuel confirmed, n=39): **1.91%** vs hari² yg OI-nya BERLAWANAN (no fuel, n=50): **1.22%**. **Arahnya konsisten sama teori** (hari fuel-confirmed gerak ~1.6x lebih jauh) — tapi ini cuma korelasi deskriptif sampel kecil (89 hari, 1 instrumen), BUKAN backtest prediktif, jadi belum bisa dianggap "tervalidasi" dlm arti yg sama kayak validasi Gann Fan/Fib (yg itu geometris exact, ini statistik noisy). Perlu sampel lebih besar + multi-instrumen sebelum dijadiin bobot confluence yg pasti.
+
+**Liquidation cascade check** (5 hari long-liquidation terbesar dari 90 hari): SEMUA 5 hari itu closing harganya turun (range -0.41% s/d -6.53%) — konsisten sama pola "liquidation cascade" (posisi long yg ke-liquidasi paksa jual, dorong harga makin turun, konsisten sama konsep "magnet" level_strength.py: cluster leverage besar = level yg harga condong "ditarik" ke situ). Cuma 5 sampel, indikatif bukan konklusif.
+
+**Kesimpulan praktis buat kapabilitas #4**: data OI/funding/liquidation/taker-flow harian dari CoinGlass Hobbyist SUDAH CUKUP buat mulai bangun "fuel confirmation" sbg confluence factor tambahan (deterministic dulu, sama pola `level_strength.py`) — gak perlu upgrade tier buat versi harian ini. Tapi kapabilitas #3 (bias sesi jam) tetap terblokir data granular, sesuai batasan yg udah dicatat di B.11 sblm ini.
+
+**Reminder eksplisit (diminta founder)**: `level_strength.py` Part #2 (fitting bobot beneran via logistic regression + wiring ke `fib_gann_confluence_score()`/`score_confluence()`) **masih BELUM dikerjakan** — status tetap sama seperti bag. 6a, cuma dicatat ulang di sini biar gak kelewat pas lanjut ke kapabilitas baru manapun dari bag. ini.
