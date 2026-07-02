@@ -22,7 +22,7 @@ jobs:
       - name: Install packages/db + packages/backtest-core + ruff
         run: pip install -e packages/db -e packages/backtest-core ruff
       - name: Ruff check
-        run: ruff check packages/db/src packages/db/migrations packages/backtest-core/src packages/backtest-core/tests
+        run: ruff check packages/db/src packages/db/migrations packages/backtest-core/src packages/backtest-core/tests apps/products/trading/agent-orchestrator
 
   test:
     runs-on: ubuntu-latest
@@ -31,10 +31,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install packages/backtest-core
-        run: pip install -e "packages/backtest-core[dev]"
+      - name: Install packages/backtest-core + pytest
+        run: pip install -e "packages/backtest-core[dev]" pytest
       - name: Run tests
-        run: pytest packages/backtest-core/tests
+        run: pytest packages/backtest-core/tests apps/products/trading/agent-orchestrator/tests
 
   # Requires the Neon GitHub integration (Neon Console -> project -> Settings
   # -> Integrations -> connect this repo), which auto-sets the NEON_API_KEY
