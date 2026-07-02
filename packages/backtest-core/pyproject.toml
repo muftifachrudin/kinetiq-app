@@ -1,0 +1,18 @@
+[project]
+name = "kinetiq-backtest"
+version = "0.1.0"
+description = "Shared walk-forward windowing utilities for Kinetiq strategy validation harnesses (one definition, reused by every backtest caller)"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dateutil>=2.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
