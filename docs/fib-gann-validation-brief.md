@@ -42,6 +42,28 @@ Beda dari standar textbook (0.236/0.382/0.5/0.618/0.786 + ext 1.272/1.618) di du
 
 **Implikasi untuk `fib_gann_timing.py`**: jangan hardcode array level ke 4-5 angka standar. Definisikan sebagai config list per-instrumen yang bisa di-extend, default-nya pakai set founder di atas — bukan textbook generik.
 
+> **Verifikasi Claude Code (3 Juli 2026)**: cek langsung ke tab "Coordinates"
+> + "Style" tool Fib Retracement TradingView founder (BTCUSDT 1h) —
+> **nemuin 2 hal yang perlu dikoreksi dari spek di atas**:
+> - **Level `3.618` ternyata AKTIF di tool founder** (extension), gak ada
+>   di daftar bag. ini maupun di `DEFAULT_FIB_EXTENSION_LEVELS` sebelum
+>   ini — udah ditambahin.
+> - **Formula `compute_fib_levels()` ternyata TERBALIK ARAHNYA** — sblm ini
+>   fungsi hitung `swing_high - level*leg` (0%=high, 100%=low, extension
+>   proyeksi ke BAWAH swing_low). Koordinat exact tool founder (titik #1
+>   60,919.9 @ bar 160, titik #2 58,029.2 @ bar 328) + 9 harga level yg
+>   ke-label langsung di chart, di-fit least-squares ke `swing_low +
+>   level*leg` dgn **R²=1.000000** — jadi arah yg BENAR itu 0%=swing_low,
+>   100%=swing_high, extension proyeksi ke ATAS swing_high. Formula sudah
+>   di-flip. Ini juga ngejelasin kenapa `compute_take_profit_levels()`
+>   (spec bag. 5b) sebelumnya HARUS nulis formula extension sendiri
+>   terpisah dari `compute_fib_levels()` buat kasus LONG — sekarang
+>   `compute_fib_levels()` yg udah bener malah otomatis match persis sama
+>   cabang LONG itu. **Cabang SHORT `compute_take_profit_levels()` (extension
+>   ke BAWAH swing_low) masih BELUM tervalidasi** thd chart real — itu
+>   asumsi cerminan buat simetri, bukan hasil verifikasi, ditandai jelas di
+>   docstring kode. Detail lengkap di `docs/prd.md`.
+
 ## 2b. Gann Fan — full 9 angle standar, dikonfirmasi dari settings TradingView
 
 **CONFIRMED** (dari screenshot settings Gann Fan TradingView founder, semua checkbox aktif): full 9 angle standar teori Gann dipakai sekaligus dari satu pivot yang sama:

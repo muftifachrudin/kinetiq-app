@@ -187,10 +187,14 @@ def test_volume_confirmation_no_prior_candles_returns_zero():
 
 
 def test_compute_fib_levels_founder_default_set():
+    # 0% = swing_low, 100% = swing_high, extensions continue ABOVE
+    # swing_high (verified against real TradingView coordinates below --
+    # this is NOT the "swing_high - level*leg" formula this function used
+    # before 3 Juli 2026).
     levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
-    assert levels["retracement"][0.618] == pytest.approx(100 - 0.618 * 20)
-    assert levels["retracement"][0.886] == pytest.approx(100 - 0.886 * 20)
-    assert levels["extension"][1.618] == pytest.approx(100 - 1.618 * 20)
+    assert levels["retracement"][0.618] == pytest.approx(80 + 0.618 * 20)
+    assert levels["retracement"][0.886] == pytest.approx(80 + 0.886 * 20)
+    assert levels["extension"][1.618] == pytest.approx(80 + 1.618 * 20)
     assert set(levels["retracement"]) == set(fgt.DEFAULT_FIB_RETRACEMENT_LEVELS)
     assert set(levels["extension"]) == set(fgt.DEFAULT_FIB_EXTENSION_LEVELS)
 
@@ -204,6 +208,31 @@ def test_compute_fib_levels_accepts_custom_levels():
     levels = fgt.compute_fib_levels(swing_low=0.0, swing_high=100.0, retracement_levels=(0.5,), extension_levels=())
     assert levels["retracement"] == {0.5: 50.0}
     assert levels["extension"] == {}
+
+
+def test_compute_fib_levels_matches_real_tradingview_coordinates():
+    # design brief Section 2a verification (3 Juli 2026): exact (price,
+    # bar) coordinates from the founder's real Fib Retracement tool
+    # (BTCUSDT 1h) -- point #1 = 60919.9 @ bar 160, point #2 = 58029.2 @
+    # bar 328 -- plus every level price read straight off the chart
+    # labels. A least-squares fit of these 9 points against `swing_low +
+    # level*leg` gave R^2 = 1.000000 (tiny per-level residuals are
+    # decimal-rounding in the displayed coordinates, not formula error).
+    levels = fgt.compute_fib_levels(swing_low=58029.2, swing_high=60919.9)
+    observed = {
+        0.382: 59135.5,
+        0.5: 59477.2,
+        0.618: 59819.0,
+        0.786: 60305.5,
+        0.886: 60595.1,
+        1.13: 61301.7,
+        1.272: 61712.9,
+        1.414: 62124.2,
+        1.618: 62715.0,
+    }
+    for level, expected_price in observed.items():
+        pool = levels["retracement"] if level < 1.0 else levels["extension"]
+        assert pool[level] == pytest.approx(expected_price, abs=10.0)
 
 
 # --- Gann Fan ---
@@ -458,14 +487,32 @@ def test_compute_take_profit_levels_long_projects_above_swing_high_and_filters_b
     assert all(p > 100.0 for p in tps)
 
 
-def test_compute_take_profit_levels_short_matches_compute_fib_levels_extension_formula():
+def test_compute_take_profit_levels_long_matches_compute_fib_levels_extension_formula():
+    # since the 3 Juli 2026 real-chart fix, compute_fib_levels' extension
+    # formula (0%=low, 100%=high, extensions above high) is now
+    # mathematically identical to this function's LONG branch -- verify
+    # that equivalence explicitly so a future change to either doesn't
+    # silently diverge them again.
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    tps = fgt.compute_take_profit_levels(pivot, basis, gann_prices, atr_value=4.0)
+    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
+    assert tps == (120.0,)
+    assert tps[0] == pytest.approx(fib_levels["extension"][2.0])
+
+
+def test_compute_take_profit_levels_short_projects_below_swing_low():
+    # SHORT branch is a mirror-image assumption for symmetry -- NOT yet
+    # verified against a real SHORT-oriented TradingView Fib drawing (see
+    # compute_take_profit_levels' docstring). This only locks in its
+    # current, documented behavior, not that the behavior is confirmed
+    # correct.
     basis = sw(10, 80.0, fgt.SwingDirection.LOW)
     pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)
     gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)  # includes 2x1 == 60.0 here
     tps = fgt.compute_take_profit_levels(pivot, basis, gann_prices, atr_value=4.0)
-    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
     assert tps == (60.0,)
-    assert tps[0] == pytest.approx(fib_levels["extension"][2.0])
     assert all(p < 80.0 for p in tps)
 
 

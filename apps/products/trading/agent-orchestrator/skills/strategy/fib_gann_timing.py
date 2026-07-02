@@ -61,8 +61,10 @@ import enum
 # tighter set, especially in the 0.786-1.13 and 1.272-2.272 zones, used for
 # more granular target/invalidation precision than the standard spacing
 # gives. Callers may override per-instrument; these are the defaults.
+# Re-verified against the founder's live TradingView Fib tool Style panel
+# (3 Juli 2026) -- 3.618 was enabled there but missing from this set, added.
 DEFAULT_FIB_RETRACEMENT_LEVELS = (0.382, 0.5, 0.618, 0.786, 0.886)
-DEFAULT_FIB_EXTENSION_LEVELS = (1.13, 1.272, 1.414, 1.618, 2.0, 2.272, 2.618)
+DEFAULT_FIB_EXTENSION_LEVELS = (1.13, 1.272, 1.414, 1.618, 2.0, 2.272, 2.618, 3.618)
 
 # Weekly -> Daily -> 4h -> 1h, weight decreasing with timeframe size --
 # confirmed to match the original PRD B.6 draft exactly, no correction
@@ -284,18 +286,29 @@ def compute_fib_levels(
     retracement_levels: tuple[float, ...] = DEFAULT_FIB_RETRACEMENT_LEVELS,
     extension_levels: tuple[float, ...] = DEFAULT_FIB_EXTENSION_LEVELS,
 ) -> dict[str, dict[float, float]]:
-    """Retracement/extension prices for one swing leg. Direction-agnostic:
-    caller passes swing_low/swing_high regardless of which one came first
-    chronologically -- retracements always measure back from swing_high
-    toward swing_low (the standard convention), extensions project beyond
-    swing_low in the same direction.
+    """Retracement/extension prices for one swing leg: 0% = swing_low,
+    100% = swing_high, extensions beyond 100% continue ABOVE swing_high --
+    direction-agnostic in the sense that it doesn't matter which of the
+    two prices was reached first chronologically, only which is
+    numerically lower/higher.
+
+    VERIFIED against the founder's real TradingView Fib Retracement tool
+    (3 Juli 2026, BTCUSDT 1h): exact (price, bar) coordinates from the
+    tool's own Coordinates panel (60919.9 @ bar 160, 58029.2 @ bar 328)
+    plus 9 labeled level prices read straight off the chart fit
+    `swing_low + level * leg` with R^2 = 1.000000 -- this is NOT the
+    formula this function used before (previously `swing_high -
+    level * leg`, which was backwards: it matched the founder's chart
+    only up to sign, putting retracements in the same 0-100% price band
+    but extensions BELOW swing_low instead of above it). See
+    docs/fib-gann-validation-brief.md Section 2a's verification note.
     """
     if swing_high <= swing_low:
         raise ValueError(f"swing_high ({swing_high}) must be greater than swing_low ({swing_low})")
 
     leg = swing_high - swing_low
-    retracements = {level: swing_high - level * leg for level in retracement_levels}
-    extensions = {level: swing_high - level * leg for level in extension_levels}
+    retracements = {level: swing_low + level * leg for level in retracement_levels}
+    extensions = {level: swing_low + level * leg for level in extension_levels}
     return {"retracement": retracements, "extension": extensions}
 
 
@@ -601,12 +614,16 @@ def compute_take_profit_levels(
     passes_risk_reward_gate, which treats that as a failing signal).
 
     This does NOT reuse compute_fib_levels' extension dict directly:
-    compute_fib_levels always projects extensions below swing_low
-    regardless of argument order (see its docstring) -- correct for a
-    SHORT continuation, but wrong for LONG, which needs targets above
-    swing_high instead. This computes whichever side trade_direction_
-    from_pivot(pivot) calls for, using the same extension formula
-    mirrored around the leg.
+    compute_fib_levels (as of 3 Juli 2026's real-chart fix) always
+    projects extensions ABOVE swing_high, which is correct for LONG but
+    not directly usable for SHORT. The LONG branch below is now
+    mathematically identical to compute_fib_levels' own formula (verified
+    against real TradingView coordinates -- see compute_fib_levels'
+    docstring). The SHORT branch (extensions below swing_low) is a
+    mirror-image assumption for symmetry, NOT yet verified against a real
+    SHORT-oriented TradingView Fib drawing -- flag this if a future
+    validation round surfaces a mismatch, same as the LONG/extension
+    direction bug this replaced.
     """
     leg = abs(pivot.price - basis_leg_start.price)
     if leg <= 0:
