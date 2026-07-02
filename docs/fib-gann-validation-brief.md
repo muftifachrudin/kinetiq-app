@@ -11,7 +11,7 @@ Ini rekap dari 4 pertanyaan klarifikasi yang diajukan sesi Claude Code sebelumny
 | 1 | Swing high/low detection | **RESOLVED** | ZigZag % / ATR-based, threshold 1.5–2x ATR(14) sbg starting point (lihat bag. 3) |
 | 2 | Level Fibonacci | **RESOLVED** | Modifikasi personal, bukan standar textbook — set lebih rapat (lihat bag. 2a) |
 | 3a | Gann Fan — angle set | **RESOLVED** | Full 9 angle standar, semua aktif (lihat bag. 2b) |
-| 3b | Gann Fan — kalibrasi price-per-time | **RESOLVED** | Opsi 1: fixed reference scale dari swing basis pivot (`swing_range / swing_duration_bars`) + validasi visual wajib (lihat bag. 2c) |
+| 3b | Gann Fan — kalibrasi price-per-time | **RESOLVED & VALIDASI VISUAL DONE (3 Juli 2026)** | Opsi 1: fixed reference scale dari swing basis pivot (`swing_range / swing_duration_bars`) — matched ke koordinat exact TradingView founder (lihat bag. 2c) |
 | — | Market structure (BOS/CHoCH) | **RESOLVED (2 Juli 2026)** | Opsi (b): skill terpisah `market_structure.py`, plug ke `score_confluence()` lewat slot ala `regime_alignment` — bukan bagian tak terpisahkan dari `fib_gann_timing.py` (lihat bag. 2d) |
 | 4 | Multi-timeframe confluence & bobot | **RESOLVED** | Weekly→Daily→4h→1h, bobot besar→kecil, sesuai draft PRD tanpa perubahan (lihat bag. 2e) |
 | — | TP/SL, R:R gate, labeling | **SPEC BARU — siap implementasi** | SL struktural + tiered TP dari extension confluence + R:R gate ≥1.5 + triple-barrier labeling (lihat bag. 5) — klaim "reuse pipeline MARKOVIZ" di 5d **sudah diverifikasi & ternyata TIDAK bisa langsung di-reuse**, lihat catatan di 5d |
@@ -67,6 +67,39 @@ price_per_time_unit = swing_price_range / swing_duration_in_bars
 - Otomatis adaptif per-instrumen (BTC vs altcoin beda skala harga, rasio tetap konsisten karena diturunkan dari swing masing-masing).
 
 **Wajib ada langkah validasi visual setelah implementasi**: generate beberapa sample fan dari algoritma → founder eyeball-compare terhadap fan manual di TradingView untuk instrumen/timeframe yang sama. Kalau sudut jauh berbeda secara visual, tweak formula reference scale (mis. ganti basis ke ATR rolling N-period) — bukan berarti pendekatan fixed-scale-nya salah arah.
+
+> **Validasi visual DONE (3 Juli 2026)**: founder gambar Gann Fan manual di
+> TradingView (BTCUSDT perpetual, Binance, 1h) dan kasih koordinat exact
+> dari tab "Coordinates" tool-nya sendiri (bukan estimasi visual/crosshair)
+> — titik #1: harga 58,005.0 @ bar 127, titik #2: harga 60,908.9 @ bar 177
+> (jarak 50 bar). Base rate 1x1 hasil formula `price_per_time_unit =
+> swing_price_range / swing_duration_in_bars` = 58.078/bar, dan itu
+> **matched langsung** terhadap definisi geometris TradingView sendiri
+> (garis 1x1 = garis lurus antara 2 titik itu, jadi rate-nya memang
+> harus persis segitu — bukan sesuatu yang perlu di-fit/didekati).
+>
+> **1 kesalahan verifikasi ketemu & diperbaiki di proses ini**: sempat ada
+> percobaan cross-check ke garis "putih" di chart yang dikira 1x1, hasilnya
+> meleset ~2x dari hitungan formula — investigasi lanjut (founder cek tab
+> "Style" tool Gann Fan-nya) ketahuan garis putih itu **parallel channel**
+> (tool gambar terpisah, gak ada hubungannya sama Gann Fan sama sekali),
+> warna 1x1 yang benar itu **cyan**. Selisih 2x itu murni salah baca garis,
+> BUKAN bug kalibrasi — begitu dibandingin ke garis & koordinat yang benar,
+> cocok. Pelajaran buat validasi berikutnya: selalu cek warna garis di tab
+> Style Gann Fan tool dulu sebelum baca angka dari chart, jangan asumsi
+> dari posisi visual "garis tengah" doang.
+>
+> **Kalibrasi Opsi 1 sekarang resmi CONFIRMED, bukan lagi belum-tervalidasi**
+> — boleh diandalkan di kode tanpa disclaimer "belum divalidasi" lagi.
+>
+> **Item baru masuk backlog dari sesi validasi ini (bukan diminta sekarang,
+> dicatat aja)**: founder juga pakai **parallel channel** (tool terpisah
+> dari Gann Fan) di chart-nya bareng fib+gann+BOS/CHoCH — belum ada scope
+> resminya di PRD B.6 sama sekali (beda dari BOS/CHoCH yang minimal udah
+> disebut brief). Kandidat jadi skill baru (`market_channel.py`?) kalau
+> nanti mau diformalisasi juga — belum diputuskan, jangan diimplementasi
+> dulu sebelum dikonfirmasi scope-nya sama founder, sama persis pola BOS/
+> CHoCH sebelum diputuskan di bag. 2d.
 
 ## 2d. Market structure (BOS/CHoCH) — layer tambahan yang belum ada di PRD
 

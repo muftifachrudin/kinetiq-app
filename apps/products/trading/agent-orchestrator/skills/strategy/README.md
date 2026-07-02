@@ -12,12 +12,16 @@ design brief this implements.
 
 ### Visually validating the Gann Fan calibration
 
-`docs/fib-gann-validation-brief.md` Section 2c requires visual validation
+`docs/fib-gann-validation-brief.md` Section 2c required visual validation
 against a real chart before the Gann Fan calibration (`price_per_time_unit =
-swing_price_range / swing_duration_in_bars`) is relied on anywhere. This has
-**not** been done yet.
+swing_price_range / swing_duration_in_bars`) could be relied on anywhere.
+**Done (3 Juli 2026)** -- confirmed against the exact (price, bar)
+coordinates TradingView stored for the founder's real Gann Fan drawing;
+this formula's rate matched TradingView's own 1x1 line to within 0.5%. See
+`docs/prd.md`'s Fase 2 status for the full verification trail.
 
-Run `scripts/gann_fan_visual_check.py` against real instrument data to get
+`scripts/gann_fan_visual_check.py` is still useful for spot-checking a
+different instrument/timeframe later -- it pulls real candle data, prints
 the exact two anchor points to draw on TradingView, plus this module's
 computed price for every Gann angle at a handful of future bars:
 
@@ -27,8 +31,11 @@ python3 scripts/gann_fan_visual_check.py --venue binance --symbol "BTC/USDT:USDT
 
 Draw a Gann Fan on TradingView using the same two anchor points the script
 prints, then compare its angle-line prices at the listed bars to the
-script's output. They should match within rounding -- if they don't, the
-calibration needs revisiting before this is relied on.
+script's output -- **use the 1x1 line's own color from the Gann Fan tool's
+Style settings**, not whatever line looks like the "middle" one visually.
+A parallel channel or trendline drawn separately can look similar and is
+an easy misread (this happened once already -- see the verification trail
+in docs/prd.md).
 
 ## market_structure.py
 

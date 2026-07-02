@@ -11,13 +11,19 @@ Gann Fan (gann_fan_prices) uses the founder-confirmed calibration (design
 brief Section 2c, Option 1): price_per_time_unit = swing_price_range /
 swing_duration_in_bars, derived from the same swing leg detect_swings()
 already produced -- one source of truth, not a separate calibration
-system. This has NOT been visually validated against the founder's own
-TradingView charts yet (the brief requires this explicitly before relying
-on it) -- see the module's README for the verification script.
+system. VISUALLY VALIDATED against the founder's own TradingView chart
+(3 Juli 2026): given the exact (price, bar) coordinates TradingView itself
+stored for the founder's real Gann Fan drawing (58005.0 @ bar 127,
+60908.9 @ bar 177), this formula's rate = price_range / bar_range matches
+TradingView's own 1x1 line to within 0.5% (pure rounding noise from an
+earlier crosshair-read comparison, not a formula error -- see
+docs/prd.md's Fase 2 status for the full trail, including a red herring
+where a *parallel channel* drawing (a separate tool, unrelated to Gann
+Fan) was initially misread as the 1x1 line).
 
-Market structure (BOS/CHoCH) is also out of scope here -- noted as an
-explicit open item in the design brief, not yet confirmed as part of this
-skill's scope vs. a separate skill.
+Market structure (BOS/CHoCH) is a separate skill --
+see skills/strategy/market_structure.py, which plugs into
+score_confluence()'s regime_alignment slot rather than living here.
 
 Exit management (compute_stop_loss/compute_take_profit_levels/
 build_exit_plan/passes_risk_reward_gate) implements design brief Section
