@@ -6,6 +6,19 @@ data model, and roadmap: **`docs/prd.md`** (living doc -- keep it in sync
 whenever a real architecture/infra decision changes, don't let it drift into
 a stale snapshot). Deployment/infra gotchas: **`docs/deployment-runbook.md`**.
 
+## Language
+
+Respond to the user in **Bahasa Indonesia** by default -- the founder's working
+language across this whole project (chat, PRD, design briefs). This does NOT
+apply to anything checked into the repo as code or engineering artifact: code,
+comments, docstrings, commit messages, PR titles/descriptions, and CLAUDE.md/
+`docs/deployment-runbook.md` itself stay in **English**, matching the existing
+codebase convention (every `.py`/`.ts`/`.yml` file and every commit so far).
+`docs/prd.md` and `docs/fib-gann-validation-brief.md` are the exception --
+those are already written in Indonesian (mixed with English technical terms
+where that's how the founder actually writes/thinks), keep new edits to them
+in that same style rather than switching to English.
+
 ## Before touching Railway, Neon, or CI config
 
 Read `docs/deployment-runbook.md` first. The short version of what's in there:
