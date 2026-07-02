@@ -314,6 +314,74 @@ Pindahkan window generator ke `packages/backtest-core/src/kinetiq_backtest/` (se
 2. Swap import MARKOVIZ V5 ke package baru, jalankan regression test — pastikan PF/Sharpe per window TIDAK berubah
 3. Baru fib_gann_backtest pakai package ini dari awal (tidak perlu migrasi karena baru)
 
+### 6a. Level strength scoring — teori founder (3 Juli 2026), touch tracker
+
+> **Verifikasi Claude Code**: founder mengajukan teori tambahan — kekuatan
+> sebuah level fib/gann sebagai support/resistance itu tidak tetap, dan
+> bisa dilabeli dari histori "sentuhan" harga terhadapnya:
+> - Ratio 0.618 (dan pasangan extension-nya 1.618, golden ratio) adalah
+>   level S/R fib terkuat — lebih kuat dari ratio lain.
+> - Makin besar timeframe tempat level itu digambar, makin kuat.
+> - Makin jarang level itu disentuh ("liquidity magnet" — level virgin
+>   menarik & menahan harga), makin kuat. Makin sering disentuh, makin
+>   lemah.
+> - Setiap sentuhan bisa dilabeli: bounce (harga memantul/reversal — S/R
+>   bertahan) atau reject/break (harga tembus).
+>
+> Dibangun 2 bagian berurutan (deterministic dulu, ML-fit belakangan —
+> pola yang sama dengan `ConfluenceWeights` di `fib_gann_timing.py`, yang
+> juga masih formula starting-point, belum di-fit ke data trade beneran):
+>
+> **Part #1 (DONE, 3 Juli 2026)** — `skills/strategy/level_strength.py`:
+> - `detect_level_touches()`: jalan sepanjang candle series, deteksi tiap
+>   bar yang harganya benar-benar menyentuh sebuah level
+>   (`candle.low <= level <= candle.high`), lalu klasifikasi outcome-nya
+>   dengan mengintip sampai `max_resolution_bars` (default 10) candle ke
+>   depan — BOUNCE kalau close balik menjauh dari level lebih dari
+>   `outcome_atr_buffer_multiplier * ATR` (default 0.25×), BREAK kalau
+>   close tembus lebih dari buffer itu ke arah yang sama, CENSORED kalau
+>   ambigu (termasuk kasus data historis habis sebelum window resolusi
+>   selesai — right-censored, sama seperti `label_triple_barrier()`).
+>   `level_price_at` berupa callable (bukan float tetap) supaya secara
+>   arsitektur bisa dipakai juga untuk garis Gann yang bergerak tiap bar —
+>   **tapi ini belum diverifikasi/dilatih terhadap garis Gann beneran**,
+>   baru terhadap level fib retracement/extension statis.
+> - `level_strength_score()`: menggabungkan touch history satu level jadi
+>   satu angka deterministic — `timeframe_weight × ratio_weight ×
+>   freshness × broken_penalty`, di mana `ratio_weight` = 1.5× kalau
+>   ratio-nya 0.618/1.618 (golden ratio, sesuai klaim founder) dan 1.0×
+>   untuk ratio lain; `freshness` = `1 / (jumlah sentuhan sebelumnya + 1)`
+>   (makin jarang disentuh, makin tinggi — mengoperasionalkan "magnet");
+>   `broken_penalty` = 0.2× kalau ADA sentuhan sebelumnya (bukan sentuhan
+>   yang sedang dinilai) yang resolve jadi BREAK — sekali level itu
+>   ditembus bersih, dianggap invalidated sebagai S/R meski masih fresh.
+> - **Belum di-wire ke `fib_gann_confluence_score()` / `score_confluence()`
+>   di `fib_gann_timing.py`** — 5 faktor `ConfluenceWeights` yang ada
+>   sekarang sudah jumlah tetap 1.0, cara sebuah faktor ke-6 masuk ke
+>   formula itu (bobot baru? ubah `fib_gann_confluence_score` sendiri?
+>   pendekatan lain?) adalah keputusan desain terpisah untuk round
+>   berikutnya, tidak diasumsikan di sini.
+> - Diverifikasi terhadap data production asli (BTC/USDT 1h, pivot HIGH
+>   idx=48 @ 60666.6, basis LOW idx=45 @ 58988.0): level
+>   `retracement_0.618` sentuhan pertama skor 0.1500 — persis 1.5× skor
+>   sentuhan pertama level non-golden-ratio lain (0.1000), konsisten
+>   dengan klaim founder. Level yang sudah BREAK sekali (mis.
+>   `retracement_0.382` sentuhan #1 di idx 58) langsung menjatuhkan skor
+>   sentuhan berikutnya sampai 0.2× lipat lebih rendah dari yang seharusnya
+>   (0.0100 vs ~0.0500 tanpa penalty). Level extension TIDAK tersentuh
+>   sama sekali di window 100-candle ini (harga tidak pernah extend di
+>   atas swing_high) — jadi touch-tracking untuk extension levels belum
+>   punya bukti data real, meski code path-nya identik dengan retracement.
+> - 17 test baru (`tests/test_level_strength.py`), total suite jadi 116
+>   test, semua passing, ruff clean.
+>
+> **Part #2 (BELUM)** — fitting bobot (`GOLDEN_RATIO_BASE_WEIGHT`,
+> `ALREADY_BROKEN_PENALTY`, dst.) beneran pakai logistic regression atau
+> metode serupa terhadap data trade teranotasi asli, sama seperti
+> `ConfluenceWeights` — diblokir oleh hal yang sama: belum ada data
+> `trade_annotation` (PRD B.6b) yang cukup. Wiring ke confluence scoring
+> juga masuk Part #2, bukan Part #1.
+
 ### Metrics — funding-aware (WAJIB, bukan opsional)
 
 Semua PF/Sharpe/drawdown dihitung dari **net PnL setelah funding cost**, bukan raw price PnL:
