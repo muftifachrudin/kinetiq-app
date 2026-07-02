@@ -18,12 +18,32 @@ from kinetiq_db.models import DataSourceHealth, FundingRate, Instrument, Ohlcv, 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
-# Adding a new venue: it must be supported by ccxt with fetch_funding_rate +
-# fetch_ohlcv (see ccxt_generic.py docstring), and its API key env vars (if
-# ever used) follow the same "<VENUE>_API_KEY"/"<VENUE>_API_SECRET" pattern.
+# Adding a new venue: it must be supported by ccxt with fetch_funding_rate
+# (or fetch_funding_rates, see ccxt_generic.py) + fetch_ohlcv. venue_type
+# must match the `ck_venue_type` DB constraint ('cex' or 'dex'). API key env
+# vars follow the "<VENUE>_API_KEY"/"<VENUE>_API_SECRET" pattern for venues
+# that authenticate that way (CEX venues) -- use None/None for venues that
+# don't (e.g. Hyperliquid uses walletAddress/privateKey instead, moot here
+# since this script only calls public endpoints).
 VENUES = {
-    "binance": {"ccxt_id": "binanceusdm", "api_key_env": "BINANCE_API_KEY", "api_secret_env": "BINANCE_API_SECRET"},
-    "bybit": {"ccxt_id": "bybit", "api_key_env": "BYBIT_API_KEY", "api_secret_env": "BYBIT_API_SECRET"},
+    "binance": {
+        "ccxt_id": "binanceusdm",
+        "venue_type": "cex",
+        "api_key_env": "BINANCE_API_KEY",
+        "api_secret_env": "BINANCE_API_SECRET",
+    },
+    "bybit": {
+        "ccxt_id": "bybit",
+        "venue_type": "cex",
+        "api_key_env": "BYBIT_API_KEY",
+        "api_secret_env": "BYBIT_API_SECRET",
+    },
+    "hyperliquid": {
+        "ccxt_id": "hyperliquid",
+        "venue_type": "dex",
+        "api_key_env": None,
+        "api_secret_env": None,
+    },
 }
 
 
@@ -32,10 +52,10 @@ def get_session() -> Session:
     return sessionmaker(bind=engine)()
 
 
-def upsert_venue(db: Session, venue_name: str) -> Venue:
+def upsert_venue(db: Session, venue_name: str, venue_type: str) -> Venue:
     venue = db.query(Venue).filter_by(name=venue_name).one_or_none()
     if venue is None:
-        venue = Venue(name=venue_name, venue_type="cex")
+        venue = Venue(name=venue_name, venue_type=venue_type)
         db.add(venue)
         db.flush()
     return venue
@@ -122,7 +142,7 @@ def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) 
         cfg = VENUES[venue_name]
         exchange = ccxt_generic.make_exchange(cfg["ccxt_id"], cfg["api_key_env"], cfg["api_secret_env"])
         exchange.load_markets()
-        venue = upsert_venue(db, venue_name)
+        venue = upsert_venue(db, venue_name, cfg["venue_type"])
         db.commit()
 
         for venue_symbol in symbols:
@@ -154,7 +174,17 @@ def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--venues", nargs="+", choices=list(VENUES), default=["binance", "bybit"])
-    parser.add_argument("--symbols", nargs="+", default=["BTC/USDT:USDT", "ETH/USDT:USDT"])
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        default=["BTC/USDT:USDT", "ETH/USDT:USDT"],
+        help=(
+            "Same symbol list is used for every --venues entry in this run "
+            "-- venues with a different quote currency (e.g. hyperliquid's "
+            "USDC-quoted perps, 'BTC/USDC:USDC') must be run as a separate "
+            "invocation, not mixed with binance/bybit's USDT-quoted default."
+        ),
+    )
     parser.add_argument("--timeframe", default="1h")
     parser.add_argument("--limit", type=int, default=100)
     args = parser.parse_args()
