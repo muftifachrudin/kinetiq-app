@@ -38,6 +38,24 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
   funding snapshots are too coarse to ever land inside a short (<24h)
   holding window -- funding-cost deduction is code-verified correct via
   synthetic tests, but has no real dense funding data to exercise yet.
+- **`trade_simulator.py`'s leverage/liquidation-aware extension** -- done
+  (`docs/shadow-simulator-brief.md`, points 1-2). `MarginContext`/
+  `build_margin_context()`/`simulate_leveraged_trade()` are ADDITIVE to
+  the above (nothing existing changed) -- they model what a real leveraged
+  position does that a naive paper simulation doesn't: it can get
+  LIQUIDATED before ever reaching the structural SL if initial margin is
+  too thin for the leverage used, and funding cost erodes that margin bar
+  by bar (a flat-price position can still get liquidated purely from
+  funding bleed). `max_safe_leverage()`/`assert_liquidation_safe()`
+  enforce a fail-fast invariant (liquidation must sit >= buffer_k*ATR
+  beyond the SL) -- exact algebraically, not approximate. 22 new tests
+  (157 total), ruff clean. See Section 13 of the validation brief for the
+  full design, a real finding (the 3 real signals' `max_safe_leverage`
+  comes out 37-58x, which is mathematically valid but far above what's
+  actually safe to trade -- an absolute leverage cap is a separate,
+  deliberately-not-ML-learned hard rule, not yet implemented), and why
+  `initial_margin` is a fraction-of-notional here rather than the
+  dollar figure the brief's pseudocode shows.
 - **`metrics.py`, `report.py`** -- NOT built yet.
 - **`configs/walk_forward_windows.yaml`, `run_validation.py`** -- NOT built
   yet. `run_validation.py` will wire `data_loader` -> `signal_runner` ->
