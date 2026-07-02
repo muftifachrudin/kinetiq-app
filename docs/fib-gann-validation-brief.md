@@ -541,3 +541,20 @@ Rata² gerak harga hari² yg OI-nya SEARAH sama harga (fuel confirmed, n=39): **
 **Temuan penting yg HARUS dicatat, bukan dianggap "aman" begitu saja**: `max_safe_leverage` di ketiga sinyal ini jatuh di range 37-58x — angka yg secara matematis valid (lolos invariant liquidation-vs-SL) tapi **jauh di atas leverage yg wajar dipakai beneran** (RiskMandate schema `max_leverage` default cuma 3x). Ini KENAPA brief eksplisit taruh "Absolute max leverage cap per simbol (set manual, mis. 10-20x majors)" di daftar **"TIDAK BOLEH dipelajari ML / hard-coded rule"** (bag. 5) — formula `max_safe_leverage()` cuma menjamin "liquidation gak kejadian sebelum SL", BUKAN "leverage ini aman scr keseluruhan" (belum masuk slippage eksekusi, gap harga, risk exchange-specific, dst). **Belum diimplementasi round ini**: hard cap absolut itu sendiri — round ini cuma formula liquidation-vs-SL-nya, bukan lapisan safety di atasnya.
 
 **Belum dikerjakan (brief bag. 7, poin 3-6)**: perluasan skema `trade_annotation` (kolom eksekusi real), `shadow_pair` pairing + divergence attribution (7 komponen: entry_slippage/exit_slippage/timing_deviation/size_leverage_effect/fees_funding_delta/manual_override/residual), fidelity score, ML risk envelope. Semua itu butuh founder mulai mencatat trade real (poin 3), belum bisa dimulai round ini.
+
+## 14. Perluasan skema `trade_annotation` — DIIMPLEMENTASI 3 Juli 2026 (brief bag. 7 poin 3)
+
+> **Verifikasi Claude Code**: migration `0005_trade_annotation_execution_columns.py` — 7 kolom baru ke `trade_annotation` (`packages/db/src/kinetiq_db/models.py` + migration, `packages/db/migrations/` adalah path CODEOWNERS-protected, **wajib manual review founder sebelum merge**, gak di-auto-merge sesi ini walau CI hijau). Ini "sisi real" dari `shadow_pair` yang bakal dibangun poin 4 nanti — belum ada pairing/kolom `signal_id` apapun round ini, sengaja, sesuai scope brief poin 3 doang.
+
+**Kolom baru** (semua nullable — brief eksplisit: "Sinyal tanpa trade real tetap disimulasikan dan dicatat (sisi real kosong)"):
+- `leverage` (`Numeric(6,3)`, sama tipe kayak `Position.leverage`/`RiskMandate.max_leverage`)
+- `margin_mode` (`Text`, CHECK `in ('cross','isolated')`)
+- `entry_fill_price`, `exit_fill_price` (`Numeric(24,10)`, sama tipe kayak `Position.entry_price`)
+- `fees_paid_usd`, `funding_paid_usd` (`Numeric(24,4)`)
+- `exit_reason_real` (`Text`, CHECK `in ('stop_loss','take_profit','liquidated','timeout','manual_override')` — 5 nilai, termasuk `manual_override` yg brief bag. 3 sebut eksplisit sbg kategori exit real yg beda dari TP/SL/timeout/liquidated sistem)
+
+**Penyimpangan dari nama literal brief, didokumentasikan eksplisit**: brief nulis `fees_paid`/`funding_paid`, di sini jadi `fees_paid_usd`/`funding_paid_usd` — biar konsisten sama konvensi penamaan dolar yg udah ada di skema ini (`RiskMandate.max_position_notional_usd`, `max_daily_loss_usd`), dan biar gak ambigu sama `trade_simulator.py`'s fraksi persen-dari-notional (`funding_cost_pct` dst.) — tabel ini diisi manual sama manusia langsung dari histori trade exchange-nya (dalam dolar), bukan hasil hitungan fraksi.
+
+**Diverifikasi penuh upgrade→downgrade→upgrade thd Postgres 16 lokal beneran** (bukan cuma baca kode, sesuai disiplin migration sblmnya): fresh database, `alembic upgrade head` (0001→0005) sukses, `\d trade_annotation` konfirmasi tipe kolom + 2 CHECK constraint persis sesuai desain, insert row dgn sisi real KOSONG SEMUA sukses, insert row dgn sisi real TERISI PENUH sukses, insert dgn `margin_mode`/`exit_reason_real` invalid keduanya DITOLAK CHECK constraint (dibuktikan langsung, bukan diasumsikan), `alembic downgrade -1` sukses balikin skema persis ke bentuk semula (7 kolom + 2 constraint hilang, baris lama tetap ada), `alembic upgrade head` lagi sukses replay bersih.
+
+**Belum dikerjakan (brief bag. 7, poin 4-6)**: `shadow_pair` pairing (butuh `signal_id` linkage yg belum ada di round ini) + divergence attribution, fidelity score, ML risk envelope. Semua itu masih butuh founder ACTUALLY mulai isi kolom baru ini dari trade real-nya dulu — skema udah siap dipakai, belum ada barisnya.

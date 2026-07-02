@@ -413,7 +413,18 @@ class DlmmPosition(Base):
 
 
 class TradeAnnotation(Base):
-    """Founder (MVP) trade annotations used to calibrate fib_gann_timing."""
+    """Founder (MVP) trade annotations used to calibrate fib_gann_timing.
+
+    Execution columns (leverage through exit_reason_real) were added in
+    migration 0005 (docs/shadow-simulator-brief.md Option 2) so a real,
+    manually-logged trade can eventually be paired against its
+    trade_simulator.py counterpart -- all nullable, since a signal without
+    a real trade behind it is still annotated with the real-side columns
+    empty (brief: "Sinyal tanpa trade real tetap disimulasikan dan
+    dicatat"). Deliberately does NOT add a signal_id linkage column this
+    round -- that's the brief's shadow_pair pairing step (a later round),
+    not this schema-extension step.
+    """
 
     __tablename__ = "trade_annotation"
 
@@ -427,3 +438,27 @@ class TradeAnnotation(Base):
     action = Column(Text, nullable=False)
     rationale_text = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Real execution data (all nullable -- see class docstring)
+    leverage = Column(Numeric(6, 3))
+    margin_mode = Column(Text)
+    entry_fill_price = Column(Numeric(24, 10))
+    exit_fill_price = Column(Numeric(24, 10))
+    # Deviates from the brief's literal "fees_paid"/"funding_paid" names --
+    # explicit _usd suffix to match this schema's own existing convention
+    # for dollar amounts (RiskMandate.max_position_notional_usd,
+    # max_daily_loss_usd), and to remove any ambiguity with
+    # trade_simulator.py's percent-of-notional fee/funding fractions,
+    # which this table does NOT use (a human fills this in from their
+    # exchange's real trade history, in dollars, not a computed fraction).
+    fees_paid_usd = Column(Numeric(24, 4))
+    funding_paid_usd = Column(Numeric(24, 4))
+    exit_reason_real = Column(Text)
+
+    __table_args__ = (
+        CheckConstraint("margin_mode in ('cross','isolated')", name="ck_trade_annotation_margin_mode"),
+        CheckConstraint(
+            "exit_reason_real in ('stop_loss','take_profit','liquidated','timeout','manual_override')",
+            name="ck_trade_annotation_exit_reason_real",
+        ),
+    )
