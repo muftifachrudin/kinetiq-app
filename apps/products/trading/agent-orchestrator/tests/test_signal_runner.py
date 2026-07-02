@@ -104,6 +104,70 @@ def test_generate_signals_invariants_hold_on_noisy_series():
         assert s.index >= s.pivot.index
 
 
+def test_generate_signals_fires_on_touch_bar_not_confirmation_bar():
+    # founder-confirmed entry trigger (3 Juli 2026): a signal fires when
+    # price actually touches a fib/gann line, which happens on a LATER
+    # bar than pivot confirmation (the pivot itself confirms with a lag,
+    # so there's essentially never confluence right at that exact bar).
+    # This is a real behavioral property of the wandering synthetic
+    # series, not a contrived edge case -- every signal in this fixture
+    # fires strictly after its own pivot confirms.
+    candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
+    assert signals
+    for s in signals:
+        assert s.index > s.pivot.index, "signal fired exactly at pivot confirmation -- touch-watching isn't happening"
+
+
+def test_generate_signals_every_signal_is_a_genuine_fib_gann_touch():
+    # cross-check each emitted signal against an independently
+    # recomputed fib_gann_confluence_score at its own firing bar --
+    # proves the touch condition the docstring promises actually holds,
+    # not just that some delay happened to elapse.
+    candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
+    assert signals
+    atr_series = fgt.compute_atr(candles)
+    for s in signals:
+        gann_prices = fgt.gann_fan_prices(s.pivot, s.basis_leg_start, bar_index=s.index)
+        swing_low = min(s.pivot.price, s.basis_leg_start.price)
+        swing_high = max(s.pivot.price, s.basis_leg_start.price)
+        fib_levels = fgt.compute_fib_levels(swing_low, swing_high)
+        score = fgt.fib_gann_confluence_score(fib_levels, gann_prices, candles[s.index].close, atr_series[s.index])
+        assert score > 0.0
+
+
+def test_generate_signals_failed_touch_does_not_block_a_later_touch():
+    # exact naturally-occurring case from noisy_zigzag()'s default seed:
+    # pivot 29 touches a fib/gann line at bar 31 (fib_gann_confluence >
+    # 0) but fails the R:R gate there (no take_profits found), then
+    # touches again at bar 32 and succeeds. The final signal must be the
+    # bar-32 one, not silently dropped because bar 31 already "used up"
+    # this pivot.
+    candles = noisy_zigzag()
+    atr_series = fgt.compute_atr(candles)
+
+    def confluence_at(bar_index, pivot, basis):
+        gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=bar_index)
+        swing_low = min(pivot.price, basis.price)
+        swing_high = max(pivot.price, basis.price)
+        fib_levels = fgt.compute_fib_levels(swing_low, swing_high)
+        return fgt.fib_gann_confluence_score(fib_levels, gann_prices, candles[bar_index].close, atr_series[bar_index])
+
+    swings_31 = fgt.detect_swings(candles, as_of=candles[31].ts)
+    pivot, basis = swings_31[-1], swings_31[-2]
+    assert pivot.index == 29
+    assert confluence_at(31, pivot, basis) > 0.0  # touch #1: exists, but...
+    exit_plan_31 = fgt.build_exit_plan(pivot, basis, candles[31].close, atr_series[31], fgt.gann_fan_prices(pivot, basis, 31))
+    assert not fgt.passes_risk_reward_gate(exit_plan_31)  # ...fails the R:R gate
+    assert confluence_at(32, pivot, basis) > 0.0  # touch #2: also a real touch
+
+    signals = sr.generate_signals(candles)
+    matching = [s for s in signals if s.pivot.index == 29]
+    assert len(matching) == 1
+    assert matching[0].index == 32
+
+
 def test_generate_signals_no_duplicate_signals_for_same_persisting_pivot():
     # one clean reversal (confirms a HIGH then a LOW pivot), then a long
     # flat stretch where neither swing changes -- must not re-signal on

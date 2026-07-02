@@ -11,6 +11,21 @@ detect_swings -> gann_fan_prices -> compute_fib_levels ->
 fib_gann_confluence_score -> market_structure.detect_structure_event ->
 score_confluence -> build_exit_plan -> passes_risk_reward_gate.
 
+Entry trigger (founder-confirmed, 3 Juli 2026): a signal fires on the bar
+price actually TOUCHES a fib/gann line (fib_gann_confluence_score > 0),
+not on the bar a pivot first confirms. A ZigZag pivot confirms with a
+lag -- price has already moved away from it by confirmation time -- so
+the retracement back into a fib/gann level the founder actually watches
+for entry happens on a LATER bar, sometimes many bars after confirmation.
+Checking confluence only once, at the confirmation bar, would miss that
+retracement entirely most of the time. This module instead keeps
+watching every bar after a pivot confirms (while it remains the latest
+pivot) until price touches a line, then evaluates the full signal at
+that bar. Multiple touch attempts for the same pivot are allowed -- an
+early touch that fails the R:R gate or entry validity doesn't block a
+later, better touch of a different line from firing -- but a pivot that
+has already produced one signal won't fire again.
+
 Deliberately single-timeframe for this round -- confluence_across_
 timeframes() (weekly/daily/4h/1h, design brief Section 2e) needs aligned
 candle series at multiple timeframes simultaneously, which is real
@@ -78,20 +93,17 @@ def generate_signals(
     extension_levels: tuple[float, ...] = fgt.DEFAULT_FIB_EXTENSION_LEVELS,
     confluence_weights: fgt.ConfluenceWeights = fgt.ConfluenceWeights(),
 ) -> list[Signal]:
-    """One Signal per NEWLY-confirmed pivot that passes the R:R gate --
-    NOT one per bar. Once a pivot is the most-recent confirmed swing, it
-    stays that way for many subsequent bars (until the next reversal
-    confirms); re-evaluating and re-emitting on every one of those bars
-    would flood the output with near-duplicates for what is, structurally,
-    a single trade decision. A pivot that fails the R:R gate is also
-    marked as evaluated (not retried every bar) -- the gate's inputs
-    (gann_prices, fib confluence) are keyed off `bar_index`, which does
-    change bar-to-bar even for the same pivot, but re-deriving TP/SL from
-    the same structural swing over and over isn't a new decision, it's
-    the same one restated.
+    """At most one Signal per pivot -- fires on the bar price actually
+    TOUCHES a fib/gann line (fib_gann_confluence_score > 0), watching
+    every bar after a pivot confirms until that happens (see module
+    docstring for why the confirmation bar itself is the wrong trigger).
+    A pivot that has already produced a signal is never re-evaluated;
+    a pivot whose touch attempts so far have all failed the R:R gate or
+    entry validity keeps being watched for a better touch on a later bar,
+    until the next reversal makes it no longer the latest pivot.
     """
     signals: list[Signal] = []
-    last_evaluated_pivot_index: int | None = None
+    signaled_pivot_indices: set[int] = set()
     atr_series = fgt.compute_atr(candles, atr_period)
 
     for i, candle in enumerate(candles):
@@ -101,9 +113,8 @@ def generate_signals(
             continue
 
         pivot, basis = swings[-1], swings[-2]
-        if pivot.index == last_evaluated_pivot_index:
+        if pivot.index in signaled_pivot_indices:
             continue
-        last_evaluated_pivot_index = pivot.index
 
         atr_value = atr_series[i]
         if atr_value is None or atr_value <= 0:
@@ -116,6 +127,8 @@ def generate_signals(
         reference_price = candle.close
 
         fib_gann_conf = fgt.fib_gann_confluence_score(fib_levels, gann_prices, reference_price, atr_value)
+        if fib_gann_conf <= 0.0:
+            continue  # price hasn't touched a fib/gann line on this bar -- keep watching
 
         structure_event = ms.detect_structure_event(swings, reference_price)
         direction = fgt.trade_direction_from_pivot(pivot)
@@ -140,6 +153,7 @@ def generate_signals(
         if not fgt.passes_risk_reward_gate(exit_plan, min_rr_threshold):
             continue
 
+        signaled_pivot_indices.add(pivot.index)
         signals.append(
             Signal(
                 ts=as_of,
