@@ -19,10 +19,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install packages/db + ruff
-        run: pip install -e packages/db ruff
+      - name: Install packages/db + packages/backtest-core + ruff
+        run: pip install -e packages/db -e packages/backtest-core ruff
       - name: Ruff check
-        run: ruff check packages/db/src packages/db/migrations
+        run: ruff check packages/db/src packages/db/migrations packages/backtest-core/src packages/backtest-core/tests
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages/backtest-core
+        run: pip install -e "packages/backtest-core[dev]"
+      - name: Run tests
+        run: pytest packages/backtest-core/tests
 
   # Requires the Neon GitHub integration (Neon Console -> project -> Settings
   # -> Integrations -> connect this repo), which auto-sets the NEON_API_KEY
@@ -75,7 +87,11 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
 
 # Not yet in this workflow (add as the corresponding code lands):
-#   - unit/integration tests once apps/* have real code
+#   - unit/integration tests once apps/* have real code (packages/backtest-core
+#     has its own `test` job above -- extend that pattern per-package, not a
+#     single repo-wide pytest invocation, since apps/* and packages/db have
+#     very different runtime dependencies -- e.g. packages/db's tests would
+#     need a real Postgres, unlike packages/backtest-core's pure-logic ones)
 #   - type-check (mypy) once agent-orchestrator/execution exist
 #
 # Auto-merge policy (set up in GitHub repo Settings, not expressible in this
