@@ -12,7 +12,19 @@ outages -- both paths hit the same exchange servers, so if Binance/Bybit
 itself is down neither will work. Returns the same unified dict shape
 ccxt_generic.fetch_funding_rate/fetch_ohlcv do, so ingest.py's DB-writing
 code doesn't need to know or care which path supplied the data.
+
+Reads the same PROXY_URL env var ccxt_generic.py does, for the same reason
+(IP-level blocking of exchange endpoints from cloud/datacenter IPs, and
+apparently also from at least some Indonesian mobile carriers -- confirmed
+live: fapi.binance.com fails with a certificate hostname mismatch even via
+plain `curl`, not a Python/certifi issue, from a Termux/Android test on a
+regular Indonesian mobile network). Without this, the fallback would hit
+the exact same IP-blocked path ccxt already failed on, defeating its whole
+purpose in that scenario specifically -- a bug found via that live test,
+not theorized upfront.
 """
+
+import os
 
 import requests
 
@@ -36,11 +48,17 @@ def _native_symbol(venue_symbol: str) -> str:
     return base + quote
 
 
+def _proxies() -> dict:
+    proxy_url = os.environ.get("PROXY_URL")
+    return {"https": proxy_url} if proxy_url else {}
+
+
 def binance_funding_rate(venue_symbol: str) -> dict:
     resp = requests.get(
         f"{BINANCE_FAPI}/fapi/v1/premiumIndex",
         params={"symbol": _native_symbol(venue_symbol)},
         timeout=REQUEST_TIMEOUT_SECONDS,
+        proxies=_proxies(),
     )
     resp.raise_for_status()
     data = resp.json()
@@ -61,6 +79,7 @@ def binance_ohlcv(venue_symbol: str, timeframe: str, limit: int) -> list[dict]:
         f"{BINANCE_FAPI}/fapi/v1/klines",
         params={"symbol": _native_symbol(venue_symbol), "interval": timeframe, "limit": limit},
         timeout=REQUEST_TIMEOUT_SECONDS,
+        proxies=_proxies(),
     )
     resp.raise_for_status()
     return [
@@ -81,6 +100,7 @@ def bybit_funding_rate(venue_symbol: str) -> dict:
         f"{BYBIT_API}/v5/market/tickers",
         params={"category": "linear", "symbol": _native_symbol(venue_symbol)},
         timeout=REQUEST_TIMEOUT_SECONDS,
+        proxies=_proxies(),
     )
     resp.raise_for_status()
     data = resp.json()
@@ -104,6 +124,7 @@ def bybit_ohlcv(venue_symbol: str, timeframe: str, limit: int) -> list[dict]:
             "limit": limit,
         },
         timeout=REQUEST_TIMEOUT_SECONDS,
+        proxies=_proxies(),
     )
     resp.raise_for_status()
     rows = resp.json()["result"]["list"]  # Bybit returns newest-first, ccxt convention is oldest-first
