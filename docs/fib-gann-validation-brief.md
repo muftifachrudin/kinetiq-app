@@ -113,6 +113,16 @@ price_per_time_unit = swing_price_range / swing_duration_in_bars
 > exact founder ini + kasus lama (basis sblm pivot) tetap jalan gak
 > keregresi. Detail di `docs/prd.md`.
 >
+> **Validasi ke-3 (sama hari, 3 Juli 2026) — instrumen beda (SOLUSDT, 1h)**:
+> koordinat exact dari tool: titik #1 harga 64.03 @ bar 127, titik #2 harga
+> 73.84 @ bar 157 (jarak 30 bar). Rate hasil formula = 0.327/bar, matched
+> lagi. Ini konfirmasi tambahan yang penting krn skala harga SOL (~$60-90)
+> jauh beda dari BTC (~$58k-67k) — bukti klaim "otomatis adaptif
+> per-instrumen" di formula ini beneran kepegang, bukan kebetulan cocok
+> khusus buat BTC doang. 3 dari 3 contoh koordinat exact yg dites (2
+> instrumen, 2 arah trend, 2 timeframe beda: 1h & 4h) semuanya matched
+> tanpa exception.
+>
 > **Item baru masuk backlog dari sesi validasi ini (bukan diminta sekarang,
 > dicatat aja)**: founder juga pakai **parallel channel** (tool terpisah
 > dari Gann Fan) di chart-nya bareng fib+gann+BOS/CHoCH — belum ada scope
