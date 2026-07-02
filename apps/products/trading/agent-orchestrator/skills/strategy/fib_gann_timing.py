@@ -18,6 +18,15 @@ on it) -- see the module's README for the verification script.
 Market structure (BOS/CHoCH) is also out of scope here -- noted as an
 explicit open item in the design brief, not yet confirmed as part of this
 skill's scope vs. a separate skill.
+
+Exit management (compute_stop_loss/compute_take_profit_levels/
+build_exit_plan/passes_risk_reward_gate) implements design brief Section
+5a-5c: structural SL behind the pivot swing, tiered TP from Gann-confluent
+Fib extensions, and a binary R:R gate. Triple-barrier labeling (Section
+5d) is a separate, much larger piece of work -- it needs scikit-learn and
+historical trade data, and really belongs to the calibration harness
+(trader_profile.py, PRD B.6b) rather than this pure-function module -- not
+implemented here.
 """
 
 import dataclasses
@@ -42,6 +51,17 @@ DEFAULT_ATR_PERIOD = 14
 # trader_profile calibration (agreement rate vs trade_annotation), not
 # fixed forever.
 DEFAULT_ZIGZAG_ATR_MULTIPLIER = 1.75
+
+# Design brief Section 5a: 0.25-0.5x ATR(14) buffer behind the basis swing,
+# midpoint used as the starting default -- tuned later via calibration like
+# DEFAULT_ZIGZAG_ATR_MULTIPLIER above, not fixed forever.
+DEFAULT_SL_ATR_BUFFER_MULTIPLIER = 0.375
+
+# Design brief Section 5c: binary R:R gate, default 1.5, configurable &
+# calibrated later (same "start conservative, tune from real outcomes"
+# pattern as MARKOVIZ's LIVE_META_MIN_PROBA staged rollout -- see
+# docs/fib-gann-validation-brief.md Section 5d's verification note).
+DEFAULT_MIN_RR_THRESHOLD = 1.5
 
 
 def _require_utc(value: datetime.datetime, name: str) -> None:
@@ -493,3 +513,136 @@ def confluence_across_timeframes(
         return 0.0
     weighted_sum = sum(scores_by_timeframe[tf] * w for tf, w in present.items())
     return 100.0 * weighted_sum / total_weight
+
+
+class TradeDirection(enum.Enum):
+    LONG = "long"
+    SHORT = "short"
+
+
+def trade_direction_from_pivot(pivot: SwingPoint) -> TradeDirection:
+    """A LOW pivot is a just-confirmed support -- the expected continuation
+    is upward (LONG). A HIGH pivot is just-confirmed resistance -- SHORT.
+    Same directional convention gann_fan_prices() already uses for its fan
+    projection sign (LOW pivot -> upward, HIGH pivot -> downward) -- kept
+    consistent rather than introducing a second rule for the same idea."""
+    return TradeDirection.LONG if pivot.direction is SwingDirection.LOW else TradeDirection.SHORT
+
+
+def compute_stop_loss(
+    pivot: SwingPoint,
+    atr_value: float,
+    atr_buffer_multiplier: float = DEFAULT_SL_ATR_BUFFER_MULTIPLIER,
+) -> float:
+    """Design brief Section 5a: SL placed behind the pivot swing itself --
+    the same swing that anchors fib/gann (see gann_fan_prices), not a
+    separate parameter, so a broken pivot always means a broken trade
+    premise. The ATR buffer keeps the SL off the exact swing price (an
+    obvious level, prone to a wick-hunt stop run) rather than an arbitrary
+    fixed distance. Direction is derived from pivot.direction via
+    trade_direction_from_pivot -- LONG (LOW pivot) places SL below,
+    SHORT (HIGH pivot) places it above.
+    """
+    if atr_value <= 0:
+        raise ValueError("atr_value must be positive")
+    buffer = atr_buffer_multiplier * atr_value
+    direction = trade_direction_from_pivot(pivot)
+    return pivot.price - buffer if direction is TradeDirection.LONG else pivot.price + buffer
+
+
+def compute_take_profit_levels(
+    pivot: SwingPoint,
+    basis_leg_start: SwingPoint,
+    gann_prices: dict[str, float],
+    atr_value: float,
+    extension_levels: tuple[float, ...] = DEFAULT_FIB_EXTENSION_LEVELS,
+) -> tuple[float, ...]:
+    """Design brief Section 5b: tiered TP targets, nearest-first --
+    take_profit_levels[0] is TP1 (partial exit), the rest are successive
+    trailing targets after TP1 is hit. Only extension levels that are ALSO
+    confluent with a Gann fan line (gann_fan_prices' output) count as
+    valid targets, per the brief -- not just the nearest extension level
+    regardless of Gann overlap. Returns an empty tuple if no extension
+    level clears the confluence band (no valid TP1 -- see
+    passes_risk_reward_gate, which treats that as a failing signal).
+
+    This does NOT reuse compute_fib_levels' extension dict directly:
+    compute_fib_levels always projects extensions below swing_low
+    regardless of argument order (see its docstring) -- correct for a
+    SHORT continuation, but wrong for LONG, which needs targets above
+    swing_high instead. This computes whichever side trade_direction_
+    from_pivot(pivot) calls for, using the same extension formula
+    mirrored around the leg.
+    """
+    leg = abs(pivot.price - basis_leg_start.price)
+    if leg <= 0:
+        raise ValueError("pivot and basis_leg_start must have different prices")
+    direction = trade_direction_from_pivot(pivot)
+    swing_low = min(pivot.price, basis_leg_start.price)
+    swing_high = max(pivot.price, basis_leg_start.price)
+
+    gann_values = list(gann_prices.values())
+    confluent_prices = []
+    for level in sorted(extension_levels):  # ascending ratio == nearest-to-leg-edge first
+        if direction is TradeDirection.LONG:
+            price = swing_high + (level - 1.0) * leg
+        else:
+            price = swing_low - (level - 1.0) * leg
+        if _nearest_level_confluence(gann_values, price, atr_value) > 0.0:
+            confluent_prices.append(price)
+
+    return tuple(confluent_prices)
+
+
+@dataclasses.dataclass(frozen=True)
+class ExitPlan:
+    direction: TradeDirection
+    entry_price: float
+    stop_loss: float
+    take_profits: tuple[float, ...]  # nearest-first; take_profits[0] is TP1
+    risk_reward_ratio: float | None  # None when take_profits is empty (no TP1 to measure against)
+
+
+def build_exit_plan(
+    pivot: SwingPoint,
+    basis_leg_start: SwingPoint,
+    entry_price: float,
+    atr_value: float,
+    gann_prices: dict[str, float],
+    extension_levels: tuple[float, ...] = DEFAULT_FIB_EXTENSION_LEVELS,
+    sl_atr_buffer_multiplier: float = DEFAULT_SL_ATR_BUFFER_MULTIPLIER,
+) -> ExitPlan:
+    """Bundles 5a (SL) + 5b (tiered TP) into one exit plan and computes the
+    R:R ratio 5c's gate checks. entry_price is a separate parameter from
+    pivot.price since a real signal enters on the current close, not
+    necessarily exactly at the pivot price. Position-sizing for TP1's
+    partial exit (brief 5b: "porsi configurable, default mis. 50%") is an
+    execution-layer concern, not represented here -- this module only
+    computes price levels.
+    """
+    direction = trade_direction_from_pivot(pivot)
+    stop_loss = compute_stop_loss(pivot, atr_value, sl_atr_buffer_multiplier)
+    take_profits = compute_take_profit_levels(pivot, basis_leg_start, gann_prices, atr_value, extension_levels)
+
+    risk = abs(entry_price - stop_loss)
+    risk_reward_ratio = None
+    if take_profits and risk > 0:
+        risk_reward_ratio = abs(take_profits[0] - entry_price) / risk
+
+    return ExitPlan(
+        direction=direction,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        take_profits=take_profits,
+        risk_reward_ratio=risk_reward_ratio,
+    )
+
+
+def passes_risk_reward_gate(exit_plan: ExitPlan, min_rr_threshold: float = DEFAULT_MIN_RR_THRESHOLD) -> bool:
+    """Design brief Section 5c: a binary gate, separate from confidence
+    scoring -- a signal with a high confluence score but a bad R:R
+    structure is SKIPPED entirely, never down-weighted. False whenever
+    risk_reward_ratio is None (no TP1 was found at all)."""
+    if exit_plan.risk_reward_ratio is None:
+        return False
+    return exit_plan.risk_reward_ratio >= min_rr_threshold
