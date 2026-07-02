@@ -12,14 +12,22 @@ brief Section 2c, Option 1): price_per_time_unit = swing_price_range /
 swing_duration_in_bars, derived from the same swing leg detect_swings()
 already produced -- one source of truth, not a separate calibration
 system. VISUALLY VALIDATED against the founder's own TradingView chart
-(3 Juli 2026): given the exact (price, bar) coordinates TradingView itself
-stored for the founder's real Gann Fan drawing (58005.0 @ bar 127,
-60908.9 @ bar 177), this formula's rate = price_range / bar_range matches
-TradingView's own 1x1 line to within 0.5% (pure rounding noise from an
-earlier crosshair-read comparison, not a formula error -- see
-docs/prd.md's Fase 2 status for the full trail, including a red herring
-where a *parallel channel* drawing (a separate tool, unrelated to Gann
-Fan) was initially misread as the 1x1 line).
+(3 Juli 2026) with TWO real drawings, uptrend and downtrend, using exact
+(price, bar) coordinates TradingView itself stored (not visual estimates):
+58005.0 @ bar 127 -> 60908.9 @ bar 177 (LOW origin, +58.078/bar), and
+67284.8 @ bar 197 -> 62233.3 @ bar 214 (HIGH origin, -297.147/bar). Both
+matched TradingView's own 1x1 line exactly -- see docs/prd.md's Fase 2
+status for the full trail, including a red herring where a *parallel
+channel* drawing (a separate tool, unrelated to Gann Fan) was initially
+misread as the 1x1 line.
+
+The second real drawing also surfaced a real generalization gann_base_rate
+needed: basis_leg_start can be EITHER chronologically before OR after
+pivot -- live/backtest usage always has it before (the swing immediately
+preceding the most-recent confirmed pivot from detect_swings()), but the
+founder's manual charting anchors the fan's origin at an older, more
+significant swing and picks a LATER point just to set the slope. Both
+orderings are supported now; only a shared index is rejected.
 
 Market structure (BOS/CHoCH) is a separate skill --
 see skills/strategy/market_structure.py, which plugs into
@@ -313,16 +321,27 @@ GANN_ANGLES = {
 def gann_base_rate(pivot: SwingPoint, basis_leg_start: SwingPoint) -> float:
     """price_per_time_unit for the 1x1 (45-degree) angle -- design brief
     Section 2c, Option 1 (founder-confirmed): swing_price_range /
-    swing_duration_in_bars, where basis_leg_start is the swing
-    immediately preceding `pivot` (opposite direction) in the same
-    detect_swings() output -- one source of truth, not a separate
-    calibration system.
+    swing_duration_in_bars.
+
+    basis_leg_start can be EITHER before or after `pivot` chronologically
+    -- both are real usages, confirmed from the founder's own TradingView
+    drawings (3 Juli 2026): live/backtest signal generation always has
+    basis_leg_start = the swing immediately preceding the most-recent
+    confirmed pivot (basis_leg_start.index < pivot.index, from
+    detect_swings() output), but the founder's manual charting instead
+    anchors the fan's origin (`pivot`) at an older, structurally
+    significant swing and picks a LATER point only to define the slope
+    (basis_leg_start.index > pivot.index) -- e.g. a downtrend fan
+    anchored at an older high, sloped using a more recent low. Both were
+    verified against exact (price, bar) coordinates read from
+    TradingView's own Gann Fan tool -- see docs/fib-gann-validation-
+    brief.md Section 2c. Only a shared index (duration of zero, no time
+    elapsed between the two points) is rejected -- there's no rate to
+    derive from a single point.
     """
-    duration = pivot.index - basis_leg_start.index
-    if duration <= 0:
-        raise ValueError(
-            f"basis_leg_start.index ({basis_leg_start.index}) must be before pivot.index ({pivot.index})"
-        )
+    duration = abs(pivot.index - basis_leg_start.index)
+    if duration == 0:
+        raise ValueError(f"pivot and basis_leg_start must not share the same index ({pivot.index})")
     price_range = abs(pivot.price - basis_leg_start.price)
     return price_range / duration
 

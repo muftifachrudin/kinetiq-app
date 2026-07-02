@@ -92,6 +92,27 @@ price_per_time_unit = swing_price_range / swing_duration_in_bars
 > **Kalibrasi Opsi 1 sekarang resmi CONFIRMED, bukan lagi belum-tervalidasi**
 > — boleh diandalkan di kode tanpa disclaimer "belum divalidasi" lagi.
 >
+> **Validasi ke-2 (sama hari, 3 Juli 2026) — kasus downtrend**: founder
+> kasih 1 contoh fan lagi, kali ini inverse (HIGH ke bawah, timeframe 4h),
+> koordinat exact dari tool: titik #1 harga 67,284.8 @ bar 197, titik #2
+> harga 62,233.3 @ bar 214 (jarak 17 bar). Rate hasil formula =
+> 297.147/bar, matched persis lagi ke definisi geometris TradingView.
+>
+> **Temuan penting dari contoh ke-2 ini**: di KEDUA contoh (uptrend & downtrend),
+> titik origin (yg founder klik pertama, tempat semua garis fan konvergen)
+> itu **kronologis LEBIH AWAL** dari titik kedua (yg cuma dipakai nentuin
+> slope) — pola manual founder emang gitu (pilih swing signifikan yg lama,
+> baru pilih titik lain yg lebih baru buat nentuin sudut). Ini KEBALIKAN
+> dari asumsi awal `gann_base_rate()`, yg didesain buat kasus live/backtest
+> signal (`pivot` = swing PALING BARU dari `detect_swings()`, `basis_leg_start`
+> = swing SEBELUMnya, jadi basis SELALU lebih awal dari pivot). Kode
+> awalnya nolak (`ValueError`) kalau urutan dibalik seperti pola manual
+> founder. **Sudah di-fix**: `gann_base_rate()` sekarang terima basis_leg_start
+> di kedua sisi kronologis (cuma nolak kalau index-nya sama persis, gak ada
+> jarak buat dihitung rate-nya) — dites eksplisit thd 2 contoh koordinat
+> exact founder ini + kasus lama (basis sblm pivot) tetap jalan gak
+> keregresi. Detail di `docs/prd.md`.
+>
 > **Item baru masuk backlog dari sesi validasi ini (bukan diminta sekarang,
 > dicatat aja)**: founder juga pakai **parallel channel** (tool terpisah
 > dari Gann Fan) di chart-nya bareng fib+gann+BOS/CHoCH — belum ada scope

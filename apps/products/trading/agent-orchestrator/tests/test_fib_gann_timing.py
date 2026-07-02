@@ -221,11 +221,40 @@ def test_gann_base_rate():
     assert fgt.gann_base_rate(pivot, basis) == pytest.approx(2.0)  # 20 price / 10 bars
 
 
-def test_gann_base_rate_rejects_non_positive_duration():
+def test_gann_base_rate_rejects_shared_index():
     basis = sw(20, 100.0, fgt.SwingDirection.HIGH)
     pivot = sw(20, 80.0, fgt.SwingDirection.LOW)  # same index as basis
-    with pytest.raises(ValueError, match="must be before"):
+    with pytest.raises(ValueError, match="must not share the same index"):
         fgt.gann_base_rate(pivot, basis)
+
+
+def test_gann_base_rate_accepts_basis_leg_start_after_pivot():
+    # design brief Section 2c verification (3 Juli 2026): the founder's
+    # manual TradingView drawings anchor the fan's origin at an OLDER
+    # swing and pick a LATER point just to define slope -- the reverse
+    # chronological order from live/backtest usage (detect_swings()
+    # always has the most-recent swing as pivot). Both must produce the
+    # same rate for the same two points, order-independent.
+    pivot = sw(10, 100.0, fgt.SwingDirection.HIGH)  # earlier, is the origin
+    basis = sw(20, 80.0, fgt.SwingDirection.LOW)  # later, defines the slope
+    assert fgt.gann_base_rate(pivot, basis) == pytest.approx(2.0)  # same 20 price / 10 bars
+
+
+def test_gann_base_rate_real_tradingview_coordinates_uptrend():
+    # exact (price, bar) coordinates read from the founder's own
+    # TradingView Gann Fan Coordinates panel, not visual estimation --
+    # origin (LOW) is chronologically BEFORE the slope-defining point.
+    pivot = sw(127, 58005.0, fgt.SwingDirection.LOW)
+    basis = sw(177, 60908.9, fgt.SwingDirection.HIGH)
+    assert fgt.gann_base_rate(pivot, basis) == pytest.approx(58.078, abs=0.001)
+
+
+def test_gann_base_rate_real_tradingview_coordinates_downtrend():
+    # same verification, downtrend case -- origin (HIGH) also
+    # chronologically BEFORE the slope-defining point.
+    pivot = sw(197, 67284.8, fgt.SwingDirection.HIGH)
+    basis = sw(214, 62233.3, fgt.SwingDirection.LOW)
+    assert fgt.gann_base_rate(pivot, basis) == pytest.approx(297.1471, abs=0.001)
 
 
 def test_gann_fan_prices_all_angles_equal_pivot_price_at_pivot_bar():
@@ -250,6 +279,22 @@ def test_gann_fan_prices_high_pivot_projects_downward_and_returns_to_swing_low_a
     prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
     assert prices["1x1"] == pytest.approx(80.0)
     assert prices["2x1"] < prices["1x1"] < prices["1x2"]  # steeper angle is lower for a downward fan
+
+
+def test_gann_fan_prices_origin_before_slope_point_matches_real_tradingview_coordinates():
+    # end-to-end version of the two real-data unit tests above: the fan's
+    # 1x1 line at the slope-defining point's own bar must land exactly on
+    # that point's own price, regardless of which of the two points is
+    # chronologically first.
+    pivot = sw(127, 58005.0, fgt.SwingDirection.LOW)
+    basis = sw(177, 60908.9, fgt.SwingDirection.HIGH)
+    prices = fgt.gann_fan_prices(pivot, basis, bar_index=177)
+    assert prices["1x1"] == pytest.approx(60908.9, abs=0.01)
+
+    pivot2 = sw(197, 67284.8, fgt.SwingDirection.HIGH)
+    basis2 = sw(214, 62233.3, fgt.SwingDirection.LOW)
+    prices2 = fgt.gann_fan_prices(pivot2, basis2, bar_index=214)
+    assert prices2["1x1"] == pytest.approx(62233.3, abs=0.01)
 
 
 def test_gann_fan_prices_accepts_custom_angle_subset():
