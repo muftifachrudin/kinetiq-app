@@ -153,6 +153,16 @@ price_per_time_unit = swing_price_range / swing_duration_in_bars
 > nanti mau diformalisasi juga — belum diputuskan, jangan diimplementasi
 > dulu sebelum dikonfirmasi scope-nya sama founder, sama persis pola BOS/
 > CHoCH sebelum diputuskan di bag. 2d.
+>
+> **Update (3 Juli 2026)**: ditanya scope-nya ke founder. Fungsinya buat
+> nentuin struktur market (upper channel vs down channel), TAPI founder
+> catat sendiri sering ada **fakeout** — harga tembus keluar channel terus
+> balik lagi ke dalam — yang bikin rule breakout-vs-bounce sederhana gak
+> reliable dipakai langsung. **KEPUTUSAN founder: SKIP dulu**, jangan
+> diimplementasi sekarang — ditambahin nanti sbg skill terpisah pas MVP
+> udah jalan & akurasi confluence yg ada (fib+gann+BOS/CHoCH) udah oke,
+> baru dipakai buat nguatin agent lebih lanjut. Bukan ditolak permanen,
+> cuma sengaja dijadwalkan setelah MVP, bukan bagian dari scope sekarang.
 
 ## 2d. Market structure (BOS/CHoCH) — layer tambahan yang belum ada di PRD
 
