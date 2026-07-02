@@ -13,10 +13,20 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "connectors", "cex"))
 
 import ccxt_generic  # noqa: E402
+import native_fallback  # noqa: E402
 from kinetiq_db.engine import normalize_db_url  # noqa: E402
 from kinetiq_db.models import DataSourceHealth, FundingRate, Instrument, Ohlcv, Venue  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
+
+# Fallback chain (docs/prd.md Section B.11): ccxt is always tried first on
+# every run (so a recovered ccxt path is detected automatically), but once
+# a venue+data_type has already failed this many times in a row (tracked in
+# data_source_health, which existed before this and needed no schema
+# change), a failure on *this* attempt also tries native_fallback.FALLBACKS
+# before giving up -- escalate to the native REST path only once there's
+# real evidence of a sustained problem, not on every transient blip.
+FALLBACK_THRESHOLD = 3
 
 # Adding a new venue: it must be supported by ccxt with fetch_funding_rate
 # (or fetch_funding_rates, see ccxt_generic.py) + fetch_ohlcv. venue_type
@@ -95,14 +105,43 @@ def record_health(db: Session, venue: Venue, data_type: str, success: bool) -> N
     db.commit()
 
 
+def get_consecutive_failures(db: Session, venue: Venue, data_type: str) -> int:
+    health = db.query(DataSourceHealth).filter_by(venue_id=venue.id, data_type=data_type).one_or_none()
+    return health.consecutive_failures or 0 if health else 0
+
+
+def get_fallback(venue_name: str, data_type: str, consecutive_failures: int):
+    """Returns the native_fallback function to try after a ccxt failure, or
+    None if this venue+data_type has no native fallback (e.g. hyperliquid,
+    see native_fallback.py) or hasn't failed FALLBACK_THRESHOLD times in a
+    row yet."""
+    if consecutive_failures < FALLBACK_THRESHOLD:
+        return None
+    return native_fallback.FALLBACKS.get(venue_name, {}).get(data_type)
+
+
 def _ts(timestamp_ms: int | None) -> datetime:
     if timestamp_ms is None:
         return datetime.now(timezone.utc)
     return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
 
 
-def ingest_funding_rate(db: Session, exchange, instrument: Instrument, venue_symbol: str) -> None:
-    data = ccxt_generic.fetch_funding_rate(exchange, venue_symbol)
+def ingest_funding_rate(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, fallback_fn=None
+) -> str:
+    """Returns "ccxt" or "native fallback" indicating which source supplied
+    the data actually written, for logging -- fallback_fn is only called if
+    the ccxt path raises, and only re-raises if fallback_fn does too (or is
+    None, i.e. no fallback available/eligible for this call)."""
+    try:
+        data = ccxt_generic.fetch_funding_rate(exchange, venue_symbol)
+        source = "ccxt"
+    except Exception:
+        if fallback_fn is None:
+            raise
+        data = fallback_fn(venue_symbol)
+        source = "native fallback"
+
     db.merge(
         FundingRate(
             instrument_id=instrument.id,
@@ -114,12 +153,23 @@ def ingest_funding_rate(db: Session, exchange, instrument: Instrument, venue_sym
         )
     )
     db.commit()
+    return source
 
 
 def ingest_ohlcv(
-    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, limit: int
-) -> None:
-    for candle in ccxt_generic.fetch_ohlcv(exchange, venue_symbol, timeframe, limit):
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, limit: int, fallback_fn=None
+) -> str:
+    """Returns "ccxt" or "native fallback", same contract as ingest_funding_rate."""
+    try:
+        candles = ccxt_generic.fetch_ohlcv(exchange, venue_symbol, timeframe, limit)
+        source = "ccxt"
+    except Exception:
+        if fallback_fn is None:
+            raise
+        candles = fallback_fn(venue_symbol, timeframe, limit)
+        source = "native fallback"
+
+    for candle in candles:
         db.merge(
             Ohlcv(
                 instrument_id=instrument.id,
@@ -133,6 +183,7 @@ def ingest_ohlcv(
             )
         )
     db.commit()
+    return source
 
 
 def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) -> None:
@@ -150,19 +201,23 @@ def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) 
             instrument = upsert_instrument(db, venue, market)
             db.commit()
 
+            fr_failures = get_consecutive_failures(db, venue, "funding_rate")
+            fr_fallback = get_fallback(venue_name, "funding_rate", fr_failures)
             try:
-                ingest_funding_rate(db, exchange, instrument, venue_symbol)
+                source = ingest_funding_rate(db, exchange, instrument, venue_symbol, fr_fallback)
                 record_health(db, venue, "funding_rate", success=True)
-                print(f"[{venue_name}:{venue_symbol}] funding_rate OK")
+                print(f"[{venue_name}:{venue_symbol}] funding_rate OK ({source})")
             except Exception as exc:
                 db.rollback()
                 record_health(db, venue, "funding_rate", success=False)
                 print(f"[{venue_name}:{venue_symbol}] funding_rate FAILED: {exc}")
 
+            ohlcv_failures = get_consecutive_failures(db, venue, "ohlcv")
+            ohlcv_fallback = get_fallback(venue_name, "ohlcv", ohlcv_failures)
             try:
-                ingest_ohlcv(db, exchange, instrument, venue_symbol, timeframe, limit)
+                source = ingest_ohlcv(db, exchange, instrument, venue_symbol, timeframe, limit, ohlcv_fallback)
                 record_health(db, venue, "ohlcv", success=True)
-                print(f"[{venue_name}:{venue_symbol}] ohlcv OK")
+                print(f"[{venue_name}:{venue_symbol}] ohlcv OK ({source})")
             except Exception as exc:
                 db.rollback()
                 record_health(db, venue, "ohlcv", success=False)
