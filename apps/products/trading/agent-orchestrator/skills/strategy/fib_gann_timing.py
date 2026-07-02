@@ -22,11 +22,20 @@ skill's scope vs. a separate skill.
 Exit management (compute_stop_loss/compute_take_profit_levels/
 build_exit_plan/passes_risk_reward_gate) implements design brief Section
 5a-5c: structural SL behind the pivot swing, tiered TP from Gann-confluent
-Fib extensions, and a binary R:R gate. Triple-barrier labeling (Section
-5d) is a separate, much larger piece of work -- it needs scikit-learn and
-historical trade data, and really belongs to the calibration harness
-(trader_profile.py, PRD B.6b) rather than this pure-function module -- not
-implemented here.
+Fib extensions, and a binary R:R gate.
+
+label_triple_barrier() implements Section 5d's labeling rule itself (walk
+forward from entry, check which of TP1/SL/timeout is touched first) -- this
+part needs no scikit-learn, it's a pure walk over an explicit candle list
+like everything else here. It's the one function in this module that
+deliberately looks at candles AFTER the entry decision on purpose (it's
+labeling a completed signal's outcome, not generating a new one) -- the
+no-lookahead/as_of discipline above is about signal generation, not this.
+FITTING model weights against these labels (the brief's ConfluenceWeights
+w1-w5 calibration, and trader_profile, PRD B.6b) is the separate
+scikit-learn piece and does NOT live here -- see docs/fib-gann-validation-
+brief.md Section 5d's verification note on why MARKOVIZ's pipeline isn't
+reusable for that part.
 """
 
 import dataclasses
@@ -646,3 +655,114 @@ def passes_risk_reward_gate(exit_plan: ExitPlan, min_rr_threshold: float = DEFAU
     if exit_plan.risk_reward_ratio is None:
         return False
     return exit_plan.risk_reward_ratio >= min_rr_threshold
+
+
+class BarrierOutcome(enum.IntEnum):
+    """+1/-1/0 exactly as design brief Section 5d specifies -- an IntEnum
+    so this is directly usable as the raw ML label (compares equal to,
+    and behaves as, its int value) while still being named for
+    readability at call sites."""
+
+    STOP_LOSS = -1
+    TIMEOUT = 0
+    TAKE_PROFIT = 1
+
+
+@dataclasses.dataclass(frozen=True)
+class TripleBarrierLabel:
+    outcome: BarrierOutcome
+    exit_price: float
+    exit_ts: datetime.datetime
+    bars_held: int  # count of granular candles consumed up to and including the exit candle
+    return_pct: float  # direction-adjusted realized return; positive means profit for either direction
+    # True only when outcome is TIMEOUT and granular_candles ran out before
+    # max_holding_bars was reached -- a right-censored sample (we don't
+    # actually know what would have happened next), not a genuine "held
+    # the full window and nothing triggered" case. Downstream calibration
+    # should treat these differently (e.g. exclude samples too close to
+    # the end of available history), not mix them in as equally valid.
+    censored: bool
+
+
+def _barrier_touch(candle: Candle, direction: TradeDirection, take_profit: float, stop_loss: float) -> tuple[bool, bool]:
+    if direction is TradeDirection.LONG:
+        return candle.high >= take_profit, candle.low <= stop_loss
+    return candle.low <= take_profit, candle.high >= stop_loss
+
+
+def _build_triple_barrier_label(
+    outcome: BarrierOutcome,
+    exit_price: float,
+    exit_candle: Candle,
+    bars_held: int,
+    exit_plan: ExitPlan,
+    censored: bool,
+) -> TripleBarrierLabel:
+    if exit_plan.direction is TradeDirection.LONG:
+        return_pct = (exit_price - exit_plan.entry_price) / exit_plan.entry_price
+    else:
+        return_pct = (exit_plan.entry_price - exit_price) / exit_plan.entry_price
+    return TripleBarrierLabel(
+        outcome=outcome,
+        exit_price=exit_price,
+        exit_ts=exit_candle.ts,
+        bars_held=bars_held,
+        return_pct=return_pct,
+        censored=censored,
+    )
+
+
+def label_triple_barrier(
+    exit_plan: ExitPlan,
+    granular_candles: list[Candle],
+    max_holding_bars: int,
+) -> TripleBarrierLabel:
+    """Design brief Section 5d: labels a signal's realized outcome by
+    walking forward through candles after entry, checking which of three
+    barriers is touched first -- upper barrier = TP1 (exit_plan.
+    take_profits[0], per 5b), lower barrier = exit_plan.stop_loss (per
+    5a), vertical barrier = max_holding_bars candles elapsed with neither
+    touched. This is what the confluence-weight and trader_profile
+    (PRD B.6b) fitting pipeline consumes -- NOT naive "price went up =
+    win" labeling.
+
+    granular_candles should be MORE GRANULAR than the signal's own
+    timeframe where possible (brief: a 4h signal should be labeled
+    walking 1h/15m candles, not 4h candles) so the TP-vs-SL-touched-first
+    order is accurate rather than assumed from one coarse candle's OHLC.
+    Caller's responsibility to slice/align this to start at (or
+    immediately after) the entry decision -- ExitPlan carries no
+    timestamp to anchor against, so this always starts from
+    granular_candles[0].
+
+    Same-candle double-touch (both TP and SL within one candle's
+    high-low range) is scored STOP_LOSS unconditionally -- the brief's
+    explicit worst-case rule for when intrabar touch order can't be
+    determined. This applies at whatever granularity is fed in, not only
+    when granular data is literally unavailable: even a genuinely
+    granular candle can still span both barriers, and the same
+    conservative assumption is the safe one either way.
+    """
+    if not granular_candles:
+        raise ValueError("granular_candles must not be empty")
+    if max_holding_bars <= 0:
+        raise ValueError("max_holding_bars must be positive")
+    if not exit_plan.take_profits:
+        raise ValueError("exit_plan has no take_profits -- can't label without an upper barrier (TP1)")
+
+    take_profit = exit_plan.take_profits[0]
+    stop_loss = exit_plan.stop_loss
+    window = granular_candles[:max_holding_bars]
+
+    for i, candle in enumerate(window):
+        hit_tp, hit_sl = _barrier_touch(candle, exit_plan.direction, take_profit, stop_loss)
+        if hit_sl:  # covers both "SL only" and "both touched this candle" -- brief's worst-case rule
+            return _build_triple_barrier_label(BarrierOutcome.STOP_LOSS, stop_loss, candle, i + 1, exit_plan, censored=False)
+        if hit_tp:
+            return _build_triple_barrier_label(BarrierOutcome.TAKE_PROFIT, take_profit, candle, i + 1, exit_plan, censored=False)
+
+    timeout_candle = window[-1]
+    censored = len(granular_candles) < max_holding_bars
+    return _build_triple_barrier_label(
+        BarrierOutcome.TIMEOUT, timeout_candle.close, timeout_candle, len(window), exit_plan, censored=censored
+    )

@@ -481,3 +481,103 @@ def test_passes_risk_reward_gate_false_when_ratio_below_threshold():
 def test_passes_risk_reward_gate_false_when_no_take_profit_found():
     plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(), risk_reward_ratio=None)
     assert fgt.passes_risk_reward_gate(plan) is False
+
+
+# --- label_triple_barrier ---
+
+LONG_PLAN = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=90.0, take_profits=(120.0,), risk_reward_ratio=2.0)
+SHORT_PLAN = fgt.ExitPlan(direction=fgt.TradeDirection.SHORT, entry_price=100.0, stop_loss=110.0, take_profits=(80.0,), risk_reward_ratio=2.0)
+
+
+def test_label_triple_barrier_long_take_profit_hit_first():
+    candles = [mk(0, 100, 105, 95, 102), mk(1, 102, 125, 101, 124), mk(2, 124, 130, 120, 125)]
+    label = fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.TAKE_PROFIT
+    assert label.exit_price == pytest.approx(120.0)
+    assert label.bars_held == 2
+    assert label.return_pct == pytest.approx(0.2)
+    assert label.censored is False
+
+
+def test_label_triple_barrier_long_stop_loss_hit_first():
+    candles = [mk(0, 100, 105, 95, 102), mk(1, 102, 103, 85, 90), mk(2, 90, 95, 85, 92)]
+    label = fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.STOP_LOSS
+    assert label.exit_price == pytest.approx(90.0)
+    assert label.bars_held == 2
+    assert label.return_pct == pytest.approx(-0.1)
+
+
+def test_label_triple_barrier_long_double_touch_scores_as_stop_loss():
+    # brief's explicit worst-case rule: both TP (120) and SL (90) fall
+    # within this single candle's high-low range -- can't tell which was
+    # touched first, so it must be scored as the loss, not the win.
+    candles = [mk(0, 100, 125, 85, 100)]
+    label = fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.STOP_LOSS
+    assert label.exit_price == pytest.approx(90.0)
+    assert label.bars_held == 1
+
+
+def test_label_triple_barrier_short_take_profit_hit_first():
+    candles = [mk(0, 100, 102, 98, 99), mk(1, 99, 95, 75, 80)]
+    label = fgt.label_triple_barrier(SHORT_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.TAKE_PROFIT
+    assert label.exit_price == pytest.approx(80.0)
+    assert label.return_pct == pytest.approx(0.2)
+
+
+def test_label_triple_barrier_short_stop_loss_hit_first():
+    candles = [mk(0, 100, 102, 98, 99), mk(1, 99, 112, 95, 105)]
+    label = fgt.label_triple_barrier(SHORT_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.STOP_LOSS
+    assert label.exit_price == pytest.approx(110.0)
+    assert label.return_pct == pytest.approx(-0.1)
+
+
+def test_label_triple_barrier_short_double_touch_scores_as_stop_loss():
+    candles = [mk(0, 100, 112, 75, 100)]
+    label = fgt.label_triple_barrier(SHORT_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.STOP_LOSS
+    assert label.exit_price == pytest.approx(110.0)
+
+
+def test_label_triple_barrier_timeout_not_censored_when_more_data_was_available():
+    candles = [mk(i, 100, 105, 95, 101) for i in range(5)]  # neither barrier ever touched
+    label = fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=3)
+    assert label.outcome is fgt.BarrierOutcome.TIMEOUT
+    assert label.exit_price == pytest.approx(101.0)  # close of the 3rd (last window) candle
+    assert label.bars_held == 3
+    assert label.censored is False
+
+
+def test_label_triple_barrier_timeout_censored_when_data_ran_out_early():
+    candles = [mk(i, 100, 105, 95, 101) for i in range(2)]  # only 2 candles, window wants 5
+    label = fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=5)
+    assert label.outcome is fgt.BarrierOutcome.TIMEOUT
+    assert label.bars_held == 2
+    assert label.censored is True
+
+
+def test_label_triple_barrier_rejects_empty_candles():
+    with pytest.raises(ValueError, match="must not be empty"):
+        fgt.label_triple_barrier(LONG_PLAN, [], max_holding_bars=3)
+
+
+def test_label_triple_barrier_rejects_non_positive_max_holding_bars():
+    candles = [mk(0, 100, 105, 95, 101)]
+    with pytest.raises(ValueError, match="must be positive"):
+        fgt.label_triple_barrier(LONG_PLAN, candles, max_holding_bars=0)
+
+
+def test_label_triple_barrier_rejects_exit_plan_without_take_profit():
+    candles = [mk(0, 100, 105, 95, 101)]
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=90.0, take_profits=(), risk_reward_ratio=None)
+    with pytest.raises(ValueError, match="no take_profits"):
+        fgt.label_triple_barrier(plan, candles, max_holding_bars=3)
+
+
+def test_barrier_outcome_is_directly_usable_as_int_label():
+    assert int(fgt.BarrierOutcome.TAKE_PROFIT) == 1
+    assert int(fgt.BarrierOutcome.STOP_LOSS) == -1
+    assert int(fgt.BarrierOutcome.TIMEOUT) == 0
