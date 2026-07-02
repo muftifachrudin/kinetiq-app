@@ -33,3 +33,16 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
 
 See `docs/fib-gann-validation-brief.md` Section 6 for the full target
 structure and `docs/prd.md`'s living status for what's actually done.
+
+## skills/strategy/level_strength.py
+
+Not part of `fib_gann_backtest/` itself, but built alongside it this round:
+a deterministic touch tracker (`detect_level_touches()`) and strength
+scorer (`level_strength_score()`) for fib/gann levels, implementing the
+founder's "liquidity magnet" theory (rarer touches = stronger, golden
+ratio 0.618/1.618 = strongest, bigger timeframe = stronger, a clean BREAK
+invalidates a level going forward). Deliberately NOT wired into
+`fib_gann_confluence_score()`/`score_confluence()` yet, and NOT yet
+fitted to real trade data (same `ConfluenceWeights`-style deterministic-
+now/ML-later sequencing) -- see `docs/fib-gann-validation-brief.md`
+Section 6a for the full writeup and real-data verification results.
