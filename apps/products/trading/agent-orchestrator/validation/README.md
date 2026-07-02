@@ -9,12 +9,16 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
 
 - **`signal_runner.py`** -- done. Pure (no DB), walks candles forward with a
   strict `as_of` cutoff, wiring together every skill built so far into one
-  signal per newly-confirmed pivot: `detect_swings` -> `gann_fan_prices` ->
+  signal per pivot: `detect_swings` -> `gann_fan_prices` ->
   `compute_fib_levels` -> `fib_gann_confluence_score` ->
   `market_structure.detect_structure_event` -> `score_confluence` ->
-  `build_exit_plan` -> `passes_risk_reward_gate`. Single-timeframe only for
-  now -- `confluence_across_timeframes()` (weekly/daily/4h/1h) needs aligned
-  multi-timeframe candle series, saved for a later round.
+  `build_exit_plan` -> `passes_risk_reward_gate`. Fires on the bar price
+  actually TOUCHES a fib/gann line (founder-confirmed entry trigger, 3 Juli
+  2026), not on the bar the pivot itself confirms -- a pivot confirms with a
+  lag, so the retracement into a level usually happens several bars later;
+  see the module's own docstring for the full reasoning. Single-timeframe
+  only for now -- `confluence_across_timeframes()` (weekly/daily/4h/1h) needs
+  aligned multi-timeframe candle series, saved for a later round.
 - **`data_loader.py`** -- done. Loads historical candles from the DB, same
   connection pattern as `apps/products/trading/ingestion/ingest.py`. Not
   covered by pytest (needs a real `DATABASE_URL`, like `ingest.py` itself) --
