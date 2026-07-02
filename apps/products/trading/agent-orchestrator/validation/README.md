@@ -64,6 +64,28 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
 See `docs/fib-gann-validation-brief.md` Section 6 for the full target
 structure and `docs/prd.md`'s living status for what's actually done.
 
+## skills/strategy/post_stop_behavior.py
+
+Capability #2 of the "trade journey prediction" roadmap: once a signal's
+stop-loss is hit, `classify_post_stop_behavior()` walks forward looking
+for whichever happens first -- price closing back through entry
+(RETRACE_TO_ENTRY, "pulang ke rumah" -- the thesis was right, just
+stopped out prematurely) or closing well past the SL in the same
+direction it broke (REVERSAL_CONTINUATION, "tujuan baru arah
+berlawanan"), corroborated by `market_structure.detect_structure_event()`
+when a real CHoCH/BOS fires in the continuation direction.
+`build_post_stop_profile()`/`predict_post_stop_outcome()` turn a history
+of classifications into empirical outcome probabilities per direction --
+purely informational (gate-vs-score principle), not wired into
+`generate_signals()` or `score_confluence()` yet. Verified against the 2
+real BTC/USDT signals that hit their SL in this session's dataset: one
+classified RETRACE_TO_ENTRY, the other REVERSAL_CONTINUATION with
+`structure_confirmed=True` -- and that second case lines up exactly with
+the bullish CHoCH already found at pivot idx=91 in an earlier round's
+market_structure verification, an independent cross-check that both
+modules read the same real data consistently. See Section 15 of the
+validation brief for the full writeup.
+
 ## skills/strategy/duration_prediction.py
 
 Not part of `fib_gann_backtest/` either, built alongside it: capability #1
