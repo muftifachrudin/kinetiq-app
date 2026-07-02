@@ -23,10 +23,22 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
   connection pattern as `apps/products/trading/ingestion/ingest.py`. Not
   covered by pytest (needs a real `DATABASE_URL`, like `ingest.py` itself) --
   verify by running it directly.
-- **`trade_simulator.py`, `metrics.py`, `report.py`** -- NOT built yet.
-  `trade_simulator.py` will likely wrap `fib_gann_timing.label_triple_barrier()`
-  (already implemented) plus funding-cost deduction (design brief Section 6:
-  funding-aware PF/Sharpe is mandatory, not optional).
+- **`trade_simulator.py`** -- done. Wraps
+  `fib_gann_timing.label_triple_barrier()` plus direction-adjusted,
+  snapshot-based funding-cost deduction (design brief Section 6:
+  funding-aware PF/Sharpe is mandatory, not optional) --
+  `simulate_trade()`/`simulate_trades()` produce `SimulatedTrade` records
+  (`label`, `funding_cost_pct`, `net_return_pct`) that `metrics.py` (still
+  not built) will consume. Purely a labeling/measurement layer -- no gate,
+  no signal rejection happens here, consistent with the standing
+  gate-vs-score principle (`docs/fib-gann-validation-brief.md` Section 10).
+  See Section 12 of the validation brief for the full writeup, including a
+  real finding: production's `funding_rate` table currently has only 1 row
+  for BTC (ingestion has never run at real volume), and CoinGlass's daily
+  funding snapshots are too coarse to ever land inside a short (<24h)
+  holding window -- funding-cost deduction is code-verified correct via
+  synthetic tests, but has no real dense funding data to exercise yet.
+- **`metrics.py`, `report.py`** -- NOT built yet.
 - **`configs/walk_forward_windows.yaml`, `run_validation.py`** -- NOT built
   yet. `run_validation.py` will wire `data_loader` -> `signal_runner` ->
   `trade_simulator` across `packages/backtest-core`'s walk-forward windows.
