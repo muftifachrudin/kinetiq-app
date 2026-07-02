@@ -1,0 +1,134 @@
+import datetime
+import random
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "validation" / "fib_gann_backtest"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
+import fib_gann_timing as fgt  # noqa: E402
+import signal_runner as sr  # noqa: E402
+
+UTC = datetime.timezone.utc
+
+
+def mk(i: int, o: float, h: float, l: float, c: float, v: float = 100.0) -> fgt.Candle:  # noqa: E741
+    return fgt.Candle(
+        ts=datetime.datetime(2024, 1, 1, tzinfo=UTC) + datetime.timedelta(hours=i), open=o, high=h, low=l, close=c, volume=v
+    )
+
+
+def monotonic_leg(candles: list[fgt.Candle], start_idx: int, delta_per_candle: float, n: int) -> list[fgt.Candle]:
+    last_close = candles[-1].close
+    out = list(candles)
+    for step in range(n):
+        o = last_close
+        c = o + delta_per_candle
+        out.append(mk(start_idx + step, o, max(o, c), min(o, c), c))
+        last_close = c
+    return out
+
+
+def noisy_zigzag(n: int = 120, seed: int = 42) -> list[fgt.Candle]:
+    """A wandering series with a reversal roughly every 15 bars -- enough
+    genuine structure for detect_swings to confirm multiple pivots,
+    unlike a pure trend or pure noise series."""
+    rng = random.Random(seed)
+    candles = []
+    price = 100.0
+    direction = -1
+    for i in range(n):
+        if i % 15 == 0:
+            direction *= -1
+        price += direction * rng.uniform(0.5, 2.0)
+        o = price
+        c = price + rng.uniform(-0.3, 0.3)
+        h = max(o, c) + rng.uniform(0, 0.3)
+        low = min(o, c) - rng.uniform(0, 0.3)
+        candles.append(mk(i, o, h, low, c, v=100 + rng.uniform(-10, 10)))
+        price = c
+    return candles
+
+
+# --- _entry_is_valid ---
+
+
+def test_entry_is_valid_long_true_when_entry_above_stop_loss():
+    assert sr._entry_is_valid(fgt.TradeDirection.LONG, entry_price=110.0, stop_loss=105.0) is True
+
+
+def test_entry_is_valid_long_false_when_entry_at_or_below_stop_loss():
+    # real-data catch (3 Juli 2026, BTC/USDT 1h): a later candle's close
+    # can fall below the SL level derived from an already-confirmed LONG
+    # pivot -- the trade's premise is broken before entry exists.
+    assert sr._entry_is_valid(fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=105.0) is False
+    assert sr._entry_is_valid(fgt.TradeDirection.LONG, entry_price=105.0, stop_loss=105.0) is False
+
+
+def test_entry_is_valid_short_true_when_entry_below_stop_loss():
+    assert sr._entry_is_valid(fgt.TradeDirection.SHORT, entry_price=90.0, stop_loss=95.0) is True
+
+
+def test_entry_is_valid_short_false_when_entry_at_or_above_stop_loss():
+    assert sr._entry_is_valid(fgt.TradeDirection.SHORT, entry_price=100.0, stop_loss=95.0) is False
+    assert sr._entry_is_valid(fgt.TradeDirection.SHORT, entry_price=95.0, stop_loss=95.0) is False
+
+
+# --- generate_signals ---
+
+
+def test_generate_signals_empty_candles_returns_empty_list():
+    assert sr.generate_signals([]) == []
+
+
+def test_generate_signals_insufficient_candles_returns_empty_list():
+    candles = [mk(i, 100, 101, 99, 100) for i in range(10)]  # well under DEFAULT_ATR_PERIOD + 2
+    assert sr.generate_signals(candles) == []
+
+
+def test_generate_signals_invariants_hold_on_noisy_series():
+    candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
+    assert signals, "expected at least one signal from a 120-candle wandering series"
+    for s in signals:
+        assert sr._entry_is_valid(s.direction, s.entry_price, s.exit_plan.stop_loss)
+        assert s.exit_plan.risk_reward_ratio is not None
+        assert s.exit_plan.risk_reward_ratio >= fgt.DEFAULT_MIN_RR_THRESHOLD
+        assert 0.0 <= s.confidence <= 1.0
+        assert s.exit_plan.take_profits
+        tp1 = s.exit_plan.take_profits[0]
+        if s.direction is fgt.TradeDirection.LONG:
+            assert tp1 > s.entry_price
+        else:
+            assert tp1 < s.entry_price
+        # a signal can only be emitted once its own pivot has been confirmed
+        assert s.index >= s.pivot.index
+
+
+def test_generate_signals_no_duplicate_signals_for_same_persisting_pivot():
+    # one clean reversal (confirms a HIGH then a LOW pivot), then a long
+    # flat stretch where neither swing changes -- must not re-signal on
+    # every one of those flat bars for the same underlying pivot.
+    candles = [mk(i, 100, 100.5, 99.5, 100) for i in range(20)]  # ATR warmup, flat
+    candles = monotonic_leg(candles, 20, -3.0, 10)  # confirms a HIGH pivot on reversal
+    candles = monotonic_leg(candles, 30, 3.0, 10)  # confirms a LOW pivot on reversal
+    candles = candles + [mk(i, candles[-1].close, candles[-1].close + 0.1, candles[-1].close - 0.1, candles[-1].close) for i in range(40, 80)]
+
+    signals = sr.generate_signals(candles)
+    pivot_indices = [s.pivot.index for s in signals]
+    assert len(pivot_indices) == len(set(pivot_indices)), f"duplicate signals for the same pivot: {pivot_indices}"
+
+
+def test_generate_signals_direction_matches_pivot_swing_direction():
+    candles = noisy_zigzag(seed=7)
+    signals = sr.generate_signals(candles)
+    for s in signals:
+        expected = fgt.TradeDirection.LONG if s.pivot.direction is fgt.SwingDirection.LOW else fgt.TradeDirection.SHORT
+        assert s.direction is expected
+
+
+def test_generate_signals_accepts_custom_min_rr_threshold():
+    candles = noisy_zigzag()
+    lenient = sr.generate_signals(candles, min_rr_threshold=0.0)
+    strict = sr.generate_signals(candles, min_rr_threshold=100.0)
+    assert len(lenient) >= len(strict)
+    assert strict == []

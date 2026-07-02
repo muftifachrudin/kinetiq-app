@@ -26,7 +26,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 
 import fib_gann_timing as fgt  # noqa: E402
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../../../../packages/db/src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../../../../../packages/db/src"))
 from kinetiq_db.engine import normalize_db_url  # noqa: E402
 from kinetiq_db.models import Instrument, Ohlcv, Venue  # noqa: E402
 
