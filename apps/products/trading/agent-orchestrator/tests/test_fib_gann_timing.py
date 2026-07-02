@@ -257,6 +257,16 @@ def test_gann_base_rate_real_tradingview_coordinates_downtrend():
     assert fgt.gann_base_rate(pivot, basis) == pytest.approx(297.1471, abs=0.001)
 
 
+def test_gann_base_rate_real_tradingview_coordinates_different_instrument():
+    # third real verification (SOLUSDT, 1h -- BTC's two examples above are
+    # both perpetuals at a completely different price scale, ~58k-67k vs
+    # ~64-74 here) -- confirms the formula is genuinely price-scale
+    # adaptive per the design brief, not just coincidentally right for BTC.
+    pivot = sw(127, 64.03, fgt.SwingDirection.LOW)
+    basis = sw(157, 73.84, fgt.SwingDirection.HIGH)
+    assert fgt.gann_base_rate(pivot, basis) == pytest.approx(0.327, abs=0.001)
+
+
 def test_gann_fan_prices_all_angles_equal_pivot_price_at_pivot_bar():
     basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
     pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
