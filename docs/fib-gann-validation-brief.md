@@ -12,12 +12,12 @@ Ini rekap dari 4 pertanyaan klarifikasi yang diajukan sesi Claude Code sebelumny
 | 2 | Level Fibonacci | **RESOLVED** | Modifikasi personal, bukan standar textbook — set lebih rapat (lihat bag. 2a) |
 | 3a | Gann Fan — angle set | **RESOLVED** | Full 9 angle standar, semua aktif (lihat bag. 2b) |
 | 3b | Gann Fan — kalibrasi price-per-time | **RESOLVED** | Opsi 1: fixed reference scale dari swing basis pivot (`swing_range / swing_duration_bars`) + validasi visual wajib (lihat bag. 2c) |
-| — | Market structure (BOS/CHoCH) | **OPEN — butuh konfirmasi scope** | Ditemukan dari chart, dipakai bareng fib+gann tapi belum ada di scope PRD B.6 (lihat bag. 2d) |
+| — | Market structure (BOS/CHoCH) | **RESOLVED (2 Juli 2026)** | Opsi (b): skill terpisah `market_structure.py`, plug ke `score_confluence()` lewat slot ala `regime_alignment` — bukan bagian tak terpisahkan dari `fib_gann_timing.py` (lihat bag. 2d) |
 | 4 | Multi-timeframe confluence & bobot | **RESOLVED** | Weekly→Daily→4h→1h, bobot besar→kecil, sesuai draft PRD tanpa perubahan (lihat bag. 2e) |
 | — | TP/SL, R:R gate, labeling | **SPEC BARU — siap implementasi** | SL struktural + tiered TP dari extension confluence + R:R gate ≥1.5 + triple-barrier labeling (lihat bag. 5) — klaim "reuse pipeline MARKOVIZ" di 5d **sudah diverifikasi & ternyata TIDAK bisa langsung di-reuse**, lihat catatan di 5d |
 | — | Posisi fib_gann_timing dlm sistem | **OPEN — keputusan arsitektur** | Standalone validation dulu vs langsung jadi input graph (lihat bag. 1) |
 
-**Untuk Claude Code**: semua baris RESOLVED + bag. 5 (spec TP/SL) bisa langsung dipakai sebagai spesifikasi round #2 `fib_gann_timing.py` tanpa perlu tanya ulang founder — termasuk Gann Fan yang sebelumnya di-skip (kalibrasi sudah diputuskan, lihat 2c). 2 baris "OPEN" tersisa masih butuh keputusan eksplisit — jangan diasumsikan sendiri, tandai sebagai TODO di kode kalau menyentuh area itu.
+**Untuk Claude Code**: semua baris RESOLVED + bag. 5 (spec TP/SL) bisa langsung dipakai sebagai spesifikasi round #2 `fib_gann_timing.py` tanpa perlu tanya ulang founder — termasuk Gann Fan yang sebelumnya di-skip (kalibrasi sudah diputuskan, lihat 2c). 1 baris "OPEN" tersisa (posisi `fib_gann_timing` dlm sistem, bag. 1) masih butuh keputusan eksplisit — jangan diasumsikan sendiri, tandai sebagai TODO di kode kalau menyentuh area itu.
 
 ## 1. Status keputusan: posisi fib_gann_timing MASIH EKSPLORASI
 
@@ -73,6 +73,21 @@ price_per_time_unit = swing_price_range / swing_duration_in_bars
 Chart founder menunjukkan label eksplisit `BOS` (Break of Structure) dan `CHoCH` (Change of Character) — ini konsep Smart Money Concept (SMC), dipakai **bersamaan** dengan fib+gann, bukan strategi terpisah. Berdasarkan posisi label di chart, pola pemakaiannya: CHoCH menandai potensi pivot baru terbentuk (structure shift), BOS mengkonfirmasi kelanjutan arah setelah shift itu — kombinasi keduanya kemungkinan jadi **trigger tambahan** untuk kapan swing point dianggap valid untuk dipakai sebagai basis fib/gann, di luar threshold ATR yang dibahas di poin 3.
 
 **Ini bukan scope resmi PRD saat ini** (B.6 cuma sebut fib+gann+multi-timeframe confluence). Perlu dikonfirmasi eksplisit ke founder: apakah BOS/CHoCH ini (a) bagian tak terpisahkan dari `fib_gann_timing` yang harus diformalisasi bareng, atau (b) skill terpisah (`skills/strategy/market_structure.py`) yang jadi salah satu input confluence, sama seperti `market_regime.py`. **Belum diputuskan — jangan diimplementasi dulu sebelum founder confirm arahnya**, tapi wajib dicatat sebagai gap supaya tidak tertinggal dari formalisasi.
+
+> **Resolved (2 Juli 2026)**: founder pilih opsi **(b) skill terpisah**.
+> `skills/strategy/market_structure.py` sekarang ada — `trend_bias()` baca
+> higher-high/higher-low (atau lower-high/lower-low) dari 2 swing terakhir
+> tiap tipe hasil `detect_swings()`, `detect_structure_event()` cek apakah
+> `reference_price` break di atas swing high terakhir atau di bawah swing
+> low terakhir dan label BOS (searah trend yang udah established) vs CHoCH
+> (berlawanan, atau trend belum established) sesuai definisi di paragraf
+> di atas ("CHoCH menandai shift, BOS mengkonfirmasi kelanjutan"). Output-
+> nya plug ke `fib_gann_timing.score_confluence()` lewat
+> `structure_alignment_score()`, slot yang sama polanya kayak
+> `regime_alignment` (skor 0-1, penalti berat bukan block total kalau
+> berlawanan arah trade) — BUKAN jadi trigger validitas swing point di
+> `detect_swings()` (opsi (a) yang gak dipilih). Detail implementasi &
+> verifikasi data real di `docs/prd.md`.
 
 ## 2e. Multi-timeframe confluence — Weekly/Daily/4h/1h, bobot besar→kecil (CONFIRMED, match draft PRD)
 
