@@ -358,3 +358,126 @@ def test_score_confluence_defaults_regime_alignment_to_neutral():
         + weights.wick_rejection * 0.7
     )
     assert score == pytest.approx(expected)
+
+
+# --- trade_direction_from_pivot / compute_stop_loss ---
+
+
+def test_trade_direction_from_pivot_low_is_long():
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    assert fgt.trade_direction_from_pivot(pivot) is fgt.TradeDirection.LONG
+
+
+def test_trade_direction_from_pivot_high_is_short():
+    pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)
+    assert fgt.trade_direction_from_pivot(pivot) is fgt.TradeDirection.SHORT
+
+
+def test_compute_stop_loss_long_places_sl_below_pivot():
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    sl = fgt.compute_stop_loss(pivot, atr_value=4.0, atr_buffer_multiplier=0.5)
+    assert sl == pytest.approx(80.0 - 0.5 * 4.0)
+
+
+def test_compute_stop_loss_short_places_sl_above_pivot():
+    pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)
+    sl = fgt.compute_stop_loss(pivot, atr_value=4.0, atr_buffer_multiplier=0.5)
+    assert sl == pytest.approx(100.0 + 0.5 * 4.0)
+
+
+def test_compute_stop_loss_rejects_non_positive_atr():
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    with pytest.raises(ValueError, match="must be positive"):
+        fgt.compute_stop_loss(pivot, atr_value=0.0)
+
+
+# --- compute_take_profit_levels ---
+
+
+def test_compute_take_profit_levels_long_projects_above_swing_high_and_filters_by_gann_confluence():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)  # includes 2x1 == 120.0 here
+    tps = fgt.compute_take_profit_levels(pivot, basis, gann_prices, atr_value=4.0)
+    assert tps == (120.0,)
+    assert all(p > 100.0 for p in tps)
+
+
+def test_compute_take_profit_levels_short_matches_compute_fib_levels_extension_formula():
+    basis = sw(10, 80.0, fgt.SwingDirection.LOW)
+    pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)  # includes 2x1 == 60.0 here
+    tps = fgt.compute_take_profit_levels(pivot, basis, gann_prices, atr_value=4.0)
+    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
+    assert tps == (60.0,)
+    assert tps[0] == pytest.approx(fib_levels["extension"][2.0])
+    assert all(p < 80.0 for p in tps)
+
+
+def test_compute_take_profit_levels_no_gann_confluence_returns_empty_tuple():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    no_confluence_gann = {"far": 99999.0}
+    tps = fgt.compute_take_profit_levels(pivot, basis, no_confluence_gann, atr_value=4.0)
+    assert tps == ()
+
+
+def test_compute_take_profit_levels_orders_nearest_first():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    # A huge ATR band makes every extension level Gann-confluent (each is
+    # within 0.5x ATR of some Gann angle price) -- so ordering is driven
+    # purely by extension ratio ascending, not by which happen to be
+    # confluent.
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    tps = fgt.compute_take_profit_levels(pivot, basis, gann_prices, atr_value=1000.0)
+    assert list(tps) == sorted(tps)
+
+
+def test_compute_take_profit_levels_rejects_zero_leg():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 100.0, fgt.SwingDirection.LOW)
+    with pytest.raises(ValueError, match="different prices"):
+        fgt.compute_take_profit_levels(pivot, basis, {}, atr_value=4.0)
+
+
+# --- build_exit_plan / passes_risk_reward_gate ---
+
+
+def test_build_exit_plan_computes_risk_reward_ratio():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    plan = fgt.build_exit_plan(pivot, basis, entry_price=81.0, atr_value=4.0, gann_prices=gann_prices)
+    assert plan.direction is fgt.TradeDirection.LONG
+    assert plan.stop_loss == pytest.approx(80.0 - fgt.DEFAULT_SL_ATR_BUFFER_MULTIPLIER * 4.0)
+    assert plan.take_profits == (120.0,)
+    expected_rr = abs(120.0 - 81.0) / abs(81.0 - plan.stop_loss)
+    assert plan.risk_reward_ratio == pytest.approx(expected_rr)
+
+
+def test_build_exit_plan_risk_reward_ratio_is_none_when_no_take_profit_found():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    plan = fgt.build_exit_plan(pivot, basis, entry_price=81.0, atr_value=4.0, gann_prices={"far": 99999.0})
+    assert plan.take_profits == ()
+    assert plan.risk_reward_ratio is None
+
+
+def test_passes_risk_reward_gate_true_when_ratio_meets_threshold():
+    plan = fgt.ExitPlan(
+        direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(120.0,), risk_reward_ratio=15.6
+    )
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5) is True
+
+
+def test_passes_risk_reward_gate_false_when_ratio_below_threshold():
+    plan = fgt.ExitPlan(
+        direction=fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=90.0, take_profits=(105.0,), risk_reward_ratio=0.5
+    )
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5) is False
+
+
+def test_passes_risk_reward_gate_false_when_no_take_profit_found():
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(), risk_reward_ratio=None)
+    assert fgt.passes_risk_reward_gate(plan) is False
