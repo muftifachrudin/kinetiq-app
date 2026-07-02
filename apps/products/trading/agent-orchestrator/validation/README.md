@@ -34,6 +34,21 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
 See `docs/fib-gann-validation-brief.md` Section 6 for the full target
 structure and `docs/prd.md`'s living status for what's actually done.
 
+## skills/strategy/duration_prediction.py
+
+Not part of `fib_gann_backtest/` either, built alongside it: capability #1
+of the "trade journey prediction" roadmap (founder request, 3 Juli 2026) --
+`build_duration_profile()`/`predict_duration()` aggregate historical
+`fib_gann_timing.TripleBarrierLabel` samples into empirical bar-count
+percentiles and outcome probabilities, bucketed by (direction, confidence).
+Purely informational per the standing gate-vs-score principle
+(`docs/fib-gann-validation-brief.md` Section 10) -- it never rejects a
+signal, only attaches an estimate. NOT wired into
+`signal_runner.generate_signals()` this round -- that needs a historical
+resolved-signal dataset, which is `trade_simulator.py`'s job (still not
+built, see below). See Section 9/11 of the validation brief for the full
+writeup and verification results.
+
 ## skills/strategy/level_strength.py
 
 Not part of `fib_gann_backtest/` itself, but built alongside it this round:
