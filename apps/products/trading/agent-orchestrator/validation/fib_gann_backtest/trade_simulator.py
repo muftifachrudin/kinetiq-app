@@ -29,10 +29,68 @@ data_loader.py is what turns real funding_rate table rows into
 FundingEvent objects; that wiring isn't done here (data_loader.py is a
 separate DB-touching module, deliberately kept out of anything this file
 imports).
+
+--- Leverage/liquidation-aware simulation (docs/shadow-simulator-brief.md,
+points 1-2 of its implementation order) ---
+
+Everything above this point (SimulatedTrade/simulate_trade/simulate_trades)
+is UNLEVERAGED: it assumes a position survives to its structural SL no
+matter what. That's a real, material gap the founder flagged (3 Juli
+2026): a real leveraged position can be LIQUIDATED before ever reaching
+that structural SL, if initial margin is too thin for the leverage used --
+arguably the single biggest source of "paper vs real money" divergence,
+and one that's fully computable today without needing any real trade
+execution data at all (unlike funding-cost verification above, which is
+blocked on real funding_rate volume).
+
+MarginContext/build_margin_context/simulate_leveraged_trade are ADDITIVE,
+not a replacement -- SimulatedTrade's existing 135-test-covered behavior
+is untouched. No dollar/equity amounts are tracked anywhere else in this
+per-signal simulator (everything is *_pct/*_fraction, notional-relative),
+so initial_margin here is deliberately a FRACTION of notional (1/leverage),
+not a dollar figure -- this makes every formula position-size-agnostic by
+construction, which is a feature, not a shortcut.
+
+Liquidation price (isolated, MVP simplification -- flat maintenance_margin_
+rate per the brief's explicit allowance, not Binance's real tiered-by-
+notional schedule): a position's cushion against liquidation is
+initial_margin_fraction - maintenance_margin_rate (LONG loses if price
+drops through entry*(1-cushion), SHORT if it rises through
+entry*(1+cushion)). CROSS margin mode gets an extra cross_buffer_pct added
+to that cushion, representing account equity allocated to backstop this
+position beyond its own isolated margin -- a genuine simplification, since
+this single-trade simulator has no portfolio-wide equity state to derive
+that number from automatically; the caller supplies it.
+
+Funding erosion (brief: "posisi leverage tinggi yang di-hold lama bisa
+ke-liquidasi karena erosi funding, simulator harus bisa menangkap ini"):
+simulate_leveraged_trade() recomputes the liquidation threshold every bar
+by subtracting cumulative direction-adjusted funding cost from the cushion
+-- a long-held position can get liquidated from funding bleed ALONE with
+zero adverse price movement, and the same inequality check naturally
+captures that (once cumulative funding consumes the whole cushion, the
+effective liquidation price crosses to sit at or past the CURRENT price,
+so the very next bar's touch check fires immediately).
+
+max_safe_leverage()/assert_liquidation_safe() implement the brief's hard
+invariant: liquidation must sit >= buffer_k*ATR beyond the structural SL,
+or the setup is rejected outright (UnsafeLeverageError), not silently
+simulated. This is algebraically the exact boundary, not an approximation
+-- max_safe_leverage() returns precisely the leverage at which liquidation
+distance equals the required minimum (see
+test_max_safe_leverage_is_exactly_the_assert_boundary), so leverage at
+that value passes and anything above it fails.
+
+Per the brief's explicit sequencing (its Section 5/7): this round is ONLY
+points 1-2 (the leverage-aware simulator itself). trade_annotation schema
+extension, shadow_pair divergence attribution, fidelity scoring, and any
+ML risk-envelope fitting are separate, later rounds -- nothing here reads
+or writes trade_annotation, and no learning/fitting happens in this file.
 """
 
 import dataclasses
 import datetime
+import enum
 import os
 import sys
 
@@ -110,3 +168,230 @@ def simulate_trades(
             continue
         trades.append(simulate_trade(signal, granular, funding_events, max_holding_bars))
     return trades
+
+
+# --- Leverage/liquidation-aware simulation ---
+
+# Flat MVP simplification (brief explicitly allows this): real exchanges
+# tier maintenance margin by notional size, this uses one flat rate
+# instead. ~0.4% is representative of Binance USDT-M's lowest BTC tier.
+DEFAULT_MAINTENANCE_MARGIN_RATE = 0.004
+# Invariant: liquidation must sit at least this many ATRs beyond the
+# structural SL. 1.0x is a starting point, not a fitted value.
+DEFAULT_LIQUIDATION_BUFFER_K = 1.0
+
+
+class MarginMode(enum.Enum):
+    CROSS = "cross"
+    ISOLATED = "isolated"
+
+
+class ExitReason(enum.Enum):
+    LIQUIDATED = "liquidated"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+    TIMEOUT = "timeout"
+
+
+class UnsafeLeverageError(ValueError):
+    """Raised when the requested leverage's liquidation price sits inside
+    (or too close to) the structural stop-loss distance -- fail fast per
+    the brief's explicit invariant, never a silent warning."""
+
+
+@dataclasses.dataclass(frozen=True)
+class MarginContext:
+    leverage: float
+    margin_mode: MarginMode
+    initial_margin_fraction: float  # 1/leverage -- fraction of notional, not a dollar amount (see module docstring)
+    maintenance_margin_rate: float
+    cross_buffer_pct: float  # extra cushion fraction for CROSS mode; 0.0 for ISOLATED
+    liquidation_price: float  # static, ignoring not-yet-accrued funding -- computed, never passed in directly
+
+
+def _cushion_fraction(margin_context: MarginContext) -> float:
+    return margin_context.initial_margin_fraction + margin_context.cross_buffer_pct - margin_context.maintenance_margin_rate
+
+
+def build_margin_context(
+    entry_price: float,
+    direction: fgt.TradeDirection,
+    leverage: float,
+    margin_mode: MarginMode,
+    maintenance_margin_rate: float = DEFAULT_MAINTENANCE_MARGIN_RATE,
+    cross_buffer_pct: float = 0.0,
+) -> MarginContext:
+    if leverage <= 0:
+        raise ValueError("leverage must be positive")
+    if margin_mode is MarginMode.ISOLATED and cross_buffer_pct != 0.0:
+        raise ValueError("cross_buffer_pct only applies to CROSS margin mode")
+    if cross_buffer_pct < 0.0:
+        raise ValueError("cross_buffer_pct must not be negative")
+
+    initial_margin_fraction = 1.0 / leverage
+    cushion = initial_margin_fraction + cross_buffer_pct - maintenance_margin_rate
+    if cushion <= 0.0:
+        raise ValueError(f"leverage {leverage}x leaves no cushion at all against maintenance_margin_rate {maintenance_margin_rate}")
+
+    if direction is fgt.TradeDirection.LONG:
+        liquidation_price = entry_price * (1.0 - cushion)
+    else:
+        liquidation_price = entry_price * (1.0 + cushion)
+
+    return MarginContext(
+        leverage=leverage,
+        margin_mode=margin_mode,
+        initial_margin_fraction=initial_margin_fraction,
+        maintenance_margin_rate=maintenance_margin_rate,
+        cross_buffer_pct=cross_buffer_pct,
+        liquidation_price=liquidation_price,
+    )
+
+
+def max_safe_leverage(
+    entry_price: float,
+    stop_loss: float,
+    atr_value: float,
+    maintenance_margin_rate: float = DEFAULT_MAINTENANCE_MARGIN_RATE,
+    buffer_k: float = DEFAULT_LIQUIDATION_BUFFER_K,
+) -> float:
+    """Highest leverage (ISOLATED, cross_buffer_pct=0) at which the
+    resulting liquidation price still sits >= buffer_k*ATR beyond the
+    structural SL. Algebraically exact, not an approximation -- see the
+    module docstring and test_max_safe_leverage_is_exactly_the_assert_
+    boundary for the derivation/proof."""
+    sl_distance = abs(entry_price - stop_loss)
+    denom = sl_distance + buffer_k * atr_value + entry_price * maintenance_margin_rate
+    if denom <= 0.0:
+        raise ValueError("sl_distance + buffer_k*atr_value + entry_price*maintenance_margin_rate must be positive")
+    return entry_price / denom
+
+
+def assert_liquidation_safe(
+    entry_price: float,
+    stop_loss: float,
+    atr_value: float,
+    margin_context: MarginContext,
+    buffer_k: float = DEFAULT_LIQUIDATION_BUFFER_K,
+) -> None:
+    """Fail-fast invariant (brief: "jangan dilanggar walau diminta" in
+    spirit -- this is the enforcement, not a suggestion): raises
+    UnsafeLeverageError if margin_context's liquidation price would sit
+    closer to entry than the structural SL plus a safety buffer. Passing
+    (not raising) at exactly buffer_k*ATR beyond SL is intentional --
+    max_safe_leverage() returns that exact boundary value."""
+    sl_distance = abs(entry_price - stop_loss)
+    liq_distance = abs(entry_price - margin_context.liquidation_price)
+    required = sl_distance + buffer_k * atr_value
+    if liq_distance < required:
+        raise UnsafeLeverageError(
+            f"leverage {margin_context.leverage}x liquidation distance {liq_distance:.6f} is inside the required "
+            f"buffer {required:.6f} (SL distance {sl_distance:.6f} + {buffer_k}x ATR {atr_value:.6f}) -- reduce "
+            f"leverage or widen the stop-loss"
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeveragedTradeResult:
+    exit_reason: ExitReason
+    exit_price: float
+    exit_ts: datetime.datetime
+    bars_held: int
+    notional_return_pct: float  # unleveraged, price-move-based -- same convention as TripleBarrierLabel.return_pct
+    margin_return_pct: float  # leveraged return relative to margin; exactly -1.0 when LIQUIDATED
+    censored: bool
+    margin_context: MarginContext
+
+
+def _notional_return_pct(direction: fgt.TradeDirection, entry_price: float, exit_price: float) -> float:
+    if direction is fgt.TradeDirection.LONG:
+        return (exit_price - entry_price) / entry_price
+    return (entry_price - exit_price) / entry_price
+
+
+def simulate_leveraged_trade(
+    exit_plan: fgt.ExitPlan,
+    granular_candles: list[fgt.Candle],
+    funding_events: list[FundingEvent],
+    entry_ts: datetime.datetime,
+    max_holding_bars: int,
+    margin_context: MarginContext,
+    atr_value: float,
+    buffer_k: float = DEFAULT_LIQUIDATION_BUFFER_K,
+) -> LeveragedTradeResult:
+    """Walks forward like fib_gann_timing.label_triple_barrier(), but
+    checks liquidation FIRST on every bar (brief: "Liquidation check
+    SEBELUM SL check"), and the liquidation threshold itself shifts every
+    bar as funding accrues -- label_triple_barrier() has no hook for
+    either of those, hence a separate walk here rather than wrapping it.
+
+    Funding erosion: cumulative direction-adjusted funding cost (same sign
+    convention as simulate_trade's _funding_cost_pct) is subtracted from
+    the margin cushion every bar BEFORE checking the price barriers, so a
+    long-held position can get liquidated purely from funding bleed with
+    no adverse price move at all.
+    """
+    if not granular_candles:
+        raise ValueError("granular_candles must not be empty")
+    if max_holding_bars <= 0:
+        raise ValueError("max_holding_bars must be positive")
+    if not exit_plan.take_profits:
+        raise ValueError("exit_plan has no take_profits -- can't simulate without an upper barrier (TP1)")
+
+    assert_liquidation_safe(exit_plan.entry_price, exit_plan.stop_loss, atr_value, margin_context, buffer_k)
+
+    direction = exit_plan.direction
+    entry_price = exit_plan.entry_price
+    take_profit = exit_plan.take_profits[0]
+    stop_loss = exit_plan.stop_loss
+    cushion = _cushion_fraction(margin_context)
+
+    sorted_events = sorted((event for event in funding_events if event.ts >= entry_ts), key=lambda event: event.ts)
+    funding_idx = 0
+    cumulative_funding_fraction = 0.0
+
+    window = granular_candles[:max_holding_bars]
+    for i, candle in enumerate(window):
+        while funding_idx < len(sorted_events) and sorted_events[funding_idx].ts <= candle.ts:
+            event = sorted_events[funding_idx]
+            cumulative_funding_fraction += event.rate if direction is fgt.TradeDirection.LONG else -event.rate
+            funding_idx += 1
+
+        remaining_cushion = cushion - cumulative_funding_fraction
+        if direction is fgt.TradeDirection.LONG:
+            effective_liquidation_price = entry_price * (1.0 - remaining_cushion)
+            liquidated = candle.low <= effective_liquidation_price
+        else:
+            effective_liquidation_price = entry_price * (1.0 + remaining_cushion)
+            liquidated = candle.high >= effective_liquidation_price
+
+        if liquidated:
+            return LeveragedTradeResult(
+                exit_reason=ExitReason.LIQUIDATED,
+                exit_price=effective_liquidation_price,
+                exit_ts=candle.ts,
+                bars_held=i + 1,
+                notional_return_pct=_notional_return_pct(direction, entry_price, effective_liquidation_price),
+                margin_return_pct=-1.0,
+                censored=False,
+                margin_context=margin_context,
+            )
+
+        if direction is fgt.TradeDirection.LONG:
+            hit_sl, hit_tp = candle.low <= stop_loss, candle.high >= take_profit
+        else:
+            hit_sl, hit_tp = candle.high >= stop_loss, candle.low <= take_profit
+
+        if hit_sl:  # SL checked before TP on a same-candle double-touch, matching label_triple_barrier()'s rule
+            notional = _notional_return_pct(direction, entry_price, stop_loss)
+            return LeveragedTradeResult(ExitReason.STOP_LOSS, stop_loss, candle.ts, i + 1, notional, notional * margin_context.leverage, False, margin_context)
+        if hit_tp:
+            notional = _notional_return_pct(direction, entry_price, take_profit)
+            return LeveragedTradeResult(ExitReason.TAKE_PROFIT, take_profit, candle.ts, i + 1, notional, notional * margin_context.leverage, False, margin_context)
+
+    timeout_candle = window[-1]
+    censored = len(granular_candles) < max_holding_bars
+    notional = _notional_return_pct(direction, entry_price, timeout_candle.close)
+    return LeveragedTradeResult(
+        ExitReason.TIMEOUT, timeout_candle.close, timeout_candle.ts, len(window), notional, notional * margin_context.leverage, censored, margin_context
+    )
