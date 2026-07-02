@@ -29,3 +29,14 @@ Draw a Gann Fan on TradingView using the same two anchor points the script
 prints, then compare its angle-line prices at the listed bars to the
 script's output. They should match within rounding -- if they don't, the
 calibration needs revisiting before this is relied on.
+
+## market_structure.py
+
+Smart Money Concept market structure (BOS/CHoCH), design brief Section 2d.
+A separate skill from `fib_gann_timing.py` by founder decision (2 Juli
+2026) -- it plugs into `fib_gann_timing.score_confluence()`'s
+`regime_alignment` slot via `structure_alignment_score()`, the same
+pluggable-input pattern `market_regime.py` (not built yet) is meant to
+use, rather than being folded into swing detection itself. Built entirely
+on top of `fib_gann_timing.detect_swings()`'s output -- no separate pivot
+detection logic.
