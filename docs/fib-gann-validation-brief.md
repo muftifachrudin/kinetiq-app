@@ -287,16 +287,18 @@ Untuk fitting bobot confluence (w1–w5 di poin 4) dan kalibrasi `trader_profile
 apps/products/trading/agent-orchestrator/
   validation/
     fib_gann_backtest/
-      data_loader.py       # reuse ingestion connector, no live calls
-      walk_forward.py      # (deprecated di sini, pindah ke packages/backtest-core)
-      signal_runner.py     # panggil fib_gann_timing.py murni, no graph, no LangGraph
-      trade_simulator.py   # funding-aware trade simulation
-      metrics.py           # PF/Sharpe/DD funding-aware, regime-segmented
-      report.py            # dump ke docs/validation-results/ (JSON/markdown dulu, bukan tabel DB baru)
+      data_loader.py       # reuse ingestion connector, no live calls -- DONE (3 Juli 2026)
+      walk_forward.py      # (deprecated di sini, pindah ke packages/backtest-core) -- DONE, sudah di packages/backtest-core
+      signal_runner.py     # panggil fib_gann_timing.py murni, no graph, no LangGraph -- DONE (3 Juli 2026), single-timeframe dulu
+      trade_simulator.py   # funding-aware trade simulation -- BELUM
+      metrics.py           # PF/Sharpe/DD funding-aware, regime-segmented -- BELUM
+      report.py            # dump ke docs/validation-results/ (JSON/markdown dulu, bukan tabel DB baru) -- BELUM
     configs/
-      walk_forward_windows.yaml
-    run_validation.py      # CLI entrypoint, wajib support --dry-run
+      walk_forward_windows.yaml -- BELUM
+    run_validation.py      # CLI entrypoint, wajib support --dry-run -- BELUM
 ```
+
+Status detail (bug nyata ketemu & di-fix pas verifikasi thd data production asli, termasuk kasus signal_runner ngasih R:R palsu bagus krn entry udah lewat level SL) di `docs/prd.md` bagian status Fase 2.
 
 ### Shared walk-forward util (PENTING — cegah duplikasi dengan MARKOVIZ V5)
 
