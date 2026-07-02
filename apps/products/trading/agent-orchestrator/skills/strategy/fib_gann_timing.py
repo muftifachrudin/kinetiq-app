@@ -7,15 +7,13 @@ yet built). Every function that walks time takes an `as_of` cutoff and
 strictly ignores any candle after it: this is what "no-lookahead" means in
 practice, not just a docstring promise -- see _filter_as_of().
 
-Gann Fan is intentionally NOT implemented yet -- price-per-time-unit
-calibration was an explicit open design question (the founder's charts use
-TradingView's viewport-relative default, which has no fixed backend
-equivalent) and is now resolved to "fixed reference scale from the ATR/
-swing range used as the pivot basis" (Option 1, confirmed by the founder;
-Option 2 -- approximating TradingView's own viewport logic -- was the
-alternative, not chosen). Gann computation lands in a follow-up change;
-confluence scoring below already accounts for its absence (see
-score_confluence's gann_confluence parameter).
+Gann Fan (gann_fan_prices) uses the founder-confirmed calibration (design
+brief Section 2c, Option 1): price_per_time_unit = swing_price_range /
+swing_duration_in_bars, derived from the same swing leg detect_swings()
+already produced -- one source of truth, not a separate calibration
+system. This has NOT been visually validated against the founder's own
+TradingView charts yet (the brief requires this explicitly before relying
+on it) -- see the module's README for the verification script.
 
 Market structure (BOS/CHoCH) is also out of scope here -- noted as an
 explicit open item in the design brief, not yet confirmed as part of this
@@ -258,6 +256,62 @@ def compute_fib_levels(
     return {"retracement": retracements, "extension": extensions}
 
 
+# 9 standard Gann Fan angles, all generated simultaneously from one pivot
+# (design brief Section 2b, confirmed from the founder's TradingView
+# settings -- every checkbox active, not a config-selected subset). Values
+# are the multiplier applied to the base 1x1 rate; Gann's "AxB" notation
+# reads "A price units per B time units", so "2x1" (steeper than 1x1) is
+# 2.0 and "1x2" (flatter) is 0.5.
+GANN_ANGLES = {
+    "1x8": 1 / 8,
+    "1x4": 1 / 4,
+    "1x3": 1 / 3,
+    "1x2": 1 / 2,
+    "1x1": 1.0,
+    "2x1": 2.0,
+    "3x1": 3.0,
+    "4x1": 4.0,
+    "8x1": 8.0,
+}
+
+
+def gann_base_rate(pivot: SwingPoint, basis_leg_start: SwingPoint) -> float:
+    """price_per_time_unit for the 1x1 (45-degree) angle -- design brief
+    Section 2c, Option 1 (founder-confirmed): swing_price_range /
+    swing_duration_in_bars, where basis_leg_start is the swing
+    immediately preceding `pivot` (opposite direction) in the same
+    detect_swings() output -- one source of truth, not a separate
+    calibration system.
+    """
+    duration = pivot.index - basis_leg_start.index
+    if duration <= 0:
+        raise ValueError(
+            f"basis_leg_start.index ({basis_leg_start.index}) must be before pivot.index ({pivot.index})"
+        )
+    price_range = abs(pivot.price - basis_leg_start.price)
+    return price_range / duration
+
+
+def gann_fan_prices(
+    pivot: SwingPoint,
+    basis_leg_start: SwingPoint,
+    bar_index: int,
+    angles: dict[str, float] = GANN_ANGLES,
+) -> dict[str, float]:
+    """Price of each Gann angle at bar_index -- an absolute candle index
+    in the same series pivot/basis_leg_start came from (can be before, at,
+    or after pivot.index; a fan is a straight line through all time, not
+    just forward-projecting). A fan from a LOW pivot projects upward
+    (rising support lines, the expected-continuation direction after a
+    low); a fan from a HIGH pivot projects downward (falling resistance
+    lines after a high).
+    """
+    base_rate = gann_base_rate(pivot, basis_leg_start)
+    sign = 1.0 if pivot.direction is SwingDirection.LOW else -1.0
+    bars_from_pivot = bar_index - pivot.index
+    return {label: pivot.price + sign * base_rate * ratio * bars_from_pivot for label, ratio in angles.items()}
+
+
 def swing_quality(
     swing: SwingPoint,
     candles: list[Candle],
@@ -333,12 +387,13 @@ def score_confluence(
                    + w3*regime_alignment + w4*volume_confirmation
                    + w5*wick_rejection_score
 
-    fib_confluence is passed in rather than computed here -- it's genuinely
-    Fib+Gann overlap per the design brief, but Gann isn't implemented yet
-    (see module docstring), so callers currently pass a Fib-only overlap
-    score. This function doesn't know or care which; it's a placeholder
-    for the caller to fill in correctly once Gann lands, not a silent
-    approximation baked into this function.
+    fib_confluence is passed in rather than computed here -- callers should
+    now pass fib_gann_confluence_score()'s output (Fib+Gann combined, per
+    the design brief) rather than fib_confluence_score() alone, since a
+    Gann pivot/basis pair is available. This function doesn't compute it
+    itself because doing so would require a Gann pivot/basis pair as an
+    additional parameter here even when the caller has no swing pair to
+    anchor one yet (e.g. scoring the very first swing in a series).
 
     regime_alignment defaults to a neutral 1.0 (no penalty, no boost) --
     market_regime.py (PRD B.6) doesn't exist yet, so there's no real
@@ -366,25 +421,54 @@ def score_confluence(
     )
 
 
+def _nearest_level_confluence(prices: list[float], reference_price: float, atr_value: float) -> float:
+    """0-1: how close reference_price sits to the nearest of `prices`,
+    normalized by ATR (design brief Section 4: overlap > 0.5x ATR should
+    NOT count as confluence -- it's coincidence, not a genuine level
+    interaction). Returns 0.0 if no level is within that band, or if
+    `prices` is empty."""
+    if atr_value <= 0 or not prices:
+        return 0.0
+    nearest_distance = min(abs(reference_price - p) for p in prices)
+    band = 0.5 * atr_value
+    if nearest_distance >= band:
+        return 0.0
+    return 1.0 - (nearest_distance / band)
+
+
 def fib_confluence_score(
     fib_levels: dict[str, dict[float, float]],
     reference_price: float,
     atr_value: float,
 ) -> float:
-    """0-1: how close reference_price sits to the nearest Fib level,
-    normalized by ATR (design brief Section 4: overlap > 0.5x ATR should
-    NOT count as confluence -- it's coincidence, not a genuine level
-    interaction). Returns 0.0 if no level is within that band."""
-    if atr_value <= 0:
-        return 0.0
+    """Fib-only confluence -- see fib_gann_confluence_score for the
+    combined Fib+Gann version the design brief actually calls for
+    (Section 2b: confluence must check overlap against all 9 fan lines,
+    not just Fib levels alone). Kept standalone since it's still useful on
+    its own (e.g. before a Gann pivot/basis pair is available)."""
     all_prices = list(fib_levels["retracement"].values()) + list(fib_levels["extension"].values())
-    if not all_prices:
-        return 0.0
-    nearest_distance = min(abs(reference_price - p) for p in all_prices)
-    band = 0.5 * atr_value
-    if nearest_distance >= band:
-        return 0.0
-    return 1.0 - (nearest_distance / band)
+    return _nearest_level_confluence(all_prices, reference_price, atr_value)
+
+
+def fib_gann_confluence_score(
+    fib_levels: dict[str, dict[float, float]],
+    gann_prices: dict[str, float],
+    reference_price: float,
+    atr_value: float,
+) -> float:
+    """Design brief Section 2b: the candidate level pool for confluence
+    must include each of the 9 Gann angle prices at the current bar
+    (gann_fan_prices' output), not just the static Fib levels -- same
+    normalize-by-ATR, no-overlap-beyond-0.5x-ATR rule as
+    fib_confluence_score, just a bigger pool of levels to check distance
+    against. This is what score_confluence's `fib_confluence` parameter
+    should be filled with now that Gann Fan is implemented."""
+    all_prices = (
+        list(fib_levels["retracement"].values())
+        + list(fib_levels["extension"].values())
+        + list(gann_prices.values())
+    )
+    return _nearest_level_confluence(all_prices, reference_price, atr_value)
 
 
 def confluence_across_timeframes(

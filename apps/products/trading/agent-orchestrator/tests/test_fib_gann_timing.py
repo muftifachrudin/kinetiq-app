@@ -206,6 +206,59 @@ def test_compute_fib_levels_accepts_custom_levels():
     assert levels["extension"] == {}
 
 
+# --- Gann Fan ---
+
+
+def sw(index: int, price: float, direction: fgt.SwingDirection) -> fgt.SwingPoint:
+    return fgt.SwingPoint(
+        index=index, ts=mk(index, price, price, price, price).ts, price=price, direction=direction, wick_rejection_score=0.0
+    )
+
+
+def test_gann_base_rate():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    assert fgt.gann_base_rate(pivot, basis) == pytest.approx(2.0)  # 20 price / 10 bars
+
+
+def test_gann_base_rate_rejects_non_positive_duration():
+    basis = sw(20, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)  # same index as basis
+    with pytest.raises(ValueError, match="must be before"):
+        fgt.gann_base_rate(pivot, basis)
+
+
+def test_gann_fan_prices_all_angles_equal_pivot_price_at_pivot_bar():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    prices = fgt.gann_fan_prices(pivot, basis, bar_index=pivot.index)
+    assert set(prices) == set(fgt.GANN_ANGLES)
+    assert all(p == pytest.approx(80.0) for p in prices.values())
+
+
+def test_gann_fan_prices_low_pivot_projects_upward_and_returns_to_swing_high_after_equal_duration():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)  # pivot.index + duration(10)
+    assert prices["1x1"] == pytest.approx(100.0)
+    assert prices["2x1"] > prices["1x1"] > prices["1x2"]  # steeper angle is higher for an upward fan
+
+
+def test_gann_fan_prices_high_pivot_projects_downward_and_returns_to_swing_low_after_equal_duration():
+    basis = sw(10, 80.0, fgt.SwingDirection.LOW)
+    pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)
+    prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    assert prices["1x1"] == pytest.approx(80.0)
+    assert prices["2x1"] < prices["1x1"] < prices["1x2"]  # steeper angle is lower for a downward fan
+
+
+def test_gann_fan_prices_accepts_custom_angle_subset():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    prices = fgt.gann_fan_prices(pivot, basis, bar_index=25, angles={"1x1": 1.0})
+    assert set(prices) == {"1x1"}
+
+
 # --- fib_confluence_score ---
 
 
@@ -226,6 +279,38 @@ def test_fib_confluence_score_far_from_any_level_is_zero():
 def test_fib_confluence_score_zero_atr_returns_zero_not_error():
     levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
     assert fgt.fib_confluence_score(levels, reference_price=87.64, atr_value=0.0) == 0.0
+
+
+# --- fib_gann_confluence_score ---
+
+
+def test_fib_gann_confluence_score_finds_confluence_fib_alone_misses():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=25)  # 2x1 == 100.0 here
+
+    reference_price = gann_prices["2x1"] + 0.1
+    fib_only = fgt.fib_confluence_score(fib_levels, reference_price, atr_value=1.0)
+    fib_gann = fgt.fib_gann_confluence_score(fib_levels, gann_prices, reference_price, atr_value=1.0)
+    assert fib_only == 0.0
+    assert fib_gann > 0.5
+
+
+def test_fib_gann_confluence_score_far_from_everything_is_zero():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=25)
+    assert fgt.fib_gann_confluence_score(fib_levels, gann_prices, reference_price=1000.0, atr_value=1.0) == 0.0
+
+
+def test_fib_gann_confluence_score_zero_atr_returns_zero_not_error():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    fib_levels = fgt.compute_fib_levels(swing_low=80.0, swing_high=100.0)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=25)
+    assert fgt.fib_gann_confluence_score(fib_levels, gann_prices, reference_price=90.0, atr_value=0.0) == 0.0
 
 
 # --- confluence_across_timeframes ---
