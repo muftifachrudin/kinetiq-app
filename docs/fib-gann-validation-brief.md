@@ -14,7 +14,7 @@ Ini rekap dari 4 pertanyaan klarifikasi yang diajukan sesi Claude Code sebelumny
 | 3b | Gann Fan — kalibrasi price-per-time | **RESOLVED** | Opsi 1: fixed reference scale dari swing basis pivot (`swing_range / swing_duration_bars`) + validasi visual wajib (lihat bag. 2c) |
 | — | Market structure (BOS/CHoCH) | **OPEN — butuh konfirmasi scope** | Ditemukan dari chart, dipakai bareng fib+gann tapi belum ada di scope PRD B.6 (lihat bag. 2d) |
 | 4 | Multi-timeframe confluence & bobot | **RESOLVED** | Weekly→Daily→4h→1h, bobot besar→kecil, sesuai draft PRD tanpa perubahan (lihat bag. 2e) |
-| — | TP/SL, R:R gate, labeling | **SPEC BARU — siap implementasi** | SL struktural + tiered TP dari extension confluence + R:R gate ≥1.5 + triple-barrier labeling (lihat bag. 5) |
+| — | TP/SL, R:R gate, labeling | **SPEC BARU — siap implementasi** | SL struktural + tiered TP dari extension confluence + R:R gate ≥1.5 + triple-barrier labeling (lihat bag. 5) — klaim "reuse pipeline MARKOVIZ" di 5d **sudah diverifikasi & ternyata TIDAK bisa langsung di-reuse**, lihat catatan di 5d |
 | — | Posisi fib_gann_timing dlm sistem | **OPEN — keputusan arsitektur** | Standalone validation dulu vs langsung jadi input graph (lihat bag. 1) |
 
 **Untuk Claude Code**: semua baris RESOLVED + bag. 5 (spec TP/SL) bisa langsung dipakai sebagai spesifikasi round #2 `fib_gann_timing.py` tanpa perlu tanya ulang founder — termasuk Gann Fan yang sebelumnya di-skip (kalibrasi sudah diputuskan, lihat 2c). 2 baris "OPEN" tersisa masih butuh keputusan eksplisit — jangan diasumsikan sendiri, tandai sebagai TODO di kode kalau menyentuh area itu.
@@ -139,6 +139,30 @@ Untuk fitting bobot confluence (w1–w5 di poin 4) dan kalibrasi `trader_profile
 - **Upper barrier** = TP1 (dari 5b), **lower barrier** = SL (dari 5a), **vertical barrier** = time-out (max holding period, mis. N candle pada timeframe sinyal — parameter kalibrasi).
 - Label: `+1` (TP tersentuh dulu), `-1` (SL tersentuh dulu), `0`/return-at-timeout (vertical barrier duluan).
 - Kompatibel langsung dengan pipeline logistic regression meta-model MARKOVIZ yang sudah ada — **reuse pipeline itu**, jangan tulis ulang dari nol.
+
+> **Verifikasi Claude Code (2 Juli 2026)**: klaim di atas dicek langsung ke `ai-perp-bot-core`
+> (`META-MODEL-GUIDE.md` + cross-check kode asli `src/meta-score.ts`, bukan cuma dokumentasi) —
+> hasilnya **tidak bisa langsung "reuse pipeline itu" seperti disebut di atas**:
+> - Model produksi MARKOVIZ sekarang **GBM (Gradient Boosted Trees)**, bukan logistic regression
+>   murni — LogReg cuma fallback kalau sampel training <40. Bukan mismatch besar konsepnya, tapi
+>   klaim "logistic regression meta-model" di atas sudah gak match kondisi kode terkini.
+> - Skema label MARKOVIZ itu **binary sederhana** (`label: 0|1` WIN/LOSS dari P&L trade real +
+>   shadow-labeling utk sinyal yang di-skip/orphaned), **bukan triple-barrier**. Ini BUKAN masalah
+>   buat spec 5d di atas — triple-barrier fib_gann tetap lebih tepat dipakai — tapi berarti dua
+>   metode ini punya filosofi label yang beda pas nanti dibandingkan hasilnya.
+> - 19 fitur GBM MARKOVIZ (7-pillar signal engine + macro + session context) **tidak overlap sama
+>   sekali** dengan fitur fib_gann (swing quality, wick rejection, fib/gann confluence, dst) — beda
+>   domain sinyal total.
+> - Threshold (`LIVE_META_MIN_PROBA`) dikalibrasi manual staged rollout (0.55 → 0.52 kalau win rate
+>   tetap bagus), bukan hasil optimasi statistik — jadi pola manual-staged ini yang layak ditiru
+>   buat kalibrasi R:R gate di 5c, bukan angkanya sendiri.
+>
+> **Kesimpulan praktis**: triple-barrier labeling di bagian ini **harus ditulis dari nol pakai
+> scikit-learn** (beda bahasa & beda fitur dari MARKOVIZ, jadi memang bukan soal port kode) — yang
+> layak ditiru dari MARKOVIZ cuma pola metodologisnya: shadow-labeling utk sinyal yang gak
+> dieksekusi, evaluasi pakai cross-validation + AUC/Brier/accuracy, dan kalibrasi threshold
+> bertahap manual. Detail lengkap di `docs/prd.md` bagian status Fase 2.
+
 - Barrier check HARUS pakai data intrabar yang lebih granular dari timeframe sinyal (mis. sinyal 4h → cek barrier pakai 1h/15m) supaya urutan TP-vs-SL-tersentuh-duluan akurat, bukan asumsi dari OHLC candle sinyal saja. Kalau data granular tidak tersedia, pakai aturan konservatif: kalau dalam satu candle TP dan SL dua-duanya tersentuh, **hitung sebagai SL** (worst-case assumption).
 
 ### 5e. Kecepatan sinyal — definisi realistis
