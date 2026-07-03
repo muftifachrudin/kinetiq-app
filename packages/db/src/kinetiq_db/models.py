@@ -421,6 +421,53 @@ class DlmmPosition(Base):
 # --- Trader profile / Shadow Account (Section B.6b) -------------------------
 
 
+class Signal(Base):
+    """F0b (docs/sonnet5-implementation-roadmap.md): persisted mirror of
+    apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/
+    signal_runner.Signal, the in-memory dataclass every Fase 1-5 backtest
+    module already produces. Deliberately NOT built until now -- migration
+    0005's own docstring and shadow_pair.py's module docstring both said so
+    explicitly ("building a signal table now, with no live writer, would be
+    exactly the kind of design for a hypothetical future requirement this
+    codebase's own conventions warn against"). That blocker is resolved:
+    fit_weights.py (Fase 3) and the F7 shadow loop are real, existing
+    consumers/writers this table serves.
+
+    No tenant_id / RLS -- same convention as ohlcv/funding_rate/
+    open_interest: this is shared strategy-engine output describing market
+    timing for one instrument, not tenant-owned data. Not partitioned by ts
+    (unlike those tables) -- signal volume is orders of magnitude lower
+    (one row per gated touch-bar, not per candle across every instrument),
+    matching trade_annotation's own unpartitioned scale rather than ohlcv's.
+
+    factor_scores mirrors signal_runner.Signal's per-factor dump fields
+    (swing_quality, fib_gann_confluence, ..., liq_cascade_flag) as a flat
+    JSONB object -- exactly the payload Fase 3/4 already compute, just not
+    yet written anywhere durable. A future live writer (F7) is expected to
+    serialize dataclasses.asdict()-shaped data here; this migration only
+    adds the column, it does not write to it.
+    """
+
+    __tablename__ = "signal"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
+    timeframe = Column(Text, nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False)
+    direction = Column(Text, nullable=False)
+    entry_price = Column(Numeric(24, 10), nullable=False)
+    stop_loss = Column(Numeric(24, 10), nullable=False)
+    take_profit_1 = Column(Numeric(24, 10))  # nullable: ExitPlan.take_profits can be empty
+    confidence = Column(Numeric(5, 4), nullable=False)
+    factor_scores = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("direction in ('long', 'short')", name="ck_signal_direction"),
+        UniqueConstraint("instrument_id", "timeframe", "ts", name="uq_signal_instrument_timeframe_ts"),
+    )
+
+
 class TradeAnnotation(Base):
     """Founder (MVP) trade annotations used to calibrate fib_gann_timing.
 
@@ -430,9 +477,13 @@ class TradeAnnotation(Base):
     trade_simulator.py counterpart -- all nullable, since a signal without
     a real trade behind it is still annotated with the real-side columns
     empty (brief: "Sinyal tanpa trade real tetap disimulasikan dan
-    dicatat"). Deliberately does NOT add a signal_id linkage column this
-    round -- that's the brief's shadow_pair pairing step (a later round),
-    not this schema-extension step.
+    dicatat"). signal_id (F0b, this migration) links a row to the `signal`
+    table's persisted record when one exists -- nullable, since every
+    manually-logged annotation up to and including this migration predates
+    the `signal` table's existence and has nothing to link to; shadow_pair.
+    py's heuristic (time+direction) matcher remains how pairing actually
+    happens until F7's live loop starts populating this column going
+    forward.
     """
 
     __tablename__ = "trade_annotation"
@@ -446,6 +497,7 @@ class TradeAnnotation(Base):
     gann_angle = Column(Text)
     action = Column(Text, nullable=False)
     rationale_text = Column(Text)
+    signal_id = Column(BigInteger, ForeignKey("signal.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Real execution data (all nullable -- see class docstring)

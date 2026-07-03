@@ -72,12 +72,24 @@ penuh). Acceptance terpenuhi: `count(*)=276` terverifikasi dari query terpisah
 setelahnya, `instrument`=55. Detail: `docs/fib-gann-validation-brief.md`
 bag. 23 update, CLAUDE.md.
 
-**0b. Migration `signal_id` linkage** (`packages/db/migrations/` —
-CODEOWNERS, review founder). Kolom nullable `signal_id` + tabel `signal`
-minimal (id, ts, instrument_id, timeframe, direction, entry, sl, tp1,
-confidence, per-factor scores JSONB) — sekarang sudah ADA penulisnya
-(harness F3 & shadow loop F7), jadi tidak melanggar prinsip "jangan desain
-untuk kebutuhan hipotetis" lagi.
+**0b. Migration `signal_id` linkage — SELESAI, PR draft (3 Juli 2026,
+menunggu review CODEOWNERS founder, BELUM di-merge).** Tabel `signal`
+(id, instrument_id, timeframe, ts, direction, entry_price, stop_loss,
+take_profit_1, confidence, factor_scores JSONB, unique constraint
+instrument+timeframe+ts, CHECK direction) + kolom nullable
+`trade_annotation.signal_id` (FK ke `signal.id`) — migrasi 0008. Tidak ada
+tenant_id/RLS di `signal` (sama pola dgn ohlcv/funding_rate/open_interest —
+output strategy-engine bersama, bukan data per-tenant), tidak dipartisi
+(volume setara trade_annotation, bukan ohlcv). Diverifikasi end-to-end thd
+Postgres 16 lokal sekali pakai: full chain `alembic upgrade head` (0001→
+0008) sukses, `\d signal`/`\d trade_annotation` konfirmasi kolom+constraint
+persis sesuai spec, grant `kinetiq_app` (migrasi 0006's `ALTER DEFAULT
+PRIVILEGES`) otomatis nyakup tabel baru ini (diverifikasi query
+`information_schema.role_table_grants`, bukan diasumsikan), `alembic
+downgrade -1` bersih (tabel+kolom hilang), upgrade ulang sukses lagi.
+`shadow_pair.py`'s heuristic matcher (time+direction) TETAP jalan apa
+adanya — belum ada live writer yg isi `signal`/`signal_id` (itu kerjaan F7),
+migrasi ini cuma nyiapin skema.
 
 **0c. Backfill & poll `funding_rate` + `open_interest` native** dari
 Binance/Bybit via worker ingestion yang sudah jalan untuk ohlcv (perluas
