@@ -178,3 +178,15 @@ def test_load_config_reads_default_yaml():
     assert "walk_forward" in config
     assert config["walk_forward"]["train_months"] > 0
     assert "promotion" in config
+
+
+# --- default_output_dir ---
+
+
+def test_default_output_dir_resolves_to_repo_root_docs_not_apps_docs():
+    # regression: a previous version used 5 ".." (one too few), silently
+    # resolving to apps/docs/validation-results instead of the repo root's
+    # docs/validation-results -- caught only by computing this by hand.
+    resolved = Path(rv.default_output_dir()).resolve()
+    repo_root = Path(__file__).resolve().parents[5]
+    assert resolved == repo_root / "docs" / "validation-results"

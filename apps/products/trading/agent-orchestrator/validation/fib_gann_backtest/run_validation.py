@@ -60,6 +60,18 @@ import trade_simulator as ts  # noqa: E402
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "configs", "walk_forward_windows.yaml")
 
 
+def default_output_dir() -> str:
+    """repo_root/docs/validation-results -- 6 ".." to reach repo root from
+    .../apps/products/trading/agent-orchestrator/validation/fib_gann_backtest
+    (a real bug caught only by computing this by hand, not by any existing
+    test: every test so far passed an explicit --output-dir or used
+    --dry-run, so a previous 5-".." version silently resolved to
+    apps/docs/validation-results instead). Pulled into its own function so
+    the resolution itself is directly testable, not just implicitly
+    exercised by main()."""
+    return os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "docs", "validation-results")
+
+
 @dataclasses.dataclass(frozen=True)
 class WindowResult:
     window: WalkForwardWindow
@@ -141,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--dry-run", action="store_true", help="preview windows without running the backtest or writing a report")
-    parser.add_argument("--output-dir", default=os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "docs", "validation-results"))
+    parser.add_argument("--output-dir", default=default_output_dir())
     args = parser.parse_args(argv)
 
     import data_loader  # deferred: see the module-level comment for why
