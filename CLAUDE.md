@@ -145,8 +145,16 @@ that work:
   non-owner, non-BYPASSRLS role (roadmap Phase 0d).
 - CoinGlass Hobbyist is confirmed daily-only (interval=1h returns 403);
   per-pair endpoints require `exchange=`; keep ~2.5s between calls.
-- OPEN data-integrity issue: production `trade_annotation` is EMPTY
-  (0-byte heap, 4 instruments) despite the import recorded as verified in
-  the brief section 21 -- founder must re-run the --emit-sql import and
-  verify the count from a separate session before any agreement-rate/
-  shadow-pair work.
+- RESOLVED (2026-07-03): production `trade_annotation` is now populated
+  (276 rows, `instrument` 55) -- the original `--emit-sql` file failed
+  repeatedly via manual paste into Neon SQL Editor (large multi-statement
+  pastes silently truncated on mobile well under the file's actual size,
+  at ~140-150 lines regardless of byte count). Root cause turned out to be
+  paste reliability, not the data/transaction itself. Fix: the Neon
+  HTTP-SQL endpoint's `{"queries": [...]}` array form (see above) DOES
+  correctly execute a large multi-statement transaction (BEGIN/set_config/
+  156+ INSERTs/COMMIT in one request, confirmed at 159 queries / ~90KB
+  payload) -- the earlier assumption in the deep-dive brief that this form
+  was "fine for small reads but not bulk INSERT" was never actually tested
+  and was wrong. Don't reach for manual Neon SQL Editor paste for bulk
+  writes again; use the `queries` array from the sandbox/CI directly.

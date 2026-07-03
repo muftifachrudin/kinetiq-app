@@ -60,11 +60,15 @@ kecil, jangan satu PR raksasa.
 
 ## Fase 0 — Integritas & plumbing data (prasyarat semua)
 
-**0a. Re-import `trade_annotation` (butuh founder, dorong terus sampai beres).**
-Production kosong (bukti: investigation doc bag. 5). Founder re-run file
-`--emit-sql` di Neon SQL Editor; verifikasi `count(*)` dari SESSION BARU
-terpisah, lalu cek `instrument` ≈ 53+ baris. Acceptance: count=276
-terverifikasi dari session terpisah, dicatat di brief.
+**0a. Re-import `trade_annotation` — SELESAI (2026-07-03).**
+Akar masalah lama bukan transaksi database, tapi paste manual 775-baris
+`--emit-sql` ke Neon SQL Editor via mobile browser silently truncate ~140-150
+baris terlepas dari ukuran file. Sebagian (row 1-120) masuk lewat chunk kecil
+manual; sisanya (row 121-276) dieksekusi langsung dari sandbox lewat endpoint
+HTTP-SQL Neon bentuk `{"queries": [...]}` (1 request, 159 query, ~90KB, sukses
+penuh). Acceptance terpenuhi: `count(*)=276` terverifikasi dari query terpisah
+setelahnya, `instrument`=55. Detail: `docs/fib-gann-validation-brief.md`
+bag. 23 update, CLAUDE.md.
 
 **0b. Migration `signal_id` linkage** (`packages/db/migrations/` —
 CODEOWNERS, review founder). Kolom nullable `signal_id` + tabel `signal`
