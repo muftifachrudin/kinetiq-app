@@ -88,6 +88,16 @@ DEFAULT_SL_ATR_BUFFER_MULTIPLIER = 0.375
 # docs/fib-gann-validation-brief.md Section 5d's verification note).
 DEFAULT_MIN_RR_THRESHOLD = 1.5
 
+# Fase 5 (docs/sonnet5-implementation-roadmap.md): a NEW upper cap on the
+# R:R gate, tested as a controlled A/B variant rather than assumed correct
+# -- an implausibly high R:R usually means take_profits[0] landed far from
+# entry relative to a thin stop (e.g. a barely-confirmed pivot with a tiny
+# ATR buffer), which is a fragile setup, not a genuinely great one. None
+# (the default) preserves every existing caller's behavior exactly --
+# passes_risk_reward_gate()/generate_signals() are both no-ops for this
+# unless a caller opts in.
+DEFAULT_MAX_RR_THRESHOLD = 5.0
+
 
 def _require_utc(value: datetime.datetime, name: str) -> None:
     if value.tzinfo is None:
@@ -618,6 +628,54 @@ def compute_stop_loss(
     return pivot.price - buffer if direction is TradeDirection.LONG else pivot.price + buffer
 
 
+class StopLossMethod(enum.Enum):
+    """Fase 5 (docs/sonnet5-implementation-roadmap.md) A/B variant --
+    ATR_BUFFER is the existing/default method (compute_stop_loss above),
+    NEXT_FIB_LEVEL is the new candidate build_exit_plan can be told to use
+    instead. Both are real, tested code paths -- neither is assumed to win
+    the experiment; the roadmap's acceptance criterion is a walk-forward
+    decision written up in a brief, not a hardcoded default flip here."""
+
+    ATR_BUFFER = "atr_buffer"
+    NEXT_FIB_LEVEL = "next_fib_level"
+
+
+def compute_stop_loss_next_fib_level(
+    pivot: SwingPoint,
+    basis_leg_start: SwingPoint,
+    extension_levels: tuple[float, ...] = DEFAULT_FIB_EXTENSION_LEVELS,
+) -> float:
+    """Fase 5 SL variant: instead of a fixed ATR buffer behind the pivot,
+    place the SL one Fib extension ratio's worth further behind it -- the
+    "next fib level" past the swing itself, using the SAME leg-projection
+    formula compute_take_profit_levels() already uses for TPs on the
+    opposite side of price (this is genuinely the mirror-image
+    calculation: "one extension increment beyond the swing, away from the
+    leg" is the same geometry whether it's serving as a downstream TP for
+    the opposite direction or an upstream SL for this one).
+
+    min(extension_levels) is used as "the next" level -- the smallest
+    extension ratio configured (nearest to the swing, e.g. 1.13) rather
+    than an arbitrary fixed one, so this stays consistent with whatever
+    extension ladder the rest of a call site is already using. Unlike
+    compute_stop_loss(), this does not take atr_value at all -- the whole
+    point of this variant is replacing the ATR-based distance with a
+    structural (leg-based) one instead, not combining both.
+    """
+    if not extension_levels:
+        raise ValueError("extension_levels must not be empty")
+    leg = abs(pivot.price - basis_leg_start.price)
+    if leg <= 0:
+        raise ValueError("pivot and basis_leg_start must have different prices")
+    next_level = min(extension_levels)
+    direction = trade_direction_from_pivot(pivot)
+    swing_low = min(pivot.price, basis_leg_start.price)
+    swing_high = max(pivot.price, basis_leg_start.price)
+    if direction is TradeDirection.LONG:
+        return swing_low - (next_level - 1.0) * leg
+    return swing_high + (next_level - 1.0) * leg
+
+
 def compute_take_profit_levels(
     pivot: SwingPoint,
     basis_leg_start: SwingPoint,
@@ -683,6 +741,7 @@ def build_exit_plan(
     gann_prices: dict[str, float],
     extension_levels: tuple[float, ...] = DEFAULT_FIB_EXTENSION_LEVELS,
     sl_atr_buffer_multiplier: float = DEFAULT_SL_ATR_BUFFER_MULTIPLIER,
+    sl_method: StopLossMethod = StopLossMethod.ATR_BUFFER,
 ) -> ExitPlan:
     """Bundles 5a (SL) + 5b (tiered TP) into one exit plan and computes the
     R:R ratio 5c's gate checks. entry_price is a separate parameter from
@@ -691,9 +750,19 @@ def build_exit_plan(
     partial exit (brief 5b: "porsi configurable, default mis. 50%") is an
     execution-layer concern, not represented here -- this module only
     computes price levels.
+
+    sl_method (Fase 5) defaults to ATR_BUFFER -- the existing behavior,
+    unchanged for every caller that predates this option. NEXT_FIB_LEVEL
+    swaps in compute_stop_loss_next_fib_level() instead; sl_atr_buffer_
+    multiplier is simply unused in that branch (kept as a parameter here
+    rather than split into two functions, since every other input stays
+    identical between the two variants).
     """
     direction = trade_direction_from_pivot(pivot)
-    stop_loss = compute_stop_loss(pivot, atr_value, sl_atr_buffer_multiplier)
+    if sl_method is StopLossMethod.NEXT_FIB_LEVEL:
+        stop_loss = compute_stop_loss_next_fib_level(pivot, basis_leg_start, extension_levels)
+    else:
+        stop_loss = compute_stop_loss(pivot, atr_value, sl_atr_buffer_multiplier)
     take_profits = compute_take_profit_levels(pivot, basis_leg_start, gann_prices, atr_value, extension_levels)
 
     risk = abs(entry_price - stop_loss)
@@ -710,14 +779,30 @@ def build_exit_plan(
     )
 
 
-def passes_risk_reward_gate(exit_plan: ExitPlan, min_rr_threshold: float = DEFAULT_MIN_RR_THRESHOLD) -> bool:
+def passes_risk_reward_gate(
+    exit_plan: ExitPlan,
+    min_rr_threshold: float = DEFAULT_MIN_RR_THRESHOLD,
+    max_rr_threshold: float | None = None,
+) -> bool:
     """Design brief Section 5c: a binary gate, separate from confidence
     scoring -- a signal with a high confluence score but a bad R:R
     structure is SKIPPED entirely, never down-weighted. False whenever
-    risk_reward_ratio is None (no TP1 was found at all)."""
+    risk_reward_ratio is None (no TP1 was found at all).
+
+    max_rr_threshold (Fase 5, docs/sonnet5-implementation-roadmap.md): an
+    OPTIONAL upper cap, tested as a controlled A/B variant against the
+    existing uncapped behavior -- None (the default) means no upper cap at
+    all, identical to this function's behavior before Fase 5. When set, an
+    implausibly high R:R (see DEFAULT_MAX_RR_THRESHOLD's comment) is
+    rejected the same way a too-low one already is -- this is still a
+    single binary gate, not two different policies."""
     if exit_plan.risk_reward_ratio is None:
         return False
-    return exit_plan.risk_reward_ratio >= min_rr_threshold
+    if exit_plan.risk_reward_ratio < min_rr_threshold:
+        return False
+    if max_rr_threshold is not None and exit_plan.risk_reward_ratio > max_rr_threshold:
+        return False
+    return True
 
 
 class BarrierOutcome(enum.IntEnum):

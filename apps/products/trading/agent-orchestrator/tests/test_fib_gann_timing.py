@@ -594,6 +594,93 @@ def test_passes_risk_reward_gate_false_when_no_take_profit_found():
     assert fgt.passes_risk_reward_gate(plan) is False
 
 
+# --- passes_risk_reward_gate max_rr_threshold (Fase 5) ---
+
+
+def test_passes_risk_reward_gate_max_rr_none_preserves_old_behavior():
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(120.0,), risk_reward_ratio=15.6)
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5, max_rr_threshold=None) is True
+
+
+def test_passes_risk_reward_gate_rejects_ratio_above_max_rr_threshold():
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(120.0,), risk_reward_ratio=15.6)
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5, max_rr_threshold=5.0) is False
+
+
+def test_passes_risk_reward_gate_accepts_ratio_at_exactly_max_rr_threshold():
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=81.0, stop_loss=78.5, take_profits=(120.0,), risk_reward_ratio=5.0)
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5, max_rr_threshold=5.0) is True
+
+
+def test_passes_risk_reward_gate_max_rr_does_not_override_min_rr_rejection():
+    plan = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=90.0, take_profits=(105.0,), risk_reward_ratio=0.5)
+    assert fgt.passes_risk_reward_gate(plan, min_rr_threshold=1.5, max_rr_threshold=5.0) is False
+
+
+# --- compute_stop_loss_next_fib_level (Fase 5) ---
+
+
+def test_compute_stop_loss_next_fib_level_long_places_sl_below_swing_low():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)  # swing_low=80, swing_high=100, leg=20
+    sl = fgt.compute_stop_loss_next_fib_level(pivot, basis, extension_levels=(1.13, 1.272))
+    assert sl == pytest.approx(80.0 - 0.13 * 20.0)  # min(extension_levels)=1.13
+    assert sl < 80.0
+
+
+def test_compute_stop_loss_next_fib_level_short_places_sl_above_swing_high():
+    basis = sw(10, 80.0, fgt.SwingDirection.LOW)
+    pivot = sw(20, 100.0, fgt.SwingDirection.HIGH)  # swing_low=80, swing_high=100, leg=20
+    sl = fgt.compute_stop_loss_next_fib_level(pivot, basis, extension_levels=(1.13, 1.272))
+    assert sl == pytest.approx(100.0 + 0.13 * 20.0)
+    assert sl > 100.0
+
+
+def test_compute_stop_loss_next_fib_level_uses_smallest_extension_level():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    sl_wide_ladder = fgt.compute_stop_loss_next_fib_level(pivot, basis, extension_levels=(1.618, 1.13, 2.0))
+    sl_single = fgt.compute_stop_loss_next_fib_level(pivot, basis, extension_levels=(1.13,))
+    assert sl_wide_ladder == pytest.approx(sl_single)  # 1.13 is the min regardless of ladder order/size
+
+
+def test_compute_stop_loss_next_fib_level_rejects_empty_extension_levels():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    with pytest.raises(ValueError, match="must not be empty"):
+        fgt.compute_stop_loss_next_fib_level(pivot, basis, extension_levels=())
+
+
+def test_compute_stop_loss_next_fib_level_rejects_zero_leg():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 100.0, fgt.SwingDirection.LOW)
+    with pytest.raises(ValueError, match="different prices"):
+        fgt.compute_stop_loss_next_fib_level(pivot, basis)
+
+
+# --- build_exit_plan sl_method (Fase 5) ---
+
+
+def test_build_exit_plan_default_sl_method_is_atr_buffer():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    plan = fgt.build_exit_plan(pivot, basis, entry_price=81.0, atr_value=4.0, gann_prices=gann_prices)
+    assert plan.stop_loss == pytest.approx(80.0 - fgt.DEFAULT_SL_ATR_BUFFER_MULTIPLIER * 4.0)
+
+
+def test_build_exit_plan_next_fib_level_sl_method_ignores_atr_buffer():
+    basis = sw(10, 100.0, fgt.SwingDirection.HIGH)
+    pivot = sw(20, 80.0, fgt.SwingDirection.LOW)
+    gann_prices = fgt.gann_fan_prices(pivot, basis, bar_index=30)
+    plan = fgt.build_exit_plan(
+        pivot, basis, entry_price=81.0, atr_value=4.0, gann_prices=gann_prices, sl_method=fgt.StopLossMethod.NEXT_FIB_LEVEL
+    )
+    expected = fgt.compute_stop_loss_next_fib_level(pivot, basis, fgt.DEFAULT_FIB_EXTENSION_LEVELS)
+    assert plan.stop_loss == pytest.approx(expected)
+    assert plan.stop_loss != pytest.approx(80.0 - fgt.DEFAULT_SL_ATR_BUFFER_MULTIPLIER * 4.0)
+
+
 # --- label_triple_barrier ---
 
 LONG_PLAN = fgt.ExitPlan(direction=fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=90.0, take_profits=(120.0,), risk_reward_ratio=2.0)
