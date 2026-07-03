@@ -32,7 +32,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install packages/backtest-core + pytest
-        run: pip install -e "packages/backtest-core[dev]" pytest
+        # pyyaml: agent-orchestrator/validation/fib_gann_backtest/run_validation.py
+        # reads configs/walk_forward_windows.yaml -- not a backtest-core
+        # dependency, so it isn't pulled in by the -e install above.
+        run: pip install -e "packages/backtest-core[dev]" pytest pyyaml
       - name: Run tests
         run: pytest packages/backtest-core/tests apps/products/trading/agent-orchestrator/tests
 
