@@ -424,11 +424,19 @@ def volume_confirmation(swing: SwingPoint, candles: list[Candle], lookback: int 
 
 @dataclasses.dataclass(frozen=True)
 class ConfluenceWeights:
-    swing_quality: float = 0.25
-    fib_gann_confluence: float = 0.35
+    swing_quality: float = 0.20
+    fib_gann_confluence: float = 0.30
     regime_alignment: float = 0.15
     volume_confirmation: float = 0.15
     wick_rejection: float = 0.10
+    # Fase 2 (docs/sonnet5-implementation-roadmap.md) -- htf_bias.py's
+    # htf_alignment_score(), a new slot alongside regime_alignment, not
+    # blended into it (Daily/4h trend agreement is a distinct signal from
+    # BOS/CHoCH structure alignment). Adding this field took 0.05 from
+    # swing_quality (0.25->0.20) to keep the sum at 1.0 -- an initial,
+    # undisputed rebalancing since none of these weights are fit yet
+    # (Fase 3 decides the real numbers via logistic regression).
+    htf_alignment: float = 0.10
 
     def __post_init__(self) -> None:
         total = (
@@ -437,6 +445,7 @@ class ConfluenceWeights:
             + self.regime_alignment
             + self.volume_confirmation
             + self.wick_rejection
+            + self.htf_alignment
         )
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"ConfluenceWeights must sum to 1.0, got {total}")
@@ -447,12 +456,13 @@ def score_confluence(
     candles: list[Candle],
     fib_confluence: float,
     regime_alignment: float | None = None,
+    htf_alignment: float | None = None,
     weights: ConfluenceWeights = ConfluenceWeights(),
 ) -> float:
     """Design brief Section 4's confidence formula:
         confidence = w1*swing_quality + w2*fib_gann_confluence
                    + w3*regime_alignment + w4*volume_confirmation
-                   + w5*wick_rejection_score
+                   + w5*wick_rejection_score + w6*htf_alignment
 
     fib_confluence is passed in rather than computed here -- callers should
     now pass fib_gann_confluence_score()'s output (Fib+Gann combined, per
@@ -467,6 +477,14 @@ def score_confluence(
     regime signal to align against. This is an explicit stand-in, not a
     considered "neutral is usually right" judgment call.
 
+    htf_alignment (Fase 2, htf_bias.py) defaults the same way -- neutral
+    1.0 when the caller has no HTF bias signal to pass at all, distinct
+    from htf_bias.htf_alignment_score()'s OWN neutral value (0.5) for when
+    a real HTF bias computation comes back UNDEFINED. Callers that DO have
+    an htf_bias.py signal (signal_runner.generate_signals() always does)
+    should pass its real 0-1 output here, same convention regime_alignment
+    already follows with market_structure.structure_alignment_score().
+
     weights are NOT fit from data yet (design brief: should eventually be
     logistic-regression-fit against trade_annotation outcomes, reusing the
     trader_profile calibration pipeline -- B.6b, which itself doesn't
@@ -475,6 +493,8 @@ def score_confluence(
     """
     if regime_alignment is None:
         regime_alignment = 1.0
+    if htf_alignment is None:
+        htf_alignment = 1.0
 
     vol_conf = min(1.0, volume_confirmation(swing, candles) / 2.0)  # normalize: 2x avg volume -> full score
     quality = swing_quality(swing, candles)
@@ -485,6 +505,7 @@ def score_confluence(
         + weights.regime_alignment * regime_alignment
         + weights.volume_confirmation * vol_conf
         + weights.wick_rejection * swing.wick_rejection_score
+        + weights.htf_alignment * htf_alignment
     )
 
 

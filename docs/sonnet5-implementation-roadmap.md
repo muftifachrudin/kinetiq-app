@@ -144,6 +144,43 @@ seri/venue (murni aritmetika per-trade, tidak bergantung pada venue).
   production, tunjukkan bias Daily di tanggal yang jelas bear); funnel
   diagnostic sebelum/sesudah TIDAK berubah (karena bukan gate).
 
+**Status: SELESAI (2026-07-03).** `htf_bias.py` (skill baru terpisah):
+`resample_candles(candles_1h, "4h"|"1d")` agregasi kalender UTC (bucket
+1d truncate ke midnight, 4h ke boundary 00/04/08/.../20), closed-bucket-only
+via cek `bucket_candles[-1].ts` terhadap akhir bucket-nya sendiri (bukan
+hitung expected-count, toleran thd input yang berhenti di tengah bucket —
+kasus normal utk data live). `compute_bias()` reuse persis
+`market_structure.trend_bias()` di atas swing hasil resample, fallback
+`TrendBias.UNDEFINED` kalau swing<2 (bukan enum baru — reuse nilai yang
+sudah ada persis sesuai prinsip modul ini). `htf_alignment_score(direction,
+biases, weights=DEFAULT_HTF_TIMEFRAME_WEIGHTS)` — renormalize timeframe yang
+hadir (pola sama `confluence_across_timeframes()`), 1.0 kalau semua TF
+searah, 0.15 kalau berlawanan (bukan 0 — faktor skor, samakan angka dengan
+`market_structure.STRUCTURE_ALIGNMENT_SCORE_OPPOSED`), 0.5 kalau
+UNDEFINED/tidak ada data. `sma_trend_bias(candles, period=200)` proxy
+close-vs-SMA terpisah (TIDAK di-blend ke `htf_alignment_score` — sengaja
+dibiarkan jadi kandidat independen utk fitting F3, sesuai temuan F9 deep-dive
+bhw SMA-alignment yang tervalidasi kausal, bukan trend_bias berbasis swing).
+
+Wiring: `ConfluenceWeights` dapat field baru `htf_alignment=0.10` (diambil
+0.05 dari `swing_quality`, 0.25→0.20, supaya tetap sum=1.0 — rebalancing awal
+yang belum di-fit, sesuai prinsip "angka awal bebas"). `score_confluence()`
+dapat parameter `htf_alignment: float | None = None` (default neutral 1.0
+sama seperti `regime_alignment`). `signal_runner.generate_signals()` hitung
+Daily+4h bias tiap bar dari `candles[: i+1]` (anti-lookahead, sama pola
+`swing_quality`'s recency slice), wire ke `score_confluence()` sebagai slot
+terpisah dari `regime_alignment` (BUKAN di-blend — structure BOS/CHoCH dan
+HTF trend agreement dua sinyal berbeda).
+
+21 test baru (`test_htf_bias.py`), 1 test lama diupdate (formula
+`ConfluenceWeights` sum berubah), 330 test total lulus, `ruff check` bersih.
+Verifikasi data real (bukan cuma unit test): full 1-tahun BTC/USDT Binance
+1h — decline 10-hari tertajam (28.8%, berakhir 2026-02-05) correctly
+teridentifikasi `DOWNTREND` di Daily DAN 4h; `htf_alignment_score` utk
+SHORT=1.000 (aligned), LONG=0.150 (opposed) persis di tanggal itu. Funnel
+diagnostic tidak berubah: 6 sinyal dari `noisy_zigzag()` seed=42 tetap 6
+(htf_alignment cuma modulasi confidence, tidak pernah gate).
+
 ## Fase 3 — Dump per-faktor + Part #2 fitting (F1; ini yang mengubah skor dari opini jadi sains)
 
 **3a. Dump komponen.** `Signal` diperluas: simpan nilai mentah TIAP faktor
