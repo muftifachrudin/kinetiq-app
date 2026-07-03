@@ -690,3 +690,20 @@ off_hours            n=4  mean=-0.21%  median=-0.16%  positive_fraction=0.00
 - Sum total `Closing PNL` 276 posisi = **-$267.68** (net negatif sebulan penuh dari Closing PNL doang) — dicatat sbg fakta data mentah, BUKAN diinterpretasi (gak termasuk funding/fee/kemungkinan posisi kecil-vs-return-persen-nya, dan founder sendiri sebut ada campuran bot-signal vs manual trade yg profitnya beda jauh karakternya).
 
 **BELUM dieksekusi ke production** — round ini scope-nya cuma bangun+verifikasi tool-nya (dry-run + spot-check manual), **insert real 276 baris ke `trade_annotation` production nunggu konfirmasi eksplisit founder** dulu (data finansial real, actionnya susah dibalik — beda kelas resiko dari nulis kode/dokumentasi biasa).
+
+## 21. `--emit-sql` — generate SQL manual krn Neon HTTP-SQL endpoint gak bisa multi-statement (3 Juli 2026)
+
+> **Konteks**: sandbox Claude Code ini gak bisa konek raw Postgres port (`packages/db/migrations/env.py` butuh koneksi psycopg langsung, itu hang dari sandbox). Satu-satunya endpoint Neon yg reachable dari sini adalah HTTP-SQL (`POST .../sql` dgn header `Neon-Connection-String`) — tapi endpoint ini **cuma terima SATU statement per request** (dicek langsung: `SELECT set_config(...); SELECT current_setting(...);` dalam satu query string balikin error `{"message":"cannot insert multiple commands into a prepared statement","code":"42601"}`). `trade_annotation` pakai `FORCE ROW LEVEL SECURITY`, jadi tiap INSERT WAJIB didahului `set_config('app.tenant_id', ...)` di SESSION YANG SAMA — gak bisa dilakuin lewat endpoint yg cuma satu-statement-per-request ini.
+
+**Solusi**: opsi baru `--emit-sql PATH` di `import_binance_position_history.py` — reuse persis logic parsing/mapping yg udah diverifikasi di bag. 20 (gak ada logic baru soal parsing CSV), tapi outputnya `.sql` file teks biasa, bukan koneksi DB langsung. Founder jalanin file ini sendiri lewat **Neon SQL Editor** (session interaktif penuh yg support multi-statement transaction, beda dari HTTP-SQL endpoint).
+
+**Struktur file yg di-generate** (satu transaksi `BEGIN;`...`COMMIT;`, all-or-nothing):
+1. `INSERT INTO instrument ... ON CONFLICT (venue_id, venue_symbol) DO NOTHING` per simbol unik — idempotent, aman dijalanin ulang.
+2. `SELECT set_config('app.tenant_id', <tenant>, false)` — sekali di awal transaksi, tetap berlaku sepanjang sesi ini krn `BEGIN`/`COMMIT` yg sama.
+3. `INSERT INTO trade_annotation (...)` satu baris per posisi closed (276 statement utk data real founder).
+
+`--tenant-id`/`--tenant-email` tetap jadi mutually-exclusive required group yg sama kayak jalur DB langsung — kalau yg dikasih `--tenant-email`, SQL yg di-generate pakai subquery `(SELECT id FROM tenant WHERE email = '...')`, bukan resolve ke UUID di sisi tool (krn tool ini sengaja gak konek DB sama sekali, sesuai nama opsinya).
+
+**5 fungsi baru** (`_sql_literal`, `_tenant_id_sql`, `generate_instrument_provision_sql`, `generate_trade_annotation_insert_sql`, `generate_sql`) + 9 test baru — total 19 test di file ini, 269 test di `agent-orchestrator` + `backtest-core` gabungan. `_sql_literal` escape quote (`'` → `''`) utk semua value yg di-emit, termasuk yg berasal dari CSV (simbol/`rationale_text`), bukan cuma input manusia — defensif thd data CSV yg secara teori bisa ngandung karakter quote. Simulasi venv-fresh-persis-command-CI dijalanin sebelum push (269 test lulus, gak ada `kinetiq_db`/`sqlalchemy` ke-install, konsisten sama kebiasaan yg udah dibangun round-round sebelumnya).
+
+**Status**: tool-nya udah lengkap+teruji, tapi **generate file SQL final dari 3 CSV real founder + eksekusi lewat Neon SQL Editor masih langkah founder sendiri** — sama kayak bag. 20, ini bukan keputusan yg diambil otomatis oleh Claude Code krn data finansial real & actionnya susah dibalik.
