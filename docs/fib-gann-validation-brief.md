@@ -745,3 +745,14 @@ off_hours            n=4  mean=-0.21%  median=-0.16%  positive_fraction=0.00
 > simulator, `htf_bias.py`, dump komponen skor per-faktor, Part #2 fitting,
 > `derivatives_context.py`, backfill funding/OI native, SL anti-hunt) +
 > rubric skor 3/10→10/10 yang objektif: lihat dokumen deep-dive.
+
+> **Handoff (3 Juli 2026, sesi yang sama)**: memory investigasi lengkap +
+> tabel status klaim lama dicatat permanen di
+> `docs/fable5-crypto-theory-investigation-2026-07.md`; tahapan implementasi
+> menyeluruh untuk sesi berikutnya (fee-aware sim → htf_bias → per-factor
+> dump + fitting → derivatives_context → eksperimen R:R/SL → kampanye OOS →
+> shadow trading → ekspansi universe kripto & tokenized equity → gerbang
+> live) di `docs/sonnet5-implementation-roadmap.md`. Script analisis yang
+> menghasilkan semua angka bag. 22 di-commit ke
+> `agent-orchestrator/validation/deep_dive_2026_07/` (one-off, bukan
+> production code — lihat README-nya).

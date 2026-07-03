@@ -104,3 +104,49 @@ bugs before a deploy cycle burns time on it.
 - Path-sensitive files (`execution/risk_gate.py`, `execution/custody/*`,
   `packages/db/migrations/`) require manual review -- enforced by
   `.github/CODEOWNERS`, don't rely on CI auto-merge for these.
+
+## Validation & strategy-research memory (July 2026 deep-dive)
+
+Read BEFORE any work on `fib_gann_timing`, the validation harness, scoring
+weights, or derivatives data. Full record: findings + theory v2 + score
+rubric in `docs/validation-deep-dive-2026-07.md` (Indonesian); evidence
+trail, reproduction steps, and claim-status table in
+`docs/fable5-crypto-theory-investigation-2026-07.md`; the phased execution
+plan for the next implementation sessions in
+`docs/sonnet5-implementation-roadmap.md`. Non-negotiables distilled from
+that work:
+
+- The first real walk-forward run FAILED promotion (PF net > 1.3 in only
+  2/10 windows, BTC 1h Binance). Replicated across 4 series: robust
+  cross-venue (~73% signal overlap, near-identical PF Binance vs Bybit)
+  but does NOT generalize to ETH. All tested on USDT-M **perp**, never spot.
+- The hand-tuned `ConfluenceWeights` confidence is ANTI-predictive
+  (pearson r = -0.05 over 2,679 labeled trades). Do not add new hand-tuned
+  score constants; the 2,679 triple-barrier labels from the replication
+  removed the old "no data to fit" blocker -- fit weights instead
+  (roadmap Phase 3).
+- Backtest PF is currently gross of trading fees, and fees are material
+  (0.10% round-trip taker flips mean trade negative) while funding is
+  negligible at ~11h holds. Any PF quoted without "net of fees" is
+  incomplete.
+- OI-fuel is a coincident/volatility-regime indicator, not a directional
+  predictor (strong same-day replication 1.8-2.7x, weak H+1, zero effect
+  on trade outcomes). Don't wire it as a direction weight.
+- In-sample numbers are hypotheses. The PF 0.97 -> 1.30 lift from
+  SMA200-alignment + RR in [2,5) was found on the same data that inspired
+  it -- adoption only via out-of-sample walk-forward, net of fees.
+- Neon HTTP-SQL endpoint: single statement via `{"query": ...}`;
+  multi-statement with preserved session state via
+  `{"queries": [{"query": ...}, ...]}` (array of OBJECTS; plain strings
+  are rejected). Raw Postgres connections still hang from the sandbox.
+- `neondb_owner` has `rolbypassrls=true` in production, so FORCE RLS does
+  NOT protect anything for services connecting as that role. Don't claim
+  RLS-based tenant isolation in production until services run as a
+  non-owner, non-BYPASSRLS role (roadmap Phase 0d).
+- CoinGlass Hobbyist is confirmed daily-only (interval=1h returns 403);
+  per-pair endpoints require `exchange=`; keep ~2.5s between calls.
+- OPEN data-integrity issue: production `trade_annotation` is EMPTY
+  (0-byte heap, 4 instruments) despite the import recorded as verified in
+  the brief section 21 -- founder must re-run the --emit-sql import and
+  verify the count from a separate session before any agreement-rate/
+  shadow-pair work.

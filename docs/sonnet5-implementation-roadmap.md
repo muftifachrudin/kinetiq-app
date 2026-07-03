@@ -1,0 +1,282 @@
+# Roadmap Implementasi untuk Sesi Sonnet 5 — dari Teori v2 ke Live-Trading-Worthy, lalu ke Seluruh Market
+
+Dokumen handoff dari sesi investigasi Fable 5 (3 Juli 2026). Ditulis supaya
+sesi Claude Code berikutnya (Sonnet 5) bisa mengeksekusi TANPA menebak ulang
+konteks. Wajib dibaca berpasangan dengan:
+
+- `docs/validation-deep-dive-2026-07.md` — bukti & angka di balik setiap
+  keputusan di sini (temuan F1-F11, teori v2 pasal (a)-(f), rubric skor).
+- `docs/fable5-crypto-theory-investigation-2026-07.md` — memory investigasi:
+  cara reproduksi angka, gotcha operasional, temuan integritas data.
+- `docs/fib-gann-validation-brief.md` bag. 10 — prinsip gate-vs-skor, dan
+  bag. 7 — kriteria promosi.
+- `CLAUDE.md` + `docs/deployment-runbook.md` — disiplin repo & deploy.
+
+## Aturan main untuk SEMUA fase (tidak bisa dinego, warisan sesi-sesi sebelumnya)
+
+1. **Gate keras vs faktor skor** (brief bag. 10): faktor baru apapun masuk
+   sebagai kontributor skor tertimbang, BUKAN gate AND baru. Gate keras yang
+   diizinkan tetap dua: entry-validity dan R:R — dan perubahan angka R:R
+   (Fase 5) harus lewat uji head-to-head, bukan diganti diam-diam.
+2. **Deterministic dulu, ML-fit belakangan** — dan setelah Fase 3 jalan,
+   TIDAK ADA konstanta hand-tuned baru masuk skor tanpa lewat fitting.
+3. **No-lookahead ketat**: semua fitur dihitung dari data yang tersedia pada
+   `as_of` bar entry. Ikuti disiplin `_filter_as_of` yang sudah ada. Setiap
+   fitur baru wajib test anti-lookahead eksplisit.
+4. **Angka in-sample = hipotesis**. Keputusan adopsi HANYA dari walk-forward
+   out-of-sample (`packages/backtest-core` windows), net of fees. Termasuk
+   PF 1.30 dari deep-dive — itu target uji, bukan fakta.
+5. **Funnel diagnostic tiap kali menyentuh `signal_runner`**: laporkan
+   touch → gate → sinyal akhir (baseline lama: 70→3 di 100 candle; skala
+   setahun: ~670 sinyal/seri). Kalau sinyal collapse mendekati nol, berhenti
+   dan lapor, jangan lanjut.
+6. **Simulasi CI persis sebelum push** (fresh venv, command CI verbatim) —
+   bug lazy-import `kinetiq_db`/`sqlalchemy` sudah dua kali kejadian, jangan
+   jadi yang ketiga. Verifikasi setiap modul baru terhadap data real minimal
+   satu spot-check, dan tulis hasilnya (termasuk yang gagal) di brief.
+7. **Path CODEOWNERS** (`execution/risk_gate.py`, `execution/custody/*`,
+   `packages/db/migrations/`) = wajib review manual founder. Jangan
+   auto-merge.
+8. **Bahasa**: kode/komentar/commit English; update `docs/prd.md` &
+   `docs/fib-gann-validation-brief.md` Indonesian, gaya yang sudah ada.
+9. **Jangan re-litigasi keputusan yang sudah diputuskan founder** (fib set
+   personal, 9 Gann angle, kalibrasi Opsi 1, market_structure sebagai skill
+   terpisah, parallel-channel di-skip s/d pasca-MVP).
+
+## Gambaran fase & dependensi
+
+```
+F0 Data plumbing ──┬── F1 Fee-aware sim ──┬── F3 Per-factor dump + fitting ── F6 Kampanye validasi OOS ── F7 Shadow trading ── F9 Live gate
+                   ├── F2 htf_bias.py ────┤                                        │
+                   ├── F4 derivatives_context.py (paralel, faktor utk F3)          │
+                   └── F5 R:R band + SL anti-hunt (paralel, eksperimen harness)    │
+                                                       F8 Ekspansi universe (multi-koin → tokenized equity) — setelah F6 lolos di BTC+ETH
+```
+
+Fase 1, 2, 4, 5 saling independen setelah F0 — kerjakan berurutan per PR
+kecil, jangan satu PR raksasa.
+
+---
+
+## Fase 0 — Integritas & plumbing data (prasyarat semua)
+
+**0a. Re-import `trade_annotation` (butuh founder, dorong terus sampai beres).**
+Production kosong (bukti: investigation doc bag. 5). Founder re-run file
+`--emit-sql` di Neon SQL Editor; verifikasi `count(*)` dari SESSION BARU
+terpisah, lalu cek `instrument` ≈ 53+ baris. Acceptance: count=276
+terverifikasi dari session terpisah, dicatat di brief.
+
+**0b. Migration `signal_id` linkage** (`packages/db/migrations/` —
+CODEOWNERS, review founder). Kolom nullable `signal_id` + tabel `signal`
+minimal (id, ts, instrument_id, timeframe, direction, entry, sl, tp1,
+confidence, per-factor scores JSONB) — sekarang sudah ADA penulisnya
+(harness F3 & shadow loop F7), jadi tidak melanggar prinsip "jangan desain
+untuk kebutuhan hipotetis" lagi.
+
+**0c. Backfill & poll `funding_rate` + `open_interest` native** dari
+Binance/Bybit via worker ingestion yang sudah jalan untuk ohlcv (perluas
+`ingest.py`/`worker.py`, pola upsert idempotent yang sama). Target: 1 tahun
+histori funding 8h (ccxt `fetchFundingRateHistory`) + OI 1h kalau tersedia
+per venue. Acceptance: `SELECT count(*)` per venue-symbol ≈ 3×365 (funding)
+dan cakupan tanggalnya menutupi periode ohlcv; `run_validation.py` bisa
+diberi funding events beneran (gross vs net PF akhirnya beda terbaca).
+
+**0d. Role DB aplikasi non-owner (non-BYPASSRLS).** Temuan investigasi:
+`neondb_owner` punya `rolbypassrls=true` → RLS production efektif nol untuk
+servis. Buat role `kinetiq_app` tanpa BYPASSRLS, grant minimum, servis
+pindah konek pakai itu. Koordinasikan dengan founder (env Railway berubah).
+Acceptance: `SELECT` `trade_annotation` tanpa `set_config` dari role baru
+mengembalikan 0 baris meski data ada.
+
+## Fase 1 — Simulator fee-aware (F5 deep-dive)
+
+Tambah parameter fee ke `trade_simulator.py` (ADITIF, jangan ubah perilaku
+lama secara diam-diam): `fee_entry_fraction`/`fee_exit_fraction` per trade
+(default Binance USDT-M VIP0 taker 0.0005; configurable per venue lewat
+`walk_forward_windows.yaml`), dipotong di `net_return_pct` bersama funding.
+`metrics.py` tidak berubah (sudah baca net). Semua report berikutnya WAJIB
+menampilkan PF gross / net-funding / net-fees berdampingan.
+Acceptance: unit test angka eksak; re-run replikasi 4 seri → baseline net
+sesuai deep-dive (PF pooled ~0.85 pada taker-taker 0.10%).
+
+## Fase 2 — `skills/strategy/htf_bias.py` (F2/F9; bagian teori founder yang belum pernah diuji)
+
+- `resample_candles(candles_1h, "4h"|"1d")` — agregasi OHLCV kalender UTC,
+  closed-candle only, no partial bucket di ujung (anti-lookahead: bucket
+  yang belum close TIDAK ikut).
+- Bias per timeframe: REUSE `market_structure.trend_bias()` di atas
+  `detect_swings()` hasil resample — jangan tulis detektor tren baru.
+  Fallback eksplisit kalau swing < 2 di TF besar: bias NEUTRAL (bukan
+  ngarang). Pertimbangkan juga expose proxy sederhana close-vs-SMA sebagai
+  fitur kedua (biar fitting F3 yang memutuskan mana yang informatif —
+  bukti sementara deep-dive justru dari SMA50/200).
+- Output: `htf_alignment_score(direction, biases) → 0-1` (searah semua TF =
+  1.0; melawan = rendah TAPI > 0 — faktor skor, bukan gate; bobot antar-TF
+  Weekly>Daily>4h sesuai bag. 2e, angka awal bebas karena akan di-fit F3).
+- Wire ke `signal_runner.generate_signals()` sebagai slot baru ala
+  `regime_alignment`.
+- Acceptance: test anti-lookahead resample; spot-check data real (BTC 1h
+  production, tunjukkan bias Daily di tanggal yang jelas bear); funnel
+  diagnostic sebelum/sesudah TIDAK berubah (karena bukan gate).
+
+## Fase 3 — Dump per-faktor + Part #2 fitting (F1; ini yang mengubah skor dari opini jadi sains)
+
+**3a. Dump komponen.** `Signal` diperluas: simpan nilai mentah TIAP faktor
+(swing_quality, fib_gann_confluence, volume_confirmation, wick_rejection,
+structure_alignment, htf_alignment, regime_alignment, + derivatives dari F4)
+— bukan cuma `confidence` final. `replicate.py`/`run_validation.py` ikut
+menulis kolom-kolom ini.
+
+**3b. Fitting.** Modul baru `validation/fib_gann_backtest/fit_weights.py`:
+logistic regression + regularisasi L1/L2 (scikit-learn — dependency BARU,
+pasang di requirements harness/CI validation saja, JANGAN ke requirements
+service production) pada label triple-barrier (+1 vs lainnya; trade TIMEOUT
+kelola terpisah — dua skema: binary TP-vs-SL saja, dan 3-kelas — laporkan
+dua-duanya), **refit per window walk-forward** (train di train-range,
+evaluasi di test-range; JANGAN fit sekali di seluruh tahun).
+Evaluasi: AUC + Brier per window, out-of-sample.
+
+**3c. Adopsi.** Ganti `ConfluenceWeights` default dengan hasil fit HANYA
+kalau: AUC OOS median > 0.55 DAN korelasi confidence-vs-return OOS > 0
+(baseline sekarang -0.05). Kalau tidak tercapai, itu temuan valid — laporkan,
+jangan paksakan.
+Acceptance: report per window berisi AUC/Brier/korelasi; keputusan
+adopsi/tolak eksplisit di brief.
+
+## Fase 4 — `skills/strategy/derivatives_context.py` (F6/F7; jawaban untuk funding/OI/long-short founder)
+
+Sumber: CoinGlass Hobbyist HARIAN (cukup; `1h` = 403 terkonfirmasi) +
+`funding_rate`/`open_interest` native dari F0c untuk granularity jam
+kemudian. Fetch → cache ke DB/file per hari (hormati rate limit ~2.5s/call;
+endpoint per-pair wajib `exchange=`, agregat pakai coin symbol — detail di
+investigation doc bag. 4).
+
+Fitur per (koin, tanggal), semua dari HARI SEBELUM entry (no-lookahead):
+- `funding_percentile_365d` — sinyal contrarian (F7: ≥p90 BTC → -0.45% H+1)
+- `global_ls_percentile`, `top_vs_global_divergence` — fade-the-crowd
+- `liq_cascade_flag` (long-liq kemarin > p90 tahunan)
+- `fuel_quadrant` kemarin — HANYA untuk konteks volatilitas/sizing (bukan
+  arah! bukti F6), dipisah jelas dari faktor arah.
+
+Wire sebagai faktor skor (ikut di-fit F3), plus konsumsi kedua: modul
+sizing/risk boleh baca `fuel`/`liq_cascade` untuk melebarkan SL buffer /
+menurunkan size di hari high-vol. Acceptance: test unit + join-coverage
+report (berapa % sinyal punya fitur derivatives tersedia H-1), dan
+kontribusi fitur terlihat di koefisien fitting F3 (boleh nol — L1 yang
+memutuskan).
+
+## Fase 5 — R:R band & SL anti-hunt (F3/F4 deep-dive; eksperimen terkontrol, bukan tuning diam-diam)
+
+- Harness A/B di `validation/`: konfigurasi `min_rr_threshold` 1.5 vs 2.0
+  dan tambahan `max_rr_threshold` 5.0 (cap baru — ini MENGUBAH gate yang
+  ada, boleh, karena gate R:R memang sudah gate; angkanya saja yang diuji).
+- SL varian: buffer 0.25-0.5×ATR (sekarang) vs 0.75-1.0×ATR vs SL di balik
+  level fib BERIKUTNYA. Ukur: % SL-hit, PF net, funnel.
+- Acceptance: keputusan per varian berdasarkan walk-forward OOS net-fees di
+  ≥2 aset × 2 venue; hasil (termasuk yang kalah) ditulis di brief.
+
+## Fase 6 — Kampanye validasi OOS (gerbang skor 6→7)
+
+Jalankan `run-validation.yml` (config diperluas: 4 seri, fee-aware, fitted
+weights, semua faktor) — kriteria promosi bag. 7 **net of fees**: PF net
+> 1.3 di ≥2/3 window, per seri. Segmentasi regime (bear/range/bull proxy
+drift bulanan) dilaporkan. Data baru yang terus masuk dari worker = OOS
+sejati untuk filter yang lahir dari data setahun ini — jangan buang.
+Acceptance: BTC lolos (skor 7); BTC+ETH dua venue lolos → lanjut F7 (skor 8
+track). Gagal → kembali ke F3/F5 dengan temuan baru, BUKAN menambah teori
+baru (bag. 10).
+
+## Fase 7 — Shadow trading & jembatan paper-vs-real (gerbang skor 8→9)
+
+1. Live signal loop minimal: worker yang menjalankan `generate_signals` di
+   candle close 1h production, persist ke tabel `signal` (F0b). Belum
+   eksekusi order — sinyal saja.
+2. Founder trade real yang searah sinyal via `log_trade_annotation.py`
+   (leverage, margin_mode, exit_reason_real WAJIB terisi).
+3. `shadow_pair` pipeline yang sudah ada (pairing + divergence attribution +
+   fidelity) jalan otomatis atas pasangan itu; rolling report (Telegram
+   layer boleh menyusul, mulai dari report markdown).
+4. Cold-start rule tetap: ≥50 pasangan sebelum parameter ML risk envelope
+   apapun diaktifkan (shadow-simulator-brief bag. 5 — hard cap leverage
+   manual, kill-switch, floor buffer_k TIDAK PERNAH dipelajari ML).
+Acceptance skor 9: 3+ bulan, PF real net ≥ 0.7× backtest, fidelity rolling
+≥70, nol pelanggaran hard cap.
+
+## Fase 8 — Generalisasi universe: seluruh market kripto → tokenized equity
+
+Prinsip desain yang membuat ini MUNGKIN dan sudah terbukti sebagian:
+formula scale-free (Gann Opsi 1 tervalidasi lintas skala harga BTC↔SOL;
+semua threshold ATR-relative; fib set per-instrumen configurable sejak
+bag. 2a). Prinsip yang WAJIB dijaga: **tidak ada tuning per-simbol manual —
+yang boleh beda per simbol hanya output pipeline fitting/kalibrasi yang
+sama**, kalau tidak, ini jadi 500 strategi overfit, bukan satu teori.
+
+**8a. Ekspansi kripto (bertahap):**
+- Universe rule-based di config (bukan hardcode): top-N perp USDT-M by
+  volume & OI (mulai N=10: SOL, BNB, XRP, DOGE, dst.), filter likuiditas
+  minimum (volume harian & spread) — instrumen illiquid merusak asumsi fill.
+- Worker ingestion backfill 1 tahun 1h per simbol baru (kapasitas Neon &
+  rate limit dicek dulu — 8.763 baris × simbol × venue).
+- Jalankan kampanye F6 per simbol; laporkan MATRIX hasil (simbol × venue ×
+  window). Ekspektasi jujur: sebagian simbol akan gagal — itu hasil, bukan
+  kegagalan proses; universe live = subset yang lolos + terus dimonitor.
+- Cek stabilitas fitted weights lintas simbol (koefisien mirip = teori
+  general; koefisien liar = red flag overfit).
+
+**8b. Tokenized equity di bursa kripto (AAPLUSDT, MSTRUSDT, XAUUSDT, dst. —
+founder sudah pernah trade 53 simbol termasuk ini):**
+- Ingestion: connector ccxt yang sama sudah bisa (mereka perp USDT-M di
+  Binance) — yang beda adalah STRUKTUR PASARNYA, dan ini wajib dimodel,
+  bukan diabaikan:
+  - Underlying punya jam bursa (NYSE/NASDAQ) — likuiditas & perilaku harga
+    di luar jam itu beda total; `session_bias.py` yang sudah ada di-extend
+    dengan kalender market-hours underlying, dan fitur "in/out of
+    underlying hours" masuk fitting.
+  - Corporate action (split/dividen) bikin gap harga yang BUKAN sinyal —
+    perlu guard di swing detection (flag gap > X×ATR sebagai discontinuity,
+    invalidasi swing yang melintasinya).
+  - Funding & likuiditas tipis: liquidation-aware sim (sudah ada) makin
+    penting; hard cap leverage per kelas aset lebih rendah.
+  - CoinGlass TIDAK meng-cover simbol ini → `derivatives_context` harus
+    graceful-degrade (fitur None di-skip, pola `compute_fidelity_score`).
+- Mulai 2-3 simbol paling likuid saja, kampanye F6 penuh, sebelum melebar.
+- **Konfirmasi scope ke founder sebelum mulai 8b** — kelas aset baru =
+  keputusan produk, bukan keputusan teknis.
+
+**8c. Bursa tambahan** (OKX/Hyperliquid dst.): connector ccxt generic sudah
+venue-agnostic; tambah venue = tambah baris `venue` + kredensial read-only +
+backfill; replikasi cross-venue (Jaccard + PF parity, pola investigasi
+Fable 5) jadi UJI STANDARD setiap venue baru sebelum dipakai.
+
+## Fase 9 — Gerbang live trading (jangan dilangkahi)
+
+Prasyarat SEMUA: skor 9 tercapai (F7), risk layer hard-coded terpasang
+(hard cap leverage per simbol/kelas aset, kill-switch drawdown harian/
+mingguan, floor buffer_k, R:R gate), `execution/risk_gate.py` +
+`execution/custody/*` (CODEOWNERS — review manual founder, security-first),
+kredensial exchange read/trade dipisah, dan mandat risiko (`risk_mandate`)
+di-enforce di kode bukan di niat. Mulai dengan size minimum ("live kecil")
+dan bandingkan terus terhadap shadow — divergence attribution adalah
+instrumen monitoringnya, fidelity < 70 rolling = auto-pause sinyal baru.
+Ini fase yang secara eksplisit BUTUH keputusan & kehadiran founder di tiap
+langkah; Sonnet 5 menyiapkan, founder yang menarik pelatuk.
+
+---
+
+## Definisi selesai per fase (ringkas, pakai rubric deep-dive bag. 5)
+
+| Fase | Skor rubric | Bukti objektif |
+|---|---|---|
+| F0-F1 | 4/10 | Semua angka net-of-fees; trade_annotation terisi terverifikasi |
+| F2+F5 | 5/10 | PF net pooled > 1.1 di 4 seri (in-sample sanity) |
+| F3(+F4) | 6/10 | AUC OOS > 0.55, korelasi confidence-return OOS > 0 |
+| F6 BTC | 7/10 | PF net > 1.3 di ≥2/3 window, net fees |
+| F6 BTC+ETH + F7 mulai | 8/10 | Kriteria di 2 aset × 2 venue + ≥50 shadow pair |
+| F7 matang | 9/10 | 3 bulan shadow/live-kecil sesuai threshold |
+| F8 lintas rezim | 10/10 | Edge bertahan multi-tahun/multi-rezim/multi-aset, semua biaya |
+
+Kejujuran terakhir yang harus diwariskan ke setiap sesi: skor 10/10 berarti
+"proses validasi tak bercela", bukan "jaminan profit" — dan setiap angka
+yang lahir dari data yang sama dengan yang menginspirasi hipotesisnya
+tetap berlabel in-sample sampai dibuktikan di data yang belum pernah
+dilihat.
