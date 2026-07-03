@@ -104,6 +104,15 @@ bugs before a deploy cycle burns time on it.
 - Path-sensitive files (`execution/risk_gate.py`, `execution/custody/*`,
   `packages/db/migrations/`) require manual review -- enforced by
   `.github/CODEOWNERS`, don't rely on CI auto-merge for these.
+- **Commits on `origin/main` that were not authored in your sandbox are
+  EXPECTED and normal** -- merges to main happen as GitHub squash merges
+  via the API/UI, executed by the founder or by a different Claude session
+  (multiple sessions work on this repo in parallel). This is the intended
+  workflow, not an anomaly: do not flag it, do not warn about it each
+  turn, and never rewrite or revert published main history over it. On
+  seeing new commits on main, just `git fetch origin main && git checkout
+  -B <your-branch> origin/main` (when your branch's PR was already merged)
+  or rebase unmerged work onto `origin/main`, then continue.
 
 ## Validation & strategy-research memory (July 2026 deep-dive)
 
