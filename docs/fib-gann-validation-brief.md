@@ -663,3 +663,30 @@ off_hours            n=4  mean=-0.21%  median=-0.16%  positive_fraction=0.00
 **Diverifikasi END-TO-END thd Postgres 16 lokal beneran** (fresh DB, migration 0001-0005 penuh, role non-superuser sbg owner tabel — bukan `postgres` role, krn superuser selalu bypass RLS, gak valid dites pakai itu, disiplin yg sama dipakai semua verifikasi RLS sesi ini): (1) insert REAL via role non-superuser via tool ini — SUKSES, semua field (8 kolom lama + 7 kolom eksekusi baru migration 0005) ke-persist bener termasuk `swing_ref` JSONB nested; (2) insert TANPA `set_config` sama sekali (simulasi "lupa" langkah RLS) — **DITOLAK** `psycopg.errors.InsufficientPrivilege`, dibuktikan langsung bukan diasumsikan; (3) insert DENGAN `app.tenant_id` di-set ke tenant SALAH (mismatch dari tenant_id baris yg diinsert) — **JUGA DITOLAK**, RLS bener² isolasi per-tenant, bukan cuma "asal ke-set aja lolos".
 
 **Kesimpulan**: tool-nya siap dipakai founder buat mulai nyatat trade real. Belum dikerjakan: `shadow_pair` pairing (bag. 7 poin 4, butuh `signal_id` linkage yg emang sengaja belum ada), fidelity score, ML risk envelope — semua nunggu volume data dari tool ini.
+
+## 20. `import_binance_position_history.py` — bulk import histori trade real founder (3 Juli 2026)
+
+> **Verifikasi Claude Code**: founder kasih 3 export CSV Binance Futures 1 bulan penuh (Order History 838 baris, Position History 276 posisi closed, Trade History 1407 fill) — jauh lebih efisien diimpor bulk drpd satu-satu lewat `log_trade_annotation.py`. Founder catat eksplisit: sebagian trade dieksekusi dari sinyal bot sebelumnya, sebagian lain (yg profit "hingga ratusan persen") di-trade manual — dicatat di sini krn relevan ke `manual_override` (exit_reason_real), tapi **TIDAK ditebak otomatis mana yg mana** (lihat di bawah).
+
+**Sumber & apa yg reliable diturunkan**:
+- **Position History** (satu baris = satu posisi closed) — sumber utama: `Symbol`, `Margin Mode`, `Position Side`, `Entry Price`, `Avg. Close Price`, `Opened`/`Closed` map LANGSUNG ke `margin_mode`/`action`/`entry_fill_price`/`exit_fill_price`/`ts`. Semua 276 baris statusnya `Closed` (dicek langsung, bukan diasumsikan).
+- **Trade History** (satu baris = satu fill/eksekusi) — dipakai HANYA utk `fees_paid_usd`: jumlahkan `Fee` tiap fill yg symbol+waktu-nya jatuh di dalam window `[Opened, Closed]` posisi terkait.
+- **Order History** — **TIDAK dipakai** utk `exit_reason_real`: dicek langsung, `Type` di export founder cuma ada `{MARKET, LIMIT}`, gak ada `STOP_MARKET`/`TAKE_PROFIT_MARKET`/liquidation marker apapun yg bisa dijadiin dasar infer stop_loss/take_profit/liquidated — motor pendek order gak eksplisit kelihatan tipe apa dari data ini doang.
+
+**Sengaja DIBIARKAN NULL, bukan ditebak**:
+- `leverage` — gak ada di export Binance manapun (Position/Trade/Order History ketiganya gak punya kolom ini).
+- `exit_reason_real` — alasan di atas. Termasuk trade "manual_override" yg founder sebut — gak ditebak dari besaran PnL (return gede bisa juga dari leverage tinggi kena TP normal, bukan bukti otomatis manual override).
+- `funding_paid_usd` — sumbernya Binance "Income History" export terpisah, gak termasuk 3 file yg dikasih.
+
+**Symbol coverage**: 53 simbol unik (termasuk saham/komoditas tokenized Binance: `AAPLUSDT`/`MSFTUSDT`/`MSTRUSDT`/`SPCXUSDT`/`XAUUSDT`/`XAGUSDT`/`SKHYNIXUSDT`/`ANTHROPICUSDT`/`OPENAIUSDT`) — hampir semuanya belum pernah punya baris `instrument` di DB. Tool auto-provision `Instrument` idempotent, PERSIS pola `upsert_instrument()` di `apps/products/trading/ingestion/ingest.py` (dicek baca kode-nya langsung): `Instrument.symbol == Instrument.venue_symbol == format ccxt-unified` (mis. `BTCUSDT` → `BTC/USDT:USDT`), bukan raw symbol Binance.
+
+**Timezone**: timestamp di CSV Binance itu WAKTU LOKAL (nama file founder eksplisit `UTC7` = UTC+7/WIB), BUKAN UTC — tool terima `--tz-offset-hours` eksplisit (gak diasumsikan diam-diam), `TIMESTAMPTZ` Postgres normalize otomatis begitu offset-nya bener di input.
+
+**10 test baru** (`test_import_binance_position_history.py`), 239 test total di `agent-orchestrator`. **Bug lama (import `sqlalchemy` level module bikin collection CI gagal) DICEGAH dari awal round ini** — modul ditulis dgn lazy import sejak awal (bukan ditemukan lewat trial-error lagi), DAN simulasi venv-fresh-persis-command-CI dijalanin SEBELUM push (bukan cuma stlh push) — 260 test lulus di simulasi persis command CI (239 + 21 backtest-core).
+
+**Diverifikasi thd data REAL founder (bukan cuma dry-run kosong)**:
+- Dry-run thd 3 file asli: 276 posisi ke-parse, 53 simbol, 1407 fill Trade History ke-load, total fee ke-match $60.62.
+- **Spot-check manual 2x thd raw CSV, bukan cuma percaya output tool**: (1) posisi BTCUSDT baris#1 (entry 73645.8→73698.2) — fee ke-hitung tool `$0.073672`, dicek manual jumlah 2 fill BUY+SELL yg cocok = `0.03682290 + 0.03684910 = 0.073672` — **PERSIS SAMA**; (2) posisi STGUSDT baris#84 (32 fill, closing_pnl=-205.78, kasus multi-fill kompleks) — fee tool `$0.7464960700000001`, dicek manual jumlah 32 fill = **PERSIS SAMA**. Window-matching (symbol+waktu) kebukti bener di kasus simple MAUPUN kompleks.
+- Sum total `Closing PNL` 276 posisi = **-$267.68** (net negatif sebulan penuh dari Closing PNL doang) — dicatat sbg fakta data mentah, BUKAN diinterpretasi (gak termasuk funding/fee/kemungkinan posisi kecil-vs-return-persen-nya, dan founder sendiri sebut ada campuran bot-signal vs manual trade yg profitnya beda jauh karakternya).
+
+**BELUM dieksekusi ke production** — round ini scope-nya cuma bangun+verifikasi tool-nya (dry-run + spot-check manual), **insert real 276 baris ke `trade_annotation` production nunggu konfirmasi eksplisit founder** dulu (data finansial real, actionnya susah dibalik — beda kelas resiko dari nulis kode/dokumentasi biasa).
