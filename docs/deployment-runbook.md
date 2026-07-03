@@ -242,12 +242,19 @@ mechanics only.
    Railway supervises the process itself; pick "worker"/"background" as the
    service type in the dashboard if it asks, and set `restartPolicyType =
    "always"` so a crash gets retried rather than left dead.
-   **Not yet verified against the real platform** (unlike gotchas #1-#7,
-   which all have real Railway deploys behind them) -- this was written and
-   locally simulated (fresh venv + the service's exact `startCommand`) but
-   this sandbox cannot actually create/deploy a second Railway service to
-   observe it. Treat the founder's first real deploy attempt as the actual
-   test, same discipline as every other entry in this file.
+   **VERIFIED against the real platform (3 Juli 2026, founder's first deploy
+   attempt)** -- worked correctly first try, no fixes needed: `ingestion-worker`
+   service (Root Directory = repo root, Config-as-code = `railway.ingestion-worker.toml`)
+   built and deployed successfully, Deploy Logs showed the full expected
+   sequence (`backfill starting: 365 days back` -> 4x `backfill OK (8760
+   candles ...)` for binance+bybit x BTC/ETH -> `backfill done -- entering
+   live poll loop` -> one funding_rate+ohlcv poll cycle per instrument, all
+   `(ccxt)` -> `sleeping 2718s until next 1h close`). This is also the
+   first-ever real-network verification of Bybit anywhere in this repo's
+   history (previously mocked-only, see `apps/products/trading/ingestion/README.md`) --
+   it worked without any fix needed. Confirms the merged-root-requirements.txt
+   + separately-named-toml + explicit-Config-as-code-path pattern this gotcha
+   describes is sound, not just theoretically reasoned.
 
 ## Row-Level Security (RLS) gotchas (`packages/db/migrations/versions/0002_add_rls_policies.py`)
 
