@@ -17,7 +17,7 @@ Roadmap eksekusi untuk sesi implementasi berikutnya (Sonnet 5):
 | Run validasi CI #2 | Report JSON/MD asli run yang "meleset" (10 window, 2 lolos) | Artifact `validation-report-28649458531` di GitHub Actions; angka window juga tersalin di deep-dive bag. 2 |
 | Replikasi 4 seri | 2.683 sinyal → 2.679 trade non-censored berlabel triple-barrier | Script `validation/deep_dive_2026_07/` (commit ini) + summary `docs/validation-results/replication-2026-07-03.json` |
 | CoinGlass Hobbyist | 399-400 hari harian × 2 koin: price, OI agg, funding (Binance & Bybit), taker buy/sell, global L/S account ratio, top-trader L/S position ratio, liquidation agg | Script `coinglass_pull.py` + `cg_analysis.py` (folder yang sama) |
-| `trade_annotation` production | **KOSONG** — temuan integritas data, lihat bag. 5 | — |
+| `trade_annotation` production | **RESOLVED 2026-07-03** — 276 baris, `instrument` 55, lihat bag. 5 | — |
 
 ## 2. Ringkasan temuan (angka kunci saja — detail & interpretasi di deep-dive)
 
@@ -106,22 +106,38 @@ Urutan: 1 → 2 (4×) → 3 → 4 → 5. Kebutuhan env: `DATABASE_URL`,
   expire 2026-10-01 — angka pentingnya sudah disalin ke deep-dive & summary
   JSON sebelum expire.
 
-## 5. Temuan integritas data yang MASIH OPEN (butuh action founder)
+## 5. Temuan integritas data — RESOLVED 2026-07-03
 
-`trade_annotation` production **kosong total**: `pg_relation_size = 0 byte`
-(heap tidak pernah ditulis satu baris pun), `pg_stat_user_tables.n_tup_ins=0`,
+`trade_annotation` production sempat **kosong total**: `pg_relation_size = 0
+byte` (heap tidak pernah ditulis satu baris pun), `pg_stat_user_tables.n_tup_ins=0`,
 `instrument` hanya 4 baris (import 276 posisi seharusnya auto-provision 53
 simbol) — dicek dengan role BYPASSRLS jadi bukan efek filter RLS. Padahal
 brief bag. 21 mencatat import "sukses & terverifikasi count=276" (3 Juli).
 Project Neon `late-mouse-59772749` hanya punya 1 branch (`production`,
-dibuat 1 Juli) — jadi bukan salah branch di project ini. Hipotesis paling
-mungkin: transaksi Neon SQL Editor ter-rollback setelah verifikasi (count
-dibaca DI DALAM transaksi yang sama sebelum COMMIT sukses), atau verifikasi
-terjadi di project/console berbeda. **Action: re-run file `--emit-sql` di
-Neon SQL Editor, lalu verifikasi `SELECT count(*)` dari SESSION BARU yang
-terpisah** (bukan di transaksi yang sama). Semua jalur agreement-rate,
-shadow_pair, dan analisis behavior trade real founder tetap buntu sampai
-ini beres.
+dibuat 1 Juli) — jadi bukan salah branch di project ini.
+
+**Akar masalah ditemukan (bukan hipotesis rollback di atas)**: paste manual
+775-baris file `--emit-sql` ke Neon SQL Editor via browser MOBILE silently
+truncate jauh di bawah ukuran aslinya — konsisten terpotong di baris ~140-150
+apa pun ukuran chunk-nya (bukti: chunk instrument 218-baris dan file penuh
+775-baris sama-sama terpotong tepat di baris ~145; chunk 67-77 baris lolos).
+Ini gejala batas paste/line-count di sisi mobile, bukan limit Neon maupun
+masalah transaksi/RLS/tenant_id (yang sempat dicurigai duluan di bag. 21).
+
+**Resolusi**: file dipecah jadi chunk kecil (~15-18 statement/chunk) untuk
+row 1-120 via Neon SQL Editor manual (berhasil bertahap), lalu row 121-276
+dieksekusi langsung dari sandbox Claude Code lewat endpoint HTTP-SQL Neon
+bentuk `{"queries": [...]}` — 1 request, 159 query (BEGIN + set_config + 156
+INSERT + COMMIT, ~90KB), sukses penuh, diverifikasi count dari request
+terpisah setelahnya. **Final: `trade_annotation`=276, `instrument`=55.**
+
+**Koreksi memory penting**: asumsi lama di bag. 3/4 (bahwa bentuk `queries`
+array "cuma cocok verifikasi ringan, bukan bulk-INSERT karena ukurannya")
+tidak pernah benar-benar diuji dan ternyata SALAH — endpoint ini terbukti
+sanggup menjalankan transaksi multi-statement besar (~90KB, 159 statement)
+langsung dari sandbox tanpa Neon SQL Editor sama sekali. Untuk kebutuhan
+bulk-write serupa di masa depan, pakai jalur ini duluan, bukan minta founder
+paste manual.
 
 ## 6. Status klaim-klaim lama setelah investigasi ini
 

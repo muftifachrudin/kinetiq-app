@@ -779,12 +779,28 @@ promosi PF (>1.3 di ≥2/3 window) TIDAK terpenuhi (1/10 window lulus) —
 ekspektasi F5, bukan regresi baru: strategi baseline saat ini memang belum
 profitable net-of-fees, itulah persis yang mau dibuktikan fee-aware sim ini.
 
-**Masih open**: bag. 22/21 punya reminder yang BELUM selesai — `trade_annotation`
-production masih KOSONG (dicek ulang sesi ini, `count(*)=0`), jadi file
-`--emit-sql` lama masih perlu dijalankan ulang di Neon SQL Editor + verifikasi
-count dari session terpisah sebelum Fase 0a bag. roadmap dianggap beres.
 Replikasi 4-seri penuh (ETH/Binance, BTC/Bybit, ETH/Bybit) belum diulang
 satu-per-satu pasca perubahan fee ini — logika fee murni aritmetika per-trade
 (tidak bergantung venue/simbol), jadi 1 seri BTC/Binance dianggap spot-check
 yang cukup kuat, bukan pengganti replikasi penuh kalau nanti dibutuhkan bukti
 lebih kuat lintas seri.
+
+**Update Fase 0a — RESOLVED (2026-07-03, sesi yang sama)**: `trade_annotation`
+production sempat dicek ulang masih `count(*)=0` di atas, TAPI itu ternyata
+bukan karena transaksi gagal/rollback di database — akar masalahnya adalah
+paste manual 775-baris file `--emit-sql` ke Neon SQL Editor via browser
+mobile silently ter-truncate jauh di bawah ukuran file aslinya (konsisten
+terpotong di baris ~140-150 terlepas dari total ukuran chunk, gejala paste
+buffer/line-count limit di sisi mobile, bukan limit Neon). Setelah dipecah
+jadi chunk kecil (~15-18 statement per file) dan sebagian berhasil manual
+sampai row 120, sisanya (row 121-276) dieksekusi langsung dari sandbox lewat
+endpoint HTTP-SQL Neon pakai bentuk `{"queries": [...]}` (lihat CLAUDE.md) —
+satu request 159 query (BEGIN + set_config + 156 INSERT + COMMIT, ~90KB)
+sukses penuh dalam SATU call, dikonfirmasi lewat query count terpisah
+setelahnya: **`trade_annotation` = 276, `instrument` = 55**. Koreksi penting
+utk memory ke depan: asumsi lama (bag. 21) bahwa bentuk `queries` array
+"cuma cocok utk verifikasi ringan, bukan bulk-INSERT" ternyata SALAH dan
+tidak pernah benar-benar diuji — endpoint ini terbukti sanggup menjalankan
+transaksi multi-statement besar langsung dari sandbox tanpa perlu Neon SQL
+Editor / paste manual founder sama sekali. Fase 0a sekarang beres, kerjaan
+agreement-rate/shadow-pair bisa mulai dari data ini.
