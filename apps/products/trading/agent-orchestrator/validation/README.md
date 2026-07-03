@@ -75,10 +75,35 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
   arithmetic on real data, but n=3 is nowhere near enough for these
   numbers to mean anything statistically; see Section 16 of the
   validation brief.
-- **`report.py`** -- NOT built yet.
-- **`configs/walk_forward_windows.yaml`, `run_validation.py`** -- NOT built
-  yet. `run_validation.py` will wire `data_loader` -> `signal_runner` ->
-  `trade_simulator` across `packages/backtest-core`'s walk-forward windows.
+- **`../configs/walk_forward_windows.yaml` + `run_validation.py` +
+  `report.py`** -- done, closing out the last gaps in Section 6.
+  `run_validation.py` wires `data_loader.load_candles()` ->
+  `generate_windows_by_calendar()` (`packages/backtest-core`) -> per
+  window `signal_runner.generate_signals()` ->
+  `trade_simulator.simulate_trades()` -> `metrics.compute_metrics()`, and
+  checks the design brief Section 7 PF promotion criterion (PF net above
+  a threshold in >= a pass-fraction of windows) -- the OTHER promotion
+  criterion (agreement rate vs `trade_annotation`) is explicitly reported
+  as "not computable yet" rather than silently skipped, since
+  `trade_annotation` has no `signal_id` linkage to a specific generated
+  signal. Supports `--dry-run` (preview windows, run nothing, write
+  nothing). `report.py` dumps a run to `docs/validation-results/` as JSON
+  + Markdown, no new DB table. 18 new tests (203 total), ruff clean. A
+  real floating-point bug was caught while writing tests: the config's
+  `pf_pass_fraction` (a decimal approximation of "4 dari 6") was rounded
+  UP to 0.6667, which made exactly-4-of-6-windows-passing fail its own
+  criterion (4/6 < 0.6667) -- fixed to 0.6666 (rounded down). Verified
+  against real data in two layers: `data_loader.load_candles()` itself
+  can't run from this sandbox (the same already-documented constraint --
+  raw psycopg hangs here, only Neon's HTTP-SQL endpoint is reachable), so
+  that layer is unverified from here same as always; the rest of the
+  pipeline (`run_window`/`run_validation`/`report.write_report`) was
+  verified end-to-end against the real 100-candle BTC/USDT dataset,
+  including the honest finding that the real walk-forward config (1
+  month train + 1 month test) produces **zero windows** against
+  production's current ~4-day candle history -- not a bug, just not
+  enough ingested data yet for a real calendar walk-forward run. See
+  Section 17 of the validation brief for the full writeup.
 
 See `docs/fib-gann-validation-brief.md` Section 6 for the full target
 structure and `docs/prd.md`'s living status for what's actually done.

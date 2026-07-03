@@ -1,0 +1,40 @@
+# Walk-forward window config for fib_gann_backtest/run_validation.py.
+# Single YAML file shared by every caller of generate_windows_by_calendar()
+# (docs/fib-gann-validation-brief.md Section 6: "Config walk-forward
+# (train_months, test_months, embargo_days, mode) di satu file YAML,
+# dipakai kedua caller") -- fib_gann_backtest today, MARKOVIZ V5's own
+# migration to packages/backtest-core later if that happens.
+
+venue: binance
+symbol: "BTC/USDT:USDT"
+timeframe: "1h"
+
+# Passed straight to load_candles(limit=...) -- data_loader.py has no
+# date-range query, only "most recent N", so run_validation.py loads this
+# many candles and slices them by window boundaries client-side.
+candle_load_limit: 100000
+
+max_holding_bars: 20
+
+walk_forward:
+  train_months: 1
+  test_months: 1
+  embargo_days: 1
+  step_months: 1
+  mode: anchored # ANCHORED matches generate_windows_by_calendar()'s own default for the calendar scheme
+
+promotion:
+  # Design brief Section 7: "PF net > 1.3 konsisten di minimal 4 dari 6 window test"
+  pf_net_threshold: 1.3
+  # 4/6 = 0.6666... -- deliberately rounded DOWN to 0.6666, not up to
+  # 0.6667: the naive rounded-up literal would make "exactly 4 of 6
+  # windows passing" fail its own criterion (4/6 < 0.6667), which
+  # directly contradicts the brief's literal wording. Caught by
+  # test_promotion_pf_stats_counts_windows_strictly_above_threshold.
+  pf_pass_fraction: 0.6666
+  # The brief's OTHER promotion criterion ("Agreement rate > 60% terhadap
+  # trade_annotation manual") is NOT evaluated by run_validation.py yet --
+  # trade_annotation has no signal_id linkage to a specific generated
+  # signal (see packages/db/migrations/versions/0005's docstring), so
+  # there is nothing to compute agreement against. Reported explicitly
+  # as not-yet-computable in every report, not silently skipped.
