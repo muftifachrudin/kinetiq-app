@@ -108,6 +108,28 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
 See `docs/fib-gann-validation-brief.md` Section 6 for the full target
 structure and `docs/prd.md`'s living status for what's actually done.
 
+## skills/strategy/session_bias.py
+
+Capability #3 of the "trade journey prediction" roadmap: `session_of()`
+classifies a candle's UTC hour into Asia/London/New York/the London-NY
+overlap/off-hours, `group_into_session_blocks()` merges consecutive
+same-day-same-session candles into one continuous block (a session is a
+period, not independent candles), and `compute_session_bias()` aggregates
+each session's block-level returns into descriptive stats (mean, median,
+fraction of blocks that closed positive). Purely a raw market-behavior
+statistic -- not tied to signal generation, not a gate, matching the
+standing gate-vs-score principle.
+
+**Correction to earlier documentation**: Section 9 of the validation
+brief said this capability was data-blocked because CoinGlass Hobbyist
+only has daily funding/OI data. That's true for funding/OI, but
+irrelevant here -- session tagging only needs a candle's own timestamp,
+and this repo's OHLCV ingestion already pulls hourly candles directly
+from Binance/Bybit/Hyperliquid, not CoinGlass. The real constraint is
+data VOLUME (same ~4-day production history that gave `run_validation.py`
+zero walk-forward windows), not granularity. See Section 18 of the
+validation brief for the full writeup and the corrected framing.
+
 ## skills/strategy/post_stop_behavior.py
 
 Capability #2 of the "trade journey prediction" roadmap: once a signal's
