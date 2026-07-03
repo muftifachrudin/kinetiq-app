@@ -92,6 +92,74 @@ pindah konek pakai itu. Koordinasikan dengan founder (env Railway berubah).
 Acceptance: `SELECT` `trade_annotation` tanpa `set_config` dari role baru
 mengembalikan 0 baris meski data ada.
 
+**Status: DRAFT disiapkan (2026-07-03), BELUM DIEKSEKUSI — PR terpisah,
+menunggu review & konfirmasi founder per langkah.** Batasan desain yang
+wajib dipatuhi (arahan founder eksplisit):
+
+- **`CREATE ROLE ... LOGIN` TIDAK boleh masuk migration Alembic** — password
+  gak boleh ada di git, dan role itu sendiri objek CLUSTER-level (bukan
+  per-database), jadi di luar tanggung jawab Alembic sama sekali. Role
+  login `kinetiq_app` di production dibuat MANUAL oleh founder via **Neon
+  SQL Editor** (connect sebagai `neondb_owner`), **BUKAN** lewat Neon
+  Console/API — role yang dibuat lewat Console otomatis jadi member
+  `neon_superuser`, yang bawa `BYPASSRLS` bawaan — persis mengulang masalah
+  yang mau diperbaiki. Setelah dibuat, WAJIB verifikasi dua-duanya:
+  `rolbypassrls = false` DAN tidak ada membership `neon_superuser` di
+  `pg_auth_members`.
+- Migration (`packages/db/migrations/versions/0006_kinetiq_app_role_grants.py`)
+  cuma isi `GRANT` (+ `ALTER DEFAULT PRIVILEGES` biar tabel baru ke depan
+  otomatis ke-grant, gak perlu migration grant lagi tiap ada tabel baru),
+  dibungkus guard `DO $$ ... IF NOT EXISTS (SELECT FROM pg_roles WHERE
+  rolname='kinetiq_app') THEN CREATE ROLE kinetiq_app NOLOGIN; END IF ...
+  $$` — di production (role udah ada, LOGIN+password asli) cabang CREATE
+  ROLE ini gak pernah kesentuh, cuma GRANT yang jalan; di Postgres
+  lokal/CI (role belum pernah ada) cabang ini bikin placeholder NOLOGIN
+  (tanpa password, aman commit) biar GRANT-nya punya target. **Migration
+  ini sendiri INERT** — merge-nya TIDAK mengubah role apa yang benar-benar
+  dipakai `DATABASE_URL` production, itu langkah manual terpisah
+  belakangan. Downgrade = `REVOKE` semua yang di-GRANT, **BUKAN**
+  `DROP ROLE` (role production yang lagi dipakai koneksi aktif jangan
+  sampai ke-drop cuma gara-gara rollback migration).
+- **Diverifikasi penuh thd Postgres 16 lokal** (bukan cuma baca kode, sama
+  disiplin migration lain di repo ini): upgrade→downgrade→upgrade bersih;
+  tabel BARU yang dibuat setelah upgrade otomatis kena grant (`ALTER
+  DEFAULT PRIVILEGES` beneran jalan, dibuktikan langsung bukan diasumsikan);
+  skenario "role sudah ada sebagai LOGIN+password" (simulasi production)
+  dicoba eksplisit — guard `IF NOT EXISTS` benar-benar skip CREATE ROLE
+  dan gak ganggu LOGIN/password yang udah ada, cuma GRANT yang jalan ulang.
+- **Jebakan paling berbahaya, sudah diantisipasi**: `railway.toml`'s
+  `startCommand` jalanin `alembic upgrade head` pakai `DATABASE_URL` — kalau
+  env var itu dipindah ke `kinetiq_app` (non-owner, gak punya hak DDL),
+  migration di tiap deploy akan GAGAL. Fix: `packages/db/migrations/env.py`
+  sekarang baca `DATABASE_URL_MIGRATIONS` (connection string role owner,
+  KHUSUS step alembic) kalau ada, fallback ke `DATABASE_URL` biasa kalau
+  gak ada — jadi local dev/CI (cuma pernah set `DATABASE_URL`) sama sekali
+  gak berubah perilakunya, no-op murni sampai KEDUA env var itu beneran
+  di-set di Railway. Diverifikasi eksplisit 2 skenario thd Postgres lokal:
+  cuma `DATABASE_URL` (perilaku lama, tetap jalan persis sama) dan
+  KEDUANYA di-set sekaligus (migration correctly pakai
+  `DATABASE_URL_MIGRATIONS`, `DATABASE_URL` yang sengaja diarahkan ke DB
+  gak-ada sama sekali gak disentuh). `railway.toml` cuma dapat komentar
+  penjelasan (bukan ubah `startCommand`-nya — env var Railway sendiri yang
+  perlu ditambahkan belakangan, bukan sintaks shell-nya). Ingestion worker
+  (`railway.ingestion-worker.toml`) gak jalanin migration sama sekali (cuma
+  `DATABASE_URL` runtime langsung), jadi gak butuh split serupa — cukup
+  dicek grant migration-nya mencakup tabel yang dia INSERT/UPDATE
+  (`ohlcv`/`funding_rate`/`data_source_health`/`instrument`/`venue`) —
+  sudah otomatis ke-cover krn grant-nya scope seluruh schema `public`,
+  bukan daftar tabel manual per-servis.
+
+**Urutan eksekusi selanjutnya (BUKAN sekarang, tiap langkah butuh
+konfirmasi eksplisit founder sebelum dijalankan)**:
+1. Merge PR grant-migration ini (inert, gak ubah role aktif production).
+2. Founder bikin role `kinetiq_app` via Neon SQL Editor (langkah manual,
+   lihat batasan desain di atas).
+3. Uji acceptance di Neon **preview branch** dari role baru: `SELECT
+   trade_annotation` tanpa `set_config` harus 0 baris, INSERT ke tenant
+   salah harus ditolak, `rolbypassrls=false` terverifikasi lagi.
+4. Baru switch env Railway **satu servis dulu** (bukan langsung dua-duanya),
+   dengan `DATABASE_URL` lama disimpan terpisah untuk rollback cepat.
+
 ## Fase 1 — Simulator fee-aware (F5 deep-dive)
 
 Tambah parameter fee ke `trade_simulator.py` (ADITIF, jangan ubah perilaku

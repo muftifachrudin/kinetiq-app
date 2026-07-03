@@ -86,6 +86,21 @@
 # dependency, but that pyproject.toml is never pip-installed here, only
 # PYTHONPATH-referenced). Idempotent by design (alembic tracks applied
 # revisions), safe to run on every restart, not just the first one.
+#
+# Fase 0d (docs/sonnet5-implementation-roadmap.md), NOT YET SWITCHED: once
+# this service's DATABASE_URL is moved from neondb_owner to the
+# least-privilege kinetiq_app role (migration 0006), the `alembic upgrade
+# head` step above would start failing -- kinetiq_app deliberately has no
+# DDL rights, only the DML grants that migration grants it. Fix already
+# wired into packages/db/migrations/env.py: it reads a SEPARATE
+# `DATABASE_URL_MIGRATIONS` env var (the owner-role connection string,
+# reserved for this one step) when present, falling back to plain
+# DATABASE_URL otherwise -- today only DATABASE_URL exists here, so this
+# comment is a no-op until BOTH env vars are actually added to this
+# service's Railway Variables as part of the switch (see the roadmap
+# doc's Fase 0d execution order -- do not add DATABASE_URL_MIGRATIONS or
+# repoint DATABASE_URL without the founder's explicit go-ahead for that
+# specific step).
 startCommand = "cd packages/db && python -m alembic upgrade head && cd /app && PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
