@@ -1,12 +1,15 @@
 """Daily derivatives context from CoinGlass: build per-day feature table for BTC & ETH."""
-import json, datetime, statistics
+import json
+import datetime
 d=json.load(open("coinglass_raw.json"))
-def day(ms): return datetime.datetime.fromtimestamp(int(ms)/1000, datetime.timezone.utc).date()
+def day(ms):
+    return datetime.datetime.fromtimestamp(int(ms)/1000, datetime.timezone.utc).date()
 tables={}
 for coin in ("BTC","ETH"):
     t={}
     def put(name, rows, fn):
-        for r in rows: t.setdefault(day(r["time"]), {})[name]=fn(r)
+        for r in rows:
+            t.setdefault(day(r["time"]), {})[name]=fn(r)
     put("price_close", d[coin]["price"]["data"], lambda r: float(r["close"]))
     put("oi_close", d[coin]["oi"]["data"], lambda r: float(r["close"]))
     put("funding", d[coin]["funding"]["data"], lambda r: float(r["close"]))
@@ -22,15 +25,18 @@ for coin in ("BTC","ETH"):
     feats={}
     for i in range(1,len(days)):
         cur,prev=t[days[i]],t[days[i-1]]
-        if "price_close" not in cur or "price_close" not in prev or "oi_close" not in cur or "oi_close" not in prev: continue
+        if "price_close" not in cur or "price_close" not in prev or "oi_close" not in cur or "oi_close" not in prev:
+            continue
         pr=(cur["price_close"]-prev["price_close"])/prev["price_close"]
         oir=(cur["oi_close"]-prev["oi_close"])/prev["oi_close"]
         f={}
-        f["price_ret"]=pr; f["oi_ret"]=oir
+        f["price_ret"]=pr
+        f["oi_ret"]=oir
         f["fuel"]= "confirmed" if (pr>0)==(oir>0) else "unfueled"
         f["quadrant"]=("up" if pr>0 else "down")+"_"+("oi_up" if oir>0 else "oi_down")
         for k in ("funding","funding_bybit","gls","tls","liq_long","liq_short","taker_buy","taker_sell"):
-            if k in cur: f[k]=cur[k]
+            if k in cur:
+                f[k]=cur[k]
         feats[days[i].isoformat()]=f
     tables[coin]=feats
 json.dump(tables, open("cg_daily_features.json","w"))

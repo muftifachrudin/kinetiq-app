@@ -4,7 +4,11 @@ from the Claude Code sandbox; this endpoint is the one reachable path).
 Writes candles_{venue}_{ASSET}.csv into the current working directory.
 Requires DATABASE_URL in the environment.
 """
-import os, json, urllib.request, re, sys, csv
+import os
+import json
+import urllib.request
+import re
+import csv
 db=os.environ["DATABASE_URL"].strip()
 m=re.match(r"postgresql://[^@]+@([^/?]+)/([^?]+)", db)
 url=f"https://{m.group(1)}/sql"
@@ -23,10 +27,13 @@ for venue,sym in series:
             WHERE v.name='{venue}' AND i.symbol='{sym}' AND o.timeframe='1h'
             ORDER BY o.ts LIMIT 3000 OFFSET {offset}""")
         rows_all+=rows
-        if len(rows)<3000: break
+        if len(rows)<3000:
+            break
         offset+=3000
     fn=f"candles_{venue}_{sym.split('/')[0]}.csv"
     with open(fn,"w",newline="") as f:
-        w=csv.writer(f); w.writerow(["ts","open","high","low","close","volume"])
-        for r in rows_all: w.writerow([r["ts"],r["open"],r["high"],r["low"],r["close"],r["volume"]])
+        w=csv.writer(f)
+        w.writerow(["ts","open","high","low","close","volume"])
+        for r in rows_all:
+            w.writerow([r["ts"],r["open"],r["high"],r["low"],r["close"],r["volume"]])
     print(fn, len(rows_all))

@@ -1,14 +1,17 @@
 """Slice diagnostics over the 4 replication results + CoinGlass daily join."""
-import json, statistics, datetime, itertools, math
+import json
+import statistics
 
 def pf(rets):
-    g=sum(r for r in rets if r>0); l=-sum(r for r in rets if r<0)
-    return (g/l) if l>0 else None
+    gains = sum(r for r in rets if r > 0)
+    losses = -sum(r for r in rets if r < 0)
+    return (gains / losses) if losses > 0 else None
 
 def load(venue, asset):
     d=json.load(open(f"result_{venue}_{asset}.json"))
     for t in d["trades"]:
-        t["venue"]=venue; t["asset"]=asset
+        t["venue"]=venue
+        t["asset"]=asset
         t["date"]=t["ts"][:10]
         t["hour"]=int(t["ts"][11:13])
     return d
@@ -30,7 +33,8 @@ print("B. CROSS-VENUE SIGNAL OVERLAP (same asset, binance vs bybit)")
 for a in ("BTC","ETH"):
     s1={(t["ts"],t["direction"]) for t in results[("binance",a)]["trades"]}
     s2={(t["ts"],t["direction"]) for t in results[("bybit",a)]["trades"]}
-    inter=len(s1&s2); union=len(s1|s2)
+    inter=len(s1&s2)
+    union=len(s1|s2)
     print(f"{a}: binance={len(s1)} bybit={len(s2)} overlap={inter} jaccard={inter/union:.2%}")
 
 all_tr=[t for d in results.values() for t in d["trades"] if not t["censored"]]
@@ -38,7 +42,8 @@ print()
 print(f"C. POOLED SLICES (n={len(all_tr)} non-censored, 4 series)")
 def slice_report(name, keyfn):
     groups={}
-    for t in all_tr: groups.setdefault(keyfn(t),[]).append(t["return_pct"])
+    for t in all_tr:
+        groups.setdefault(keyfn(t),[]).append(t["return_pct"])
     print(f"-- {name}")
     for k in sorted(groups, key=str):
         v=groups[k]
@@ -54,7 +59,8 @@ slice_report("bars_held", lambda t: "<=5" if t["bars_held"]<=5 else ("6-12" if t
 
 print()
 print("D. CONFIDENCE INFORMATIVENESS: corr(confidence, return)")
-xs=[t["confidence"] for t in all_tr]; ys=[t["return_pct"] for t in all_tr]
+xs=[t["confidence"] for t in all_tr]
+ys=[t["return_pct"] for t in all_tr]
 mx_, my=statistics.mean(xs), statistics.mean(ys)
 cov=sum((x-mx_)*(y-my) for x,y in zip(xs,ys))/len(xs)
 corr=cov/(statistics.pstdev(xs)*statistics.pstdev(ys))
@@ -76,6 +82,8 @@ for name, cond in [
     ("dir against day drift", lambda f,t: (f["price_ret"]>0)!=(t["direction"]=="LONG")),
 ]:
     v=[t["return_pct"] for t in all_tr if cgf(t) and cond(cgf(t),t)]
-    if len(v)<5: print(f"   {name:32s} n={len(v)} (too small)"); continue
+    if len(v)<5:
+        print(f"   {name:32s} n={len(v)} (too small)")
+        continue
     wr=sum(1 for r in v if r>0)/len(v)
     print(f"   {name:32s} n={len(v):4d} PF={pf(v):.3f} WR={wr:.1%} mean={statistics.mean(v)*100:+.3f}%")

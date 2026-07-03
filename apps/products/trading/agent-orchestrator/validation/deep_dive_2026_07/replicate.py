@@ -5,19 +5,23 @@ causal via its as_of walk, so per-window results are identical to run_window's
 re-slicing, minus edge-censoring near test_end which this variant resolves
 with more data -- strictly better, noted in the report).
 """
-import sys, os, csv, json, datetime
+import sys
+import os
+import csv
+import json
+import datetime
 
 # this script lives in agent-orchestrator/validation/deep_dive_2026_07/
 AO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(AO, "skills/strategy"))
 sys.path.insert(0, os.path.join(AO, "validation/fib_gann_backtest"))
 
-import fib_gann_timing as fgt
-import signal_runner as sr
-import trade_simulator as ts
-import metrics as mx
-from kinetiq_backtest.windowing import generate_windows_by_calendar
-from kinetiq_backtest.types import WindowMode
+import fib_gann_timing as fgt  # noqa: E402
+import signal_runner as sr  # noqa: E402
+import trade_simulator as ts  # noqa: E402
+import metrics as mx  # noqa: E402
+from kinetiq_backtest.windowing import generate_windows_by_calendar  # noqa: E402
+from kinetiq_backtest.types import WindowMode  # noqa: E402
 
 venue, asset = sys.argv[1], sys.argv[2]
 fn = f"candles_{venue}_{asset}.csv"

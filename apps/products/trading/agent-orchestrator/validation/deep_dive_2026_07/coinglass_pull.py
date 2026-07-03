@@ -7,7 +7,10 @@ symbol (BTC) and liquidation requires exchange_list=; interval=1h returns
 HTTP 403 on the Hobbyist plan (daily-only); burst requests get connection
 resets, so keep the ~2.5s sleep between calls.
 """
-import os, json, urllib.request, time
+import os
+import json
+import urllib.request
+import time
 
 KEY = os.environ["COINGLASS_API_KEY"]
 BASE = "https://open-api-v4.coinglass.com/api"

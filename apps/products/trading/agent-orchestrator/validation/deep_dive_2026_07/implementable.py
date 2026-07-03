@@ -1,9 +1,14 @@
 """Test IMPLEMENTABLE (no-lookahead) filters on the pooled backtest trades."""
-import json, csv, statistics, datetime
+import collections
+import csv
+import datetime
+import json
+import statistics
 
 def pf(rets):
-    g=sum(r for r in rets if r>0); l=-sum(r for r in rets if r<0)
-    return (g/l) if l>0 else None
+    gains = sum(r for r in rets if r > 0)
+    losses = -sum(r for r in rets if r < 0)
+    return (gains / losses) if losses > 0 else None
 
 # load candles into dict for SMA computation
 closes={}
@@ -19,7 +24,8 @@ for venue in ("binance","bybit"):
         d=json.load(open(f"result_{venue}_{asset}.json"))
         cl=closes[(venue,asset)]
         for t in d["trades"]:
-            if t["censored"]: continue
+            if t["censored"]:
+                continue
             i=t["index"]
             t["venue"],t["asset"]=venue,asset
             t["date"]=t["ts"][:10]
@@ -37,12 +43,15 @@ for venue in ("binance","bybit"):
 
 def rep(name, tr):
     v=[t["return_pct"] for t in tr]
-    if len(v)<10: print(f"{name:44s} n={len(v)} (kecil)"); return
+    if len(v)<10:
+        print(f"{name:44s} n={len(v)} (kecil)")
+        return
     wr=sum(1 for r in v if r>0)/len(v)
     p=pf(v)
     print(f"{name:44s} n={len(v):4d} PF={p:.3f} WR={wr:.1%} mean={statistics.mean(v)*100:+.3f}%")
 
-print("baseline:"); rep("ALL", all_tr)
+print("baseline:")
+rep("ALL", all_tr)
 print()
 print("-- Filter tren HTF (tanpa lookahead):")
 rep("LONG  & close>SMA200(1h) [trend up]", [t for t in all_tr if t["direction"]=="LONG" and t["above200"]])
@@ -73,7 +82,6 @@ for v_ in ("binance","bybit"):
 # per-window PF of combo (does it pass promotion?)
 print()
 print("-- KOMBINASI per window (all 4 series pooled by test month):")
-import collections
 bym=collections.defaultdict(list)
 for t in combo:
     bym[t["ts"][:7]].append(t["return_pct"])
