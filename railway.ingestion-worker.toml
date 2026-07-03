@@ -38,13 +38,13 @@
 # untested and not worth risking here when the working pattern (one shared
 # file) is available.
 #
-# NOT YET VERIFIED against the real Railway platform (unlike railway.toml's
-# api-gateway config, which has multiple real deploys behind it) -- this
-# sandbox has no way to actually deploy/observe a second Railway service.
-# The founder needs to add this service in the Railway dashboard and report
-# back what happens; treat the first real deploy attempt as the actual test,
-# same as every other Railway config change in this repo's history
-# (docs/deployment-runbook.md).
+# VERIFIED against the real Railway platform (3 Juli 2026) -- worked on the
+# first deploy attempt, no fixes needed. Deploy Logs showed the full expected
+# sequence: 365-day backfill (8760 candles = 1 year of 1h candles each) for
+# binance+bybit x BTC/USDT+ETH/USDT, then "backfill done -- entering live
+# poll loop", one funding_rate+ohlcv poll per instrument, then sleeping until
+# the next candle close. See docs/deployment-runbook.md gotcha #8 for the
+# full writeup.
 
 [deploy]
 # Same "python -m X" rationale as railway.toml: Railpack's mise-managed
