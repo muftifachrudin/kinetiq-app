@@ -120,6 +120,16 @@ def test_compute_bias_rejects_unsupported_timeframe():
 # --- htf_alignment_score ---
 
 
+def test_bias_alignment_is_public_and_matches_aligned_opposed_neutral():
+    # public (Fase 3, docs/sonnet5-implementation-roadmap.md): any OTHER
+    # bias source (e.g. sma_trend_bias()) needs the same 0-1 mapping
+    # htf_alignment_score() uses internally, without duplicating it.
+    assert hb.bias_alignment(fgt.TradeDirection.LONG, ms.TrendBias.UPTREND) == hb.HTF_ALIGNMENT_SCORE_ALIGNED
+    assert hb.bias_alignment(fgt.TradeDirection.LONG, ms.TrendBias.DOWNTREND) == hb.HTF_ALIGNMENT_SCORE_OPPOSED
+    assert hb.bias_alignment(fgt.TradeDirection.LONG, ms.TrendBias.UNDEFINED) == hb.HTF_ALIGNMENT_SCORE_NEUTRAL
+    assert hb.bias_alignment(fgt.TradeDirection.SHORT, ms.TrendBias.DOWNTREND) == hb.HTF_ALIGNMENT_SCORE_ALIGNED
+
+
 def test_htf_alignment_score_full_agreement_returns_aligned():
     biases = {"1d": ms.TrendBias.UPTREND, "4h": ms.TrendBias.UPTREND}
     score = hb.htf_alignment_score(fgt.TradeDirection.LONG, biases)

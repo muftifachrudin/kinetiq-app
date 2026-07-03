@@ -196,3 +196,24 @@ def test_generate_signals_accepts_custom_min_rr_threshold():
     strict = sr.generate_signals(candles, min_rr_threshold=100.0)
     assert len(lenient) >= len(strict)
     assert strict == []
+
+
+def test_generate_signals_populates_per_factor_dump_fields():
+    # Fase 3 (docs/sonnet5-implementation-roadmap.md): every emitted
+    # Signal must carry real computed per-factor values, not the
+    # dataclass's own 0.5 placeholder defaults (those defaults exist only
+    # for old test call sites that construct a Signal by hand and don't
+    # care about these fields -- generate_signals() itself always fills
+    # them in for real).
+    candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
+    assert signals
+    for s in signals:
+        for value in (
+            s.swing_quality, s.fib_gann_confluence, s.volume_confirmation, s.wick_rejection,
+            s.structure_alignment, s.htf_alignment, s.regime_alignment, s.sma_trend_bias_alignment,
+        ):
+            assert 0.0 <= value <= 1.0
+        assert s.fib_gann_confluence > 0.0  # the touch-trigger condition itself guarantees this
+        assert s.wick_rejection == s.pivot.wick_rejection_score
+        assert s.regime_alignment == s.structure_alignment  # see Signal's own docstring on why these match today
