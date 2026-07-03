@@ -190,3 +190,19 @@ def test_default_output_dir_resolves_to_repo_root_docs_not_apps_docs():
     resolved = Path(rv.default_output_dir()).resolve()
     repo_root = Path(__file__).resolve().parents[5]
     assert resolved == repo_root / "docs" / "validation-results"
+
+
+# --- safe_run_id_symbol ---
+
+
+def test_safe_run_id_symbol_strips_both_slash_and_colon():
+    # regression: a previous version only stripped "/", leaving ":" in
+    # "BTC/USDT:USDT" -- caught only by a real CI run failing at the
+    # artifact-upload step (actions/upload-artifact rejects ":" in a path;
+    # harmless on Linux locally, so no local test would have caught it
+    # without deliberately checking for this character).
+    assert rv.safe_run_id_symbol("BTC/USDT:USDT") == "BTC-USDT-USDT"
+
+
+def test_safe_run_id_symbol_leaves_plain_symbols_unchanged():
+    assert rv.safe_run_id_symbol("BTCUSDT") == "BTCUSDT"
