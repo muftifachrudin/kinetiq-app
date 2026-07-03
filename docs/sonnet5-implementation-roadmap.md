@@ -441,6 +441,20 @@ pura-pura menghitung. Tidak menyentuh `signal_runner`/gate manapun.
 Skema: kolom `default_margin_mode` di `risk_mandate` dititipkan di PR draft
 F0d (CODEOWNERS, satu kali review founder).
 
+**Status: SELESAI (3 Juli 2026, hari yg sama).** Diimplementasi persis spec
+di atas — detail lengkap (nomor real hasil spot-check thd 250 candle
+BTC/USDT 1h production, hasil unit test, dan catatan migrasi) ada di
+`docs/margin-mode-brief.md` bag. 4. Ringkas: `CrossMarginNotImplementedError`
+utk cross, `derivatives_context` high-vol flag cuma mengecilkan risk (satu
+arah, tidak pernah menaikkan leverage), 11 test baru lulus, ruff clean.
+**Catatan penyimpangan dari rencana**: kolom `risk_mandate.default_margin_mode`
++ `risk_pct_per_trade` TERNYATA TIDAK bisa "dititipkan" ke PR draft F0d
+seperti rencana awal di atas — PR itu (migration 0006) sudah merge & role
+barunya sudah dieksekusi di production duluan sebelum kerjaan F7a ini
+dimulai. Jadi kolom ini masuk migrasi baru terpisah
+(`0007_risk_mandate_margin_mode_columns.py`), tetap kena review CODEOWNERS
+manual founder yang sama, cuma PR-nya beda dari yang direncanakan semula.
+
 ### F7b — Portfolio-level margin simulator: cross mode, margin ratio akun (SETELAH F7 punya posisi nyata)
 
 Ditunda sadar, bukan ditolak — alasan lengkap di `docs/margin-mode-brief.md`
