@@ -129,6 +129,46 @@ melanggarnya.
 - TIDAK menyentuh `signal_runner`/gate manapun — kartu dihitung SETELAH
   sinyal lolos gate, murni lapisan presentasi+sizing.
 
+**Status: SELESAI (3 Juli 2026, hari yg sama).** `skills/strategy/
+position_sizing.py` diimplementasi persis spec di atas: `PreTradeCard`
+(frozen dataclass), `build_pre_trade_card()` reuse `max_safe_leverage()`/
+`build_margin_context()`/`assert_liquidation_safe()` dari `trade_simulator.py`
+tanpa ditulis ulang, `margin_mode=CROSS` raise `CrossMarginNotImplementedError`
+(subclass `NotImplementedError`) menunjuk F7b, `derivatives_context` high-vol
+flag cuma mengecilkan `risk_pct` efektif (tidak pernah menaikkan leverage/cap).
+11 test baru (`tests/test_position_sizing.py`), 322 test total (agent-
+orchestrator, di luar `test_fit_weights.py` yg butuh numpy/scikit-learn CI-
+only) lulus, ruff clean.
+
+**Spot-check thd data real BTC/USDT 1h production** (250 candle terakhir s/d
+2026-07-03T18:00Z, instrument_id=1 Binance, ditarik via Neon HTTP-SQL endpoint
+langsung dari sandbox): swing terakhir terdeteksi LOW @ 61113.80 (idx=223,
+2026-07-02T16:00Z), basis leg HIGH @ 62180.00 (idx=221). Sinyal LONG di entry
+62180.30 (close bar terakhir) menghasilkan `ExitPlan` SL=60916.21, TP1=62621.41
+(R:R=0.35 — di bawah gate R:R production, tapi itu tanggung jawab
+`passes_risk_reward_gate()` yg memang tidak disentuh modul ini, bukan bug di
+sini). `build_pre_trade_card()` dgn `equity_usd=10000`, `risk_pct_per_trade=
+0.01`, `max_leverage_cap=3.0` (default mandate): `max_safe_leverage=30.48x`
+(struktur SL/ATR-nya jauh lebih longgar dari cap), `leverage_used=3.0x` (cap
+mandate yg mengikat, bukan struktur — makanya tidak ada warning "below cap"),
+`qty=0.0791`, `notional_usd=4918.99`, `initial_margin_usd=1639.66`,
+`est_liquidation_price=41702.25`, `sl_distance_pct_notional=2.03%` vs
+`sl_distance_pct_margin=6.10%` (persis pola bag. 13 brief utama: jarak SL
+kelihatan kecil di notional, jauh lebih besar diukur thd margin) — semua
+angka konsisten & lolos invariant `assert_liquidation_safe()` tanpa perlu
+override.
+
+Skema DB `risk_mandate.default_margin_mode` + `risk_pct_per_trade` (bag. 5)
+dibuat via migrasi `packages/db/migrations/versions/
+0007_risk_mandate_margin_mode_columns.py` (bukan "dititipkan" ke PR draft
+Fase 0d spt rencana awal — PR itu sudah merge & dieksekusi produksi duluan,
+lihat catatan di file migrasi). Diverifikasi end-to-end thd Postgres 16 lokal
+sekali pakai (bukan cuma dibaca): full chain `alembic upgrade head` (0001→
+0007) sukses, `\d risk_mandate` konfirmasi kolom+CHECK constraint persis
+sesuai spec, `alembic downgrade -1` bersih (kolom hilang, constraint hilang),
+upgrade ulang sukses lagi. `packages/db/migrations/` kena CODEOWNERS — PR ini
+tetap butuh review manual founder sebelum merge, sama seperti Fase 0d.
+
 ## 5. Onboarding prasyarat: trading style → `risk_mandate`
 
 Jawaban untuk "apakah wajib ditentukan pengguna di awal": **ya**, lewat

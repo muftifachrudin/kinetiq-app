@@ -37,6 +37,21 @@ A parallel channel or trendline drawn separately can look similar and is
 an easy misread (this happened once already -- see the verification trail
 in docs/prd.md).
 
+## position_sizing.py
+
+F7a (`docs/sonnet5-implementation-roadmap.md`), spec in
+`docs/margin-mode-brief.md` Section 4. Pure-function pre-execution sizing
+skill: `build_pre_trade_card()` turns a signal's `ExitPlan` + the mandate's
+risk/leverage settings into a `PreTradeCard` (risk amount, qty, notional,
+`leverage_used` capped by both the mandate and `trade_simulator.
+max_safe_leverage()`, initial margin, est. liquidation price, SL/TP1
+distance in both notional and margin-leveraged percent). Reuses
+`trade_simulator.py`'s leverage/liquidation math rather than reimplementing
+it. `margin_mode=CROSS` raises `CrossMarginNotImplementedError` (F7b isn't
+built yet -- see the brief's Section 1 for why cross needs portfolio state
+this per-signal card doesn't have). Does not touch `signal_runner`/any
+gate -- purely a downstream presentation+sizing layer.
+
 ## market_structure.py
 
 Smart Money Concept market structure (BOS/CHoCH), design brief Section 2d.

@@ -148,10 +148,19 @@ that work:
   multi-statement with preserved session state via
   `{"queries": [{"query": ...}, ...]}` (array of OBJECTS; plain strings
   are rejected). Raw Postgres connections still hang from the sandbox.
-- `neondb_owner` has `rolbypassrls=true` in production, so FORCE RLS does
-  NOT protect anything for services connecting as that role. Don't claim
-  RLS-based tenant isolation in production until services run as a
-  non-owner, non-BYPASSRLS role (roadmap Phase 0d).
+- RESOLVED (2026-07-03, Fase 0d): `neondb_owner` has `rolbypassrls=true`,
+  which made FORCE RLS a no-op for production traffic. Fixed by creating a
+  non-owner `kinetiq_app` role (`rolbypassrls=false`, `rolsuper=false`, no
+  `neon_superuser` membership, created via raw SQL as `neondb_owner` --
+  Neon Console/API provisioning auto-enrolls new roles into
+  `neon_superuser`, which carries BYPASSRLS) and switching both production
+  services (`api-gateway`, `ingestion` worker) to connect as it, verified
+  via real Railway Deploy Logs with zero permission errors. `api-gateway`
+  keeps a separate `DATABASE_URL_MIGRATIONS` env var (still `neondb_owner`)
+  for the `alembic upgrade head` startCommand step only, since `kinetiq_app`
+  deliberately has no DDL rights (see `packages/db/migrations/env.py` and
+  `railway.toml`). RLS-based tenant isolation claims are now valid in
+  production. Full record: `docs/sonnet5-implementation-roadmap.md` Fase 0d.
 - CoinGlass Hobbyist is confirmed daily-only (interval=1h returns 403);
   per-pair endpoints require `exchange=`; keep ~2.5s between calls.
 - RESOLVED (2026-07-03): production `trade_annotation` is now populated

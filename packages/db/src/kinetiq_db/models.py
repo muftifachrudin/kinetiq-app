@@ -351,6 +351,15 @@ class RiskMandate(Base):
     symbol_universe = Column(ARRAY(Text))
     kill_switch_active = Column(Boolean, server_default="false")
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    # F7a (docs/margin-mode-brief.md Section 5): margin mode is decided once
+    # at the mandate level, not per-trade -- see position_sizing.py. MVP
+    # only implements ISOLATED sizing; 'cross' is a valid mandate value
+    # (surfaced in onboarding as "coming soon") but position_sizing.py
+    # raises NotImplementedError for it until F7b.
+    default_margin_mode = Column(Text, server_default="isolated")
+    risk_pct_per_trade = Column(Numeric(5, 4), server_default="0.01")
+
+    __table_args__ = (CheckConstraint("default_margin_mode in ('cross', 'isolated')", name="ck_risk_mandate_default_margin_mode"),)
 
 
 class TenantCredential(Base):
