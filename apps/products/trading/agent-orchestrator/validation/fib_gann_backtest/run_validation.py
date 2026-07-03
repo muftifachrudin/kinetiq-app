@@ -72,6 +72,16 @@ def default_output_dir() -> str:
     return os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "docs", "validation-results")
 
 
+def safe_run_id_symbol(symbol: str) -> str:
+    """ccxt-unified perp symbols look like "BTC/USDT:USDT" -- used as part
+    of a filename (run_id), so every character invalid in a path needs
+    stripping, not just "/". A real bug caught only by an actual CI run
+    failing at the artifact-upload step (actions/upload-artifact, and
+    Windows/NTFS generally, reject ":" outright) -- harmless on Linux
+    locally, so nothing here would have caught it without that real run."""
+    return symbol.replace("/", "-").replace(":", "-")
+
+
 @dataclasses.dataclass(frozen=True)
 class WindowResult:
     window: WalkForwardWindow
@@ -201,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import report  # deferred: only needed on the non-dry-run path
 
-    run_id = f"{config['symbol'].replace('/', '-')}_{config['timeframe']}_{datetime.datetime.now(datetime.timezone.utc):%Y%m%dT%H%M%SZ}"
+    run_id = f"{safe_run_id_symbol(config['symbol'])}_{config['timeframe']}_{datetime.datetime.now(datetime.timezone.utc):%Y%m%dT%H%M%SZ}"
     json_path, md_path = report.write_report(result, args.output_dir, run_id)
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
