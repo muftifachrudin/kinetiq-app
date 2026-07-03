@@ -277,10 +277,13 @@ def test_run_fit_weights_returns_one_result_per_window():
         assert isinstance(r.binary, fw.SchemeResult)
         assert isinstance(r.three_class, fw.SchemeResult)
         assert isinstance(r.binary_with_sma_candidate, fw.SchemeResult)
+        assert isinstance(r.binary_with_derivatives_candidate, fw.SchemeResult)
         # candidate variant's coefficients (when fit succeeds) must cover
         # exactly CANDIDATE_FEATURE_NAMES, one extra key vs the primary fit
         if r.binary_with_sma_candidate.coefficients is not None:
             assert set(r.binary_with_sma_candidate.coefficients) == set(fw.CANDIDATE_FEATURE_NAMES)
+        if r.binary_with_derivatives_candidate.coefficients is not None:
+            assert set(r.binary_with_derivatives_candidate.coefficients) == set(fw.DERIVATIVES_FEATURE_NAMES)
 
 
 def test_run_fit_weights_handles_window_with_no_candles():
@@ -293,6 +296,7 @@ def test_run_fit_weights_handles_window_with_no_candles():
     assert results[0].binary.skip_reason is not None
     assert results[0].three_class.skip_reason is not None
     assert results[0].binary_with_sma_candidate.skip_reason is not None
+    assert results[0].binary_with_derivatives_candidate.skip_reason is not None
 
 
 # --- CANDIDATE_FEATURE_NAMES / sma_trend_bias candidate fit ---
@@ -331,6 +335,47 @@ def test_fit_binary_with_candidate_features_reports_one_more_coefficient():
     assert "sma_trend_bias_alignment" not in primary.coefficients
 
 
+# --- DERIVATIVES_FEATURE_NAMES / derivatives candidate fit (Fase 4) ---
+
+
+def mk_signal_with_derivatives(index: int, swing_quality: float, funding_contrarian_alignment: float) -> sr.Signal:
+    signal = mk_signal(index, swing_quality=swing_quality)
+    return dataclasses.replace(signal, funding_contrarian_alignment=funding_contrarian_alignment)
+
+
+def test_derivatives_feature_names_appends_four_columns():
+    assert fw.DERIVATIVES_FEATURE_NAMES == fw.FEATURE_NAMES + (
+        "funding_contrarian_alignment",
+        "global_ls_contrarian_alignment",
+        "top_vs_global_alignment",
+        "liq_cascade_flag",
+    )
+
+
+def test_fit_binary_with_derivatives_candidate_reports_four_more_coefficients():
+    rng = random.Random(13)
+
+    def build(n, start_idx):
+        out = []
+        for j in range(n):
+            i = start_idx + j
+            quality = 0.9 if j % 2 == 0 else 0.1
+            outcome = TP if rng.random() < (0.85 if quality > 0.5 else 0.15) else SL
+            signal = mk_signal_with_derivatives(i, swing_quality=quality, funding_contrarian_alignment=quality)
+            trade = mk_trade(signal, outcome, 0.03 if outcome is TP else -0.02)
+            out.append(fw.LabeledSignal(signal=signal, trade=trade))
+        return out
+
+    train = build(60, 0)
+    test = build(20, 1000)
+    primary = fw._fit_binary(train, test)
+    candidate = fw._fit_binary(train, test, feature_names=fw.DERIVATIVES_FEATURE_NAMES)
+    assert set(primary.coefficients) == set(fw.FEATURE_NAMES)
+    assert set(candidate.coefficients) == set(fw.DERIVATIVES_FEATURE_NAMES)
+    assert "funding_contrarian_alignment" in candidate.coefficients
+    assert "funding_contrarian_alignment" not in primary.coefficients
+
+
 # --- evaluate_adoption ---
 
 
@@ -338,7 +383,15 @@ def _mk_window_fit_result(window_id: int, auc: float | None, oos_predictions: li
     w = WalkForwardWindow(window_id=window_id, train_start=ts_at(0), train_end=ts_at(10), test_start=ts_at(10), test_end=ts_at(20))
     binary = fw.SchemeResult(auc=auc, brier=0.2 if auc is not None else None, coefficients={} if auc is not None else None, skip_reason=None if auc is not None else "skipped", oos_predictions=oos_predictions)
     empty = fw.SchemeResult(None, None, None, "not exercised in this test", [])
-    return fw.WindowFitResult(window=w, train_count=10, test_count=len(oos_predictions), binary=binary, three_class=empty, binary_with_sma_candidate=empty)
+    return fw.WindowFitResult(
+        window=w,
+        train_count=10,
+        test_count=len(oos_predictions),
+        binary=binary,
+        three_class=empty,
+        binary_with_sma_candidate=empty,
+        binary_with_derivatives_candidate=empty,
+    )
 
 
 def test_evaluate_adoption_not_adopted_when_no_valid_windows():

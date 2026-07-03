@@ -52,6 +52,24 @@ built yet -- see the brief's Section 1 for why cross needs portfolio state
 this per-signal card doesn't have). Does not touch `signal_runner`/any
 gate -- purely a downstream presentation+sizing layer.
 
+## derivatives_context.py
+
+F4 (`docs/sonnet5-implementation-roadmap.md`), graduated from
+`validation/deep_dive_2026_07/coinglass_pull.py`+`cg_analysis.py`'s one-off
+CoinGlass analysis. Pure function over a caller-supplied daily record
+history (CoinGlass Hobbyist + native `funding_rate`/`open_interest`, no
+API/DB coupling here): `compute_derivatives_context()` returns funding/
+global-long-short percentiles, top-vs-global divergence, a liquidation-
+cascade flag, and `fuel_quadrant`, all computed strictly from the day
+before `target_date` (no-lookahead enforced structurally, not just
+documented). `funding_contrarian_alignment()`/`global_ls_contrarian_
+alignment()`/`top_vs_global_alignment()` convert three of those into
+direction-signed 0-1 scores (fade-the-crowd) for `signal_runner.Signal`'s
+per-factor dump; `liq_cascade_flag` stays an unsigned magnitude feature
+(no established directional theory for it). `fuel_quadrant` is NEVER fed
+into `Signal`/fitting -- it's context/sizing only, consumed via
+`position_sizing.py`'s `high_vol_flag`.
+
 ## market_structure.py
 
 Smart Money Concept market structure (BOS/CHoCH), design brief Section 2d.

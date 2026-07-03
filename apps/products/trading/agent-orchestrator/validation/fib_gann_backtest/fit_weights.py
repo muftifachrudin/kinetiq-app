@@ -81,6 +81,21 @@ that stays defined on the primary FEATURE_NAMES fit only, per "kriteria
 adopsi tetap" (the acceptance criterion is unchanged by adding a
 candidate column).
 
+derivatives candidate (Fase 4, docs/sonnet5-implementation-roadmap.md):
+WindowFitResult.binary_with_derivatives_candidate is a FOURTH, likewise
+purely informational fit, using DERIVATIVES_FEATURE_NAMES (FEATURE_NAMES
+plus derivatives_context.py's four direction-candidate columns:
+funding_contrarian_alignment, global_ls_contrarian_alignment,
+top_vs_global_alignment, liq_cascade_flag). Same rationale as the sma
+candidate: these are dumped onto Signal but never blended into
+ConfluenceWeights, so their coefficients only become visible through a
+separate fit, never through the primary adoption-gating one. A near-zero
+coefficient here is an expected, valid outcome for at least liq_cascade_
+flag -- the July deep-dive already found that whole OI/liq family to be
+"a coincident/volatility-regime indicator, not a directional predictor...
+zero effect on trade outcomes" (CLAUDE.md) -- this fit is what would make
+that concretely visible per-window rather than asserted from memory.
+
 Depends on scikit-learn/numpy -- see packages/backtest-core/pyproject.toml's
 [dev] extra comment for why that's validation-harness-only, never a
 production service dependency.
@@ -98,6 +113,7 @@ from sklearn.metrics import roc_auc_score
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills", "strategy"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import derivatives_context as dc  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
@@ -116,6 +132,18 @@ FEATURE_NAMES = (
 # produces, deliberately kept separate from the primary fit -- see
 # WindowFitResult.binary_with_sma_candidate in the module docstring.
 CANDIDATE_FEATURE_NAMES = FEATURE_NAMES + ("sma_trend_bias_alignment",)
+
+# FEATURE_NAMES plus derivatives_context.py's four direction-candidate
+# columns (Fase 4) -- see WindowFitResult.binary_with_derivatives_candidate
+# in the module docstring. fuel_quadrant is intentionally absent: it's
+# never dumped onto Signal at all (context/sizing only, not a direction
+# feature -- derivatives_context.py's own module docstring).
+DERIVATIVES_FEATURE_NAMES = FEATURE_NAMES + (
+    "funding_contrarian_alignment",
+    "global_ls_contrarian_alignment",
+    "top_vs_global_alignment",
+    "liq_cascade_flag",
+)
 
 # Fewer usable (non-TIMEOUT, non-censored) train samples than this and a
 # logistic fit is noise, not signal -- arbitrary-but-documented floor, not
@@ -295,6 +323,10 @@ class WindowFitResult:
     # informational, does NOT feed evaluate_adoption(). See module
     # docstring's "sma_trend_bias candidate" section.
     binary_with_sma_candidate: SchemeResult
+    # Same binary TP-vs-SL scheme, fit on DERIVATIVES_FEATURE_NAMES (Fase
+    # 4) -- purely informational, does NOT feed evaluate_adoption(). See
+    # module docstring's "derivatives candidate" section.
+    binary_with_derivatives_candidate: SchemeResult
 
 
 def run_fit_weights(
@@ -302,23 +334,37 @@ def run_fit_weights(
     windows: list[WalkForwardWindow],
     funding_events: list[ts.FundingEvent],
     max_holding_bars: int,
+    derivatives_records: list[dc.DailyDerivativesRecord] | None = None,
 ) -> list[WindowFitResult]:
     """Per window: candles up to window.test_end feed generate_signals()
     (same no-lookahead convention run_validation.run_window() uses), then
     signals are split into train-range/test-range by ts, fit on train,
     evaluated on test. A window with zero candles gets an explicit
-    skip_reason on both schemes, never a crash or a fabricated result."""
+    skip_reason on both schemes, never a crash or a fabricated result.
+
+    derivatives_records (Fase 4) is passed straight through to
+    generate_signals() -- omitted (the default) leaves every derivatives
+    Signal field at its neutral default, same backward-compatible
+    behavior generate_signals() itself documents."""
     results = []
     for window in windows:
         window_candles = [c for c in candles if c.ts < window.test_end]
         if not window_candles:
             empty = SchemeResult(None, None, None, "no candles available before this window's test_end", [])
             results.append(
-                WindowFitResult(window=window, train_count=0, test_count=0, binary=empty, three_class=empty, binary_with_sma_candidate=empty)
+                WindowFitResult(
+                    window=window,
+                    train_count=0,
+                    test_count=0,
+                    binary=empty,
+                    three_class=empty,
+                    binary_with_sma_candidate=empty,
+                    binary_with_derivatives_candidate=empty,
+                )
             )
             continue
 
-        signals = sr.generate_signals(window_candles)
+        signals = sr.generate_signals(window_candles, derivatives_records=derivatives_records)
         labeled = build_labeled_signals(signals, window_candles, funding_events, max_holding_bars)
         train, test = split_by_window(labeled, window)
 
@@ -330,6 +376,7 @@ def run_fit_weights(
                 binary=_fit_binary(train, test),
                 three_class=_fit_three_class(train, test),
                 binary_with_sma_candidate=_fit_binary(train, test, feature_names=CANDIDATE_FEATURE_NAMES),
+                binary_with_derivatives_candidate=_fit_binary(train, test, feature_names=DERIVATIVES_FEATURE_NAMES),
             )
         )
     return results

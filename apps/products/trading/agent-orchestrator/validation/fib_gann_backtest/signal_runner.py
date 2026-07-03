@@ -55,6 +55,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills", "strategy"))
 
+import derivatives_context as dc  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import htf_bias as hb  # noqa: E402
 import market_structure as ms  # noqa: E402
@@ -105,6 +106,19 @@ class Signal:
     # htf_alignment and let the data decide which one (if either) earns
     # a real weight -- see fit_weights.CANDIDATE_FEATURE_NAMES.
     sma_trend_bias_alignment: float = 0.5
+    # Fase 4 (docs/sonnet5-implementation-roadmap.md) derivatives_context.py
+    # candidate columns -- same additive discipline as every field above:
+    # default to neutral (0.5) / no-event (0.0) so existing Signal(...)
+    # call sites that don't pass derivatives_records to generate_signals()
+    # (every test written before this round, and any caller with no daily
+    # derivatives data available yet) are entirely unaffected.
+    # fuel_quadrant is deliberately NOT dumped here at all -- it's context/
+    # sizing only (position_sizing.py's high_vol_flag), never a direction
+    # feature, per derivatives_context.py's module docstring.
+    funding_contrarian_alignment: float = 0.5
+    global_ls_contrarian_alignment: float = 0.5
+    top_vs_global_alignment: float = 0.5
+    liq_cascade_flag: float = 0.0
 
 
 def _entry_is_valid(direction: fgt.TradeDirection, entry_price: float, stop_loss: float) -> bool:
@@ -133,6 +147,7 @@ def generate_signals(
     retracement_levels: tuple[float, ...] = fgt.DEFAULT_FIB_RETRACEMENT_LEVELS,
     extension_levels: tuple[float, ...] = fgt.DEFAULT_FIB_EXTENSION_LEVELS,
     confluence_weights: fgt.ConfluenceWeights = fgt.ConfluenceWeights(),
+    derivatives_records: list[dc.DailyDerivativesRecord] | None = None,
 ) -> list[Signal]:
     """At most one Signal per pivot -- fires on the bar price actually
     TOUCHES a fib/gann line (fib_gann_confluence_score > 0), watching
@@ -142,6 +157,16 @@ def generate_signals(
     a pivot whose touch attempts so far have all failed the R:R gate or
     entry validity keeps being watched for a better touch on a later bar,
     until the next reversal makes it no longer the latest pivot.
+
+    derivatives_records (Fase 4, docs/sonnet5-implementation-roadmap.md):
+    optional daily CoinGlass+native derivatives history for this signal's
+    own coin. When omitted (the default), every derivatives-derived Signal
+    field stays at its neutral default -- fully backward compatible with
+    every caller that predates Fase 4. When supplied, a day without at
+    least 2 prior daily records (series start) also falls back to neutral
+    defaults rather than raising, same no-lookahead spirit as
+    fib_gann_timing/htf_bias's own early-series handling elsewhere in this
+    module.
     """
     signals: list[Signal] = []
     signaled_pivot_indices: set[int] = set()
@@ -193,6 +218,22 @@ def generate_signals(
         sma_bias = hb.sma_trend_bias(signal_candles)
         sma_alignment_score = hb.bias_alignment(direction, sma_bias)
 
+        # Fase 3/4 candidate columns -- NOT wired into confidence, purely
+        # dumped onto Signal below (see module docstring's derivatives_
+        # records param and Signal's own field comments).
+        funding_align = global_ls_align = top_vs_global_align = 0.5
+        liq_cascade = 0.0
+        if derivatives_records is not None:
+            try:
+                derivatives = dc.compute_derivatives_context(derivatives_records, as_of.date())
+            except ValueError:
+                derivatives = None  # fewer than 2 prior daily records -- series start, stay neutral
+            if derivatives is not None:
+                funding_align = dc.funding_contrarian_alignment(direction, derivatives.funding_percentile_365d)
+                global_ls_align = dc.global_ls_contrarian_alignment(direction, derivatives.global_ls_percentile_365d)
+                top_vs_global_align = dc.top_vs_global_alignment(direction, derivatives.top_vs_global_divergence)
+                liq_cascade = 1.0 if derivatives.liq_cascade_flag else 0.0
+
         confidence = fgt.score_confluence(
             pivot,
             signal_candles,
@@ -240,6 +281,10 @@ def generate_signals(
                 htf_alignment=htf_score,
                 regime_alignment=structure_score,
                 sma_trend_bias_alignment=sma_alignment_score,
+                funding_contrarian_alignment=funding_align,
+                global_ls_contrarian_alignment=global_ls_align,
+                top_vs_global_alignment=top_vs_global_align,
+                liq_cascade_flag=liq_cascade,
             )
         )
 

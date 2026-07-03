@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "validation" / "fib_gann_backtest"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
+import derivatives_context as dc  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import signal_runner as sr  # noqa: E402
 
@@ -212,8 +213,46 @@ def test_generate_signals_populates_per_factor_dump_fields():
         for value in (
             s.swing_quality, s.fib_gann_confluence, s.volume_confirmation, s.wick_rejection,
             s.structure_alignment, s.htf_alignment, s.regime_alignment, s.sma_trend_bias_alignment,
+            s.funding_contrarian_alignment, s.global_ls_contrarian_alignment, s.top_vs_global_alignment,
         ):
             assert 0.0 <= value <= 1.0
         assert s.fib_gann_confluence > 0.0  # the touch-trigger condition itself guarantees this
         assert s.wick_rejection == s.pivot.wick_rejection_score
         assert s.regime_alignment == s.structure_alignment  # see Signal's own docstring on why these match today
+        # no derivatives_records passed -- Fase 4 fields must stay at their neutral defaults
+        assert s.funding_contrarian_alignment == 0.5
+        assert s.global_ls_contrarian_alignment == 0.5
+        assert s.top_vs_global_alignment == 0.5
+        assert s.liq_cascade_flag == 0.0
+
+
+def test_generate_signals_wires_derivatives_context_when_records_supplied():
+    candles = noisy_zigzag()
+    base_date = candles[0].ts.date()
+    # Extreme funding_rate ramp over a long trailing window so every
+    # signal's own day sits near the top of its trailing percentile --
+    # deliberately far more days than the candle series covers, so every
+    # signal (whatever date it fires on) has a full window behind it.
+    records = [
+        dc.DailyDerivativesRecord(
+            date=base_date - datetime.timedelta(days=400 - i),
+            price_close=100.0 + i,
+            oi_close=1000.0 + i,
+            funding_rate=0.0001 * i,
+            global_ls_ratio=1.0,
+            top_ls_ratio=1.0,
+        )
+        for i in range(400)
+    ]
+    without = sr.generate_signals(candles)
+    with_derivatives = sr.generate_signals(candles, derivatives_records=records)
+    assert len(with_derivatives) == len(without)
+    for s in with_derivatives:
+        # funding_rate ramps monotonically up to "today" (the day before
+        # any signal date, all comfortably inside the synthetic ramp) --
+        # every signal's day sits near the top of the trailing window, so
+        # LONG signals (contrarian-bearish) should score low alignment.
+        if s.direction is fgt.TradeDirection.LONG:
+            assert s.funding_contrarian_alignment < 0.5
+        else:
+            assert s.funding_contrarian_alignment > 0.5
