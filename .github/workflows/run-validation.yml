@@ -1,0 +1,73 @@
+name: Run Validation (manual)
+
+# On-demand only -- this is an exploratory analysis run against real
+# production data, not a CI gate, so it's workflow_dispatch rather than a
+# push/pull_request trigger like ci.yml.
+#
+# Runs against a throwaway Neon branch, NOT the actual production
+# DATABASE_URL directly: reuses the same NEON_API_KEY/NEON_PROJECT_ID
+# secrets ci.yml's neon-preview-branch job already uses (no new secret
+# needed), branching from the primary "production" branch by default (same
+# as that job -- see docs/deployment-runbook.md for why "production" is the
+# Neon branch name, not "main"). data_loader.py only ever SELECTs, so this
+# would be safe against the real DATABASE_URL too, but a disposable branch
+# avoids ever needing the live production connection string as a GitHub
+# secret at all.
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: "Path to walk-forward config YAML, relative to repo root (default: the checked-in walk_forward_windows.yaml)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  run-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral Neon branch (copy-on-write snapshot of production)
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: validation-run-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages/backtest-core + packages/db (kinetiq_db) + pyyaml
+        run: pip install -e "packages/backtest-core[dev]" -e packages/db pyyaml
+
+      - name: Run validation against the ephemeral branch (real historical candles, read-only)
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: |
+          if [ -n "${{ inputs.config_path }}" ]; then
+            CONFIG_ARG="--config ${{ inputs.config_path }}"
+          else
+            CONFIG_ARG=""
+          fi
+          python apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/run_validation.py $CONFIG_ARG | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-${{ github.run_id }}
+          path: docs/validation-results/
+          if-no-files-found: warn
+
+      - name: Delete ephemeral Neon branch
+        if: always()
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: validation-run-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
