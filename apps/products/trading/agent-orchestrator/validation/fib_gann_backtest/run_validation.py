@@ -43,11 +43,19 @@ from kinetiq_backtest.windowing import generate_windows_by_calendar
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills", "strategy"))
 sys.path.insert(0, os.path.dirname(__file__))
 
-import data_loader  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import metrics  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
+
+# data_loader (and report, below) are imported lazily inside main(), not at
+# module level: data_loader pulls in kinetiq_db/sqlalchemy, a DB-coupled
+# dependency this module otherwise has none of, same principle
+# trade_simulator.py's own docstring states ("data_loader.py is a separate
+# DB-touching module, deliberately kept out of anything this file imports")
+# -- importing it eagerly here would force every test that imports this
+# module (including ones that never call main()) to have sqlalchemy
+# installed, which CI's `test` job deliberately does not.
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "configs", "walk_forward_windows.yaml")
 
@@ -135,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="preview windows without running the backtest or writing a report")
     parser.add_argument("--output-dir", default=os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "docs", "validation-results"))
     args = parser.parse_args(argv)
+
+    import data_loader  # deferred: see the module-level comment for why
 
     config = load_config(args.config)
     candles = data_loader.load_candles(config["venue"], config["symbol"], config["timeframe"], limit=config.get("candle_load_limit", 100000))
