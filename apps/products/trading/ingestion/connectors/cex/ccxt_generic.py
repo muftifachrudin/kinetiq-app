@@ -28,6 +28,7 @@ exchange or which API key is used).
 """
 
 import os
+from datetime import datetime, timezone
 
 import ccxt
 
@@ -41,7 +42,7 @@ DEFAULT_FUNDING_INTERVAL_HOURS = 8
 
 def make_exchange(ccxt_id: str, api_key_env: str | None, api_secret_env: str | None) -> ccxt.Exchange:
     exchange_class = getattr(ccxt, ccxt_id)
-    config = {}
+    config = {"enableRateLimit": True}  # ccxt self-throttles to the exchange's own rateLimit (ms) before every call -- was unset, meaning nothing protected a backfill loop from tripping 429s
     if api_key_env and api_secret_env:
         api_key = os.environ.get(api_key_env)
         api_secret = os.environ.get(api_secret_env)
@@ -82,9 +83,7 @@ def fetch_funding_rate(exchange: ccxt.Exchange, venue_symbol: str) -> dict:
     }
 
 
-def fetch_ohlcv(exchange: ccxt.Exchange, venue_symbol: str, timeframe: str, limit: int) -> list[dict]:
-    """Returns a list of dicts, one per candle, in the shape ingest.py expects."""
-    candles = exchange.fetch_ohlcv(venue_symbol, timeframe=timeframe, limit=limit)
+def _candle_dicts(candles: list) -> list[dict]:
     return [
         {
             "timestamp_ms": ts_ms,
@@ -96,3 +95,48 @@ def fetch_ohlcv(exchange: ccxt.Exchange, venue_symbol: str, timeframe: str, limi
         }
         for ts_ms, open_, high, low, close, volume in candles
     ]
+
+
+def fetch_ohlcv(exchange: ccxt.Exchange, venue_symbol: str, timeframe: str, limit: int, since_ms: int | None = None) -> list[dict]:
+    """Returns a list of dicts, one per candle, in the shape ingest.py expects.
+    since_ms=None (the default, used by the existing latest-N live path)
+    means "most recent `limit` candles" -- ccxt's own default behavior when
+    `since` isn't passed."""
+    candles = exchange.fetch_ohlcv(venue_symbol, timeframe=timeframe, limit=limit, since=since_ms)
+    return _candle_dicts(candles)
+
+
+def fetch_ohlcv_range(
+    exchange: ccxt.Exchange,
+    venue_symbol: str,
+    timeframe: str,
+    since_ms: int,
+    until_ms: int | None = None,
+    page_limit: int = 1000,
+) -> list[dict]:
+    """Pages forward from since_ms to until_ms (default: now) collecting
+    every candle in between -- ingest.py's existing fetch_ohlcv() only ever
+    asks for "the latest N candles," which can't backfill history at all.
+    Advances by the timeframe's own duration (ccxt.Exchange.parse_timeframe,
+    reused rather than reimplemented) after each page so pages never overlap
+    and never skip a candle. Stops when a page comes back empty (exchange
+    has no more candles, e.g. before the symbol was listed) or once a page's
+    last candle reaches until_ms -- whichever happens first. Rate limiting
+    is handled by make_exchange()'s enableRateLimit=True, not by an explicit
+    sleep here; ccxt paces every call to exchange.fetch_ohlcv() internally,
+    which is why this can page through months of history in seconds without
+    tripping a 429 while still being about as fast as the exchange allows."""
+    if until_ms is None:
+        until_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
+
+    all_candles: list[dict] = []
+    cursor_ms = since_ms
+    while cursor_ms <= until_ms:
+        page = exchange.fetch_ohlcv(venue_symbol, timeframe=timeframe, since=cursor_ms, limit=page_limit)
+        if not page:
+            break
+        all_candles.extend(_candle_dicts(page))
+        cursor_ms = page[-1][0] + timeframe_ms
+
+    return [c for c in all_candles if c["timestamp_ms"] <= until_ms]

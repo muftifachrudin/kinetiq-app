@@ -4,3 +4,10 @@ sqlalchemy>=2.0
 psycopg[binary]>=3.1
 pyjwt[crypto]>=2.9
 alembic>=1.13
+# ccxt/requests: apps/products/trading/ingestion (api-gateway doesn't use
+# these, but Railpack's zero-config Python detection reads ONE
+# requirements.txt at repo root for every Root-Directory=repo-root service
+# -- see railway.ingestion-worker.toml's header comment for why a second
+# per-service requirements file isn't a supported pattern here.
+ccxt>=4.4
+requests>=2.31

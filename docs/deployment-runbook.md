@@ -216,6 +216,39 @@ mechanics only.
    dedicated Railpack config or its own repo-root marker file scheme) --
    don't copy this pattern blindly for service #2.
 
+8. **The "different solution" gotcha #7 flagged for a 2nd Python service
+   turned out to be: merge its deps into the SAME repo-root `requirements.txt`,
+   don't invent a second one.** Concretely hit adding
+   `apps/products/trading/ingestion/worker.py` as its own Railway service
+   (3 Juli 2026): it needs `packages/db` too, so per gotcha #7 its Root
+   Directory must *also* be repo root -- but Railpack's zero-config Python
+   detection only ever reads ONE `requirements.txt`, at repo root, per
+   Root-Directory-at-repo-root service. Two services both rooted at repo
+   root can't each bring their own differently-named requirements file
+   without a custom `[build] buildCommand` (which reopens gotcha #3's
+   "installs in the build log, never reaches the runtime image" failure
+   class -- not worth risking for something this avoidable). **Fix**: added
+   `worker.py`'s only real extra deps (`ccxt`, `requests` -- `sqlalchemy`/
+   `psycopg[binary]` were already there for api-gateway) straight into the
+   existing root `requirements.txt`, so both services install from the one
+   file Railpack already detects natively. The service's OWN `railway.<name>.toml`
+   (e.g. `railway.ingestion-worker.toml`) still needs an explicit
+   Config-as-code path set in that service's dashboard Settings
+   (Railway only auto-discovers a file literally named `railway.toml`) --
+   that part of gotcha #2 still applies, only the requirements-file part
+   needed a different answer than "give it its own file."
+   **Also applies to worker-type (non-web) services**: no `PORT`/
+   `healthcheckPath` is relevant since there's no HTTP server to probe --
+   Railway supervises the process itself; pick "worker"/"background" as the
+   service type in the dashboard if it asks, and set `restartPolicyType =
+   "always"` so a crash gets retried rather than left dead.
+   **Not yet verified against the real platform** (unlike gotchas #1-#7,
+   which all have real Railway deploys behind them) -- this was written and
+   locally simulated (fresh venv + the service's exact `startCommand`) but
+   this sandbox cannot actually create/deploy a second Railway service to
+   observe it. Treat the founder's first real deploy attempt as the actual
+   test, same discipline as every other entry in this file.
+
 ## Row-Level Security (RLS) gotchas (`packages/db/migrations/versions/0002_add_rls_policies.py`)
 
 1. **`FORCE ROW LEVEL SECURITY` is required, not optional, given today's

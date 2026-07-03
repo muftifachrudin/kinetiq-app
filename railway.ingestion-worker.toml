@@ -1,0 +1,69 @@
+# Config for the OHLCV/funding-rate ingestion worker
+# (apps/products/trading/ingestion/worker.py). This is a SEPARATE Railway
+# service from api-gateway (railway.toml) -- Railway only auto-discovers a
+# file literally named "railway.toml" at repo root, so this service's
+# dashboard Settings -> Config-as-code path must be set explicitly to
+# "railway.ingestion-worker.toml" (the exact filename of this file), or
+# Railway will silently fall back to no config-as-code at all for it.
+#
+# REQUIRED Railway dashboard settings for this service:
+# - Settings -> Source -> Root Directory: EMPTY (repo root) -- same reason
+#   as railway.toml's own header comment: Root Directory scopes the ENTIRE
+#   build+runtime context, and worker.py needs the sibling packages/db
+#   (for kinetiq_db) exactly like api-gateway needs it. A subfolder Root
+#   Directory can never reach it, proven the hard way for api-gateway
+#   already -- don't re-learn that lesson for this service too.
+# - Settings -> Config-as-code: "railway.ingestion-worker.toml"
+# - This is a background WORKER, not a web service -- do not set a PORT
+#   env var or expect a healthcheckPath to apply; Railway supervises the
+#   process itself (restarts it if it exits), there's no HTTP endpoint to
+#   probe. If Railway's UI insists on a "type" for the service, pick
+#   worker/background rather than web.
+# - Env vars needed: DATABASE_URL (same Neon production database api-gateway
+#   uses), PROXY_URL (see connectors/cex/ccxt_generic.py's module docstring
+#   -- Binance/Bybit block cloud/datacenter IPs including Railway's; ccxt's
+#   fetch calls need this to succeed against real production data, not the
+#   dev-sandbox-only geoblock workaround used to test this feature).
+#   Optionally BINANCE_API_KEY/BINANCE_API_SECRET/BYBIT_API_KEY/BYBIT_API_SECRET
+#   (see ingest.py's VENUES dict) for a higher per-key rate limit -- must be
+#   READ-ONLY keys, this process never trades.
+#
+# Dependencies: installs from the SAME repo-root requirements.txt as
+# api-gateway (now includes ccxt/requests, see that file's comment) --
+# Railpack's zero-config Python detection only reads one requirements.txt
+# per Root-Directory=repo-root service, and a custom [build] buildCommand
+# pointing at a different file re-opens the exact "install succeeds in the
+# build log but never reaches the runtime image" failure class documented
+# in railway.toml (failure #1/#2) for a plain requirements.txt project --
+# untested and not worth risking here when the working pattern (one shared
+# file) is available.
+#
+# NOT YET VERIFIED against the real Railway platform (unlike railway.toml's
+# api-gateway config, which has multiple real deploys behind it) -- this
+# sandbox has no way to actually deploy/observe a second Railway service.
+# The founder needs to add this service in the Railway dashboard and report
+# back what happens; treat the first real deploy attempt as the actual test,
+# same as every other Railway config change in this repo's history
+# (docs/deployment-runbook.md).
+
+[deploy]
+# Same "python -m X" rationale as railway.toml: Railpack's mise-managed
+# Python doesn't reliably put console-script shims on the deploy stage's
+# PATH, but the `python` binary itself always resolves.
+#
+# --venues is binance+bybit ONLY here, not hyperliquid: worker.py (like
+# ingest.py's own CLI, see its --symbols help text) applies ONE --symbols
+# list across every --venues entry in a single invocation, and hyperliquid's
+# perps are USDC-quoted ("BTC/USDC:USDC") while binance/bybit's are
+# USDT-quoted ("BTC/USDT:USDT") -- mixing them here would ask hyperliquid
+# for a symbol it doesn't have. If hyperliquid backfill/polling is wanted
+# too, run it as its own separate Railway service with its own
+# --symbols BTC/USDC:USDC ETH/USDC:USDC, not bolted onto this one.
+#
+# --backfill-since-days default (365, see worker.py) is NOT overridden here
+# -- it's cheap to re-run on every restart (ingest.needs_backfill() skips
+# ranges already covered), so there's no reason to hardcode a narrower value
+# just because this is a "restart", the whole design is meant to make that
+# distinction not matter.
+startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT"
+restartPolicyType = "always"

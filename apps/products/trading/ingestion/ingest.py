@@ -6,9 +6,10 @@ until then.
 """
 
 import argparse
+import dataclasses
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "connectors", "cex"))
 
@@ -186,9 +187,108 @@ def ingest_ohlcv(
     return source
 
 
-def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) -> None:
-    db = get_session()
+def earliest_ohlcv_ts(db: Session, instrument: Instrument, timeframe: str) -> datetime | None:
+    row = (
+        db.query(Ohlcv.ts)
+        .filter_by(instrument_id=instrument.id, timeframe=timeframe)
+        .order_by(Ohlcv.ts.asc())
+        .first()
+    )
+    return row.ts if row else None
 
+
+def needs_backfill(existing_earliest: datetime | None, requested_since: datetime, tolerance: timedelta = timedelta(0)) -> bool:
+    """Pure decision so a worker restart is cheap: once ohlcv already has a
+    candle at or before requested_since (within `tolerance`) for this
+    (instrument, timeframe), the range is considered covered and
+    backfill_if_needed() skips re-paging it entirely.
+
+    `tolerance` matters because candles land on timeframe-aligned
+    boundaries, not on the arbitrary wall-clock instant requested_since
+    happens to be -- a real bug caught via manual end-to-end testing
+    against a local Postgres + real Hyperliquid data: requesting
+    "5 days ago" at 07:14:27 backfills candles starting at the next 1h
+    boundary (08:00:00), which is LATER than 07:14:27 even though nothing
+    was actually missed (there's no 1h candle between 07:14 and 08:00 to
+    have fetched anyway). Without a tolerance, every re-run re-triggered a
+    full backfill instead of skipping -- the exact "cheap to re-run"
+    property this function exists to guarantee. backfill_if_needed() passes
+    one timeframe's duration as the tolerance.
+
+    Still does NOT detect gaps in the middle of an otherwise-covered range
+    (e.g. a partial backfill interrupted mid-run, then resumed with an
+    earlier --backfill-since than the interrupted attempt used) --
+    documented simplification, not a hidden one: a resumed backfill with the
+    SAME or a LATER --backfill-since than a prior complete run is safe and
+    cheap; an earlier one after a prior run was itself incomplete is not
+    guaranteed gap-free."""
+    if existing_earliest is None:
+        return True
+    return existing_earliest > requested_since + tolerance
+
+
+def backfill_ohlcv(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, since_ms: int, until_ms: int | None = None
+) -> int:
+    """Pages the full [since_ms, until_ms] range via ccxt_generic.fetch_ohlcv_range
+    and merges every candle -- same idempotent db.merge()-per-row + single
+    commit pattern as ingest_ohlcv(), just fed a much longer candle list.
+    CCXT-only, no native_fallback path: a deep historical page-through isn't
+    something native_fallback.py supports today (see its own module docstring
+    -- it only ever fetches the latest N), and this is a one-time/occasional
+    operation rather than something that needs the same failure resilience as
+    the live polling path. Returns the number of candles written, for the
+    caller to log."""
+    candles = ccxt_generic.fetch_ohlcv_range(exchange, venue_symbol, timeframe, since_ms, until_ms)
+    for candle in candles:
+        db.merge(
+            Ohlcv(
+                instrument_id=instrument.id,
+                timeframe=timeframe,
+                ts=_ts(candle["timestamp_ms"]),
+                open=candle["open"],
+                high=candle["high"],
+                low=candle["low"],
+                close=candle["close"],
+                volume=candle["volume"],
+            )
+        )
+    db.commit()
+    return len(candles)
+
+
+def backfill_if_needed(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, since: datetime
+) -> int | None:
+    """Returns the candle count written, or None if skipped because the
+    range's already covered (see needs_backfill()). tolerance is one
+    timeframe's duration -- candles land on timeframe-aligned boundaries,
+    not on `since`'s exact wall-clock instant (see needs_backfill()'s
+    docstring)."""
+    tolerance = timedelta(seconds=exchange.parse_timeframe(timeframe))
+    if not needs_backfill(earliest_ohlcv_ts(db, instrument, timeframe), since, tolerance):
+        return None
+    since_ms = int(since.timestamp() * 1000)
+    return backfill_ohlcv(db, exchange, instrument, venue_symbol, timeframe, since_ms)
+
+
+@dataclasses.dataclass
+class VenueContext:
+    venue_name: str
+    venue: Venue
+    exchange: object
+    instruments: list[tuple[str, Instrument]]  # (venue_symbol, Instrument)
+
+
+def setup_venues(db: Session, venue_names: list[str], symbols: list[str]) -> list[VenueContext]:
+    """One-time-per-process setup: creates each exchange + load_markets()
+    (a real network round-trip) and upserts venue/instrument rows. Split out
+    from run() so worker.py's poll loop can build this ONCE and reuse it
+    across many cycles instead of re-hitting load_markets() every single
+    poll -- that's the difference between "efficient" polling and
+    accidentally re-paying an expensive setup cost every few minutes
+    forever."""
+    contexts = []
     for venue_name in venue_names:
         cfg = VENUES[venue_name]
         exchange = ccxt_generic.make_exchange(cfg["ccxt_id"], cfg["api_key_env"], cfg["api_secret_env"])
@@ -196,33 +296,67 @@ def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) 
         venue = upsert_venue(db, venue_name, cfg["venue_type"])
         db.commit()
 
+        instruments = []
         for venue_symbol in symbols:
             market = exchange.market(venue_symbol)
             instrument = upsert_instrument(db, venue, market)
             db.commit()
+            instruments.append((venue_symbol, instrument))
 
-            fr_failures = get_consecutive_failures(db, venue, "funding_rate")
-            fr_fallback = get_fallback(venue_name, "funding_rate", fr_failures)
+        contexts.append(VenueContext(venue_name=venue_name, venue=venue, exchange=exchange, instruments=instruments))
+    return contexts
+
+
+def poll_once(db: Session, contexts: list[VenueContext], timeframe: str, limit: int) -> None:
+    """The latest-N live path: one funding_rate + one ohlcv fetch per
+    instrument, same fallback/health-tracking behavior run() always had."""
+    for ctx in contexts:
+        for venue_symbol, instrument in ctx.instruments:
+            fr_failures = get_consecutive_failures(db, ctx.venue, "funding_rate")
+            fr_fallback = get_fallback(ctx.venue_name, "funding_rate", fr_failures)
             try:
-                source = ingest_funding_rate(db, exchange, instrument, venue_symbol, fr_fallback)
-                record_health(db, venue, "funding_rate", success=True)
-                print(f"[{venue_name}:{venue_symbol}] funding_rate OK ({source})")
+                source = ingest_funding_rate(db, ctx.exchange, instrument, venue_symbol, fr_fallback)
+                record_health(db, ctx.venue, "funding_rate", success=True)
+                print(f"[{ctx.venue_name}:{venue_symbol}] funding_rate OK ({source})")
             except Exception as exc:
                 db.rollback()
-                record_health(db, venue, "funding_rate", success=False)
-                print(f"[{venue_name}:{venue_symbol}] funding_rate FAILED: {exc}")
+                record_health(db, ctx.venue, "funding_rate", success=False)
+                print(f"[{ctx.venue_name}:{venue_symbol}] funding_rate FAILED: {exc}")
 
-            ohlcv_failures = get_consecutive_failures(db, venue, "ohlcv")
-            ohlcv_fallback = get_fallback(venue_name, "ohlcv", ohlcv_failures)
+            ohlcv_failures = get_consecutive_failures(db, ctx.venue, "ohlcv")
+            ohlcv_fallback = get_fallback(ctx.venue_name, "ohlcv", ohlcv_failures)
             try:
-                source = ingest_ohlcv(db, exchange, instrument, venue_symbol, timeframe, limit, ohlcv_fallback)
-                record_health(db, venue, "ohlcv", success=True)
-                print(f"[{venue_name}:{venue_symbol}] ohlcv OK ({source})")
+                source = ingest_ohlcv(db, ctx.exchange, instrument, venue_symbol, timeframe, limit, ohlcv_fallback)
+                record_health(db, ctx.venue, "ohlcv", success=True)
+                print(f"[{ctx.venue_name}:{venue_symbol}] ohlcv OK ({source})")
             except Exception as exc:
                 db.rollback()
-                record_health(db, venue, "ohlcv", success=False)
-                print(f"[{venue_name}:{venue_symbol}] ohlcv FAILED: {exc}")
+                record_health(db, ctx.venue, "ohlcv", success=False)
+                print(f"[{ctx.venue_name}:{venue_symbol}] ohlcv FAILED: {exc}")
 
+
+def backfill_run(db: Session, contexts: list[VenueContext], timeframe: str, since: datetime) -> None:
+    """CCXT-only (see backfill_ohlcv()) -- no fallback/health-tracking dance,
+    just page each instrument's history and log what happened. Meant to run
+    once (or occasionally, cheaply thanks to needs_backfill()'s skip), not
+    on every poll cycle."""
+    for ctx in contexts:
+        for venue_symbol, instrument in ctx.instruments:
+            try:
+                written = backfill_if_needed(db, ctx.exchange, instrument, venue_symbol, timeframe, since)
+                if written is None:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] backfill SKIPPED (already covers {since.isoformat()})")
+                else:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] backfill OK ({written} candles since {since.isoformat()})")
+            except Exception as exc:
+                db.rollback()
+                print(f"[{ctx.venue_name}:{venue_symbol}] backfill FAILED: {exc}")
+
+
+def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) -> None:
+    db = get_session()
+    contexts = setup_venues(db, venue_names, symbols)
+    poll_once(db, contexts, timeframe, limit)
     db.close()
 
 
@@ -242,5 +376,23 @@ if __name__ == "__main__":
     )
     parser.add_argument("--timeframe", default="1h")
     parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument(
+        "--backfill-since-days",
+        type=int,
+        default=None,
+        help=(
+            "If given, page through and merge every candle from N days ago to now "
+            "(see backfill_ohlcv()) BEFORE the normal latest-N poll below -- skipped "
+            "automatically per (venue, symbol) if ohlcv already covers that range "
+            "(needs_backfill()), so re-running this is cheap."
+        ),
+    )
     args = parser.parse_args()
-    run(args.venues, args.symbols, args.timeframe, args.limit)
+
+    db = get_session()
+    contexts = setup_venues(db, args.venues, args.symbols)
+    if args.backfill_since_days is not None:
+        since = datetime.now(timezone.utc) - timedelta(days=args.backfill_since_days)
+        backfill_run(db, contexts, args.timeframe, since)
+    poll_once(db, contexts, args.timeframe, args.limit)
+    db.close()
