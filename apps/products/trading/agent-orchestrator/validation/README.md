@@ -56,7 +56,26 @@ separate from `graphs/` for this reason, no LangGraph coupling here).
   deliberately-not-ML-learned hard rule, not yet implemented), and why
   `initial_margin` is a fraction-of-notional here rather than the
   dollar figure the brief's pseudocode shows.
-- **`metrics.py`, `report.py`** -- NOT built yet.
+- **`metrics.py`** -- done. Computes PF/Sharpe/max-drawdown from
+  `SimulatedTrade` lists, funding-aware per design brief Section 6: every
+  metric is reported BOTH gross (raw price PnL) and net (after funding
+  cost) side by side, a big gap between them is itself the diagnostic the
+  brief asks for. Sharpe is annualized from each trade's actual holding
+  duration (`signal_ts` -> `label.exit_ts`), not an assumed 252 trading
+  days -- crypto perps trade 24/7 with non-uniform holding periods.
+  Censored trades are excluded from every calculation (same
+  right-censoring discipline as the rest of this session).
+  `compute_metrics_by_regime()` supports the brief's regime-segmented
+  breakdown via a pluggable `regime_of` callable, but this is
+  architecturally-supported-not-yet-verified -- `market_regime.py` (PRD
+  B.6) doesn't exist, so there's no real regime label to group by yet.
+  13 new tests (185 total), ruff clean. Verified against the 3 real
+  BTC/USDT signals: PF net 1.16, Sharpe net 1.80 (annualized from an
+  actual ~8.3h average holding period), max drawdown 1.47% -- correct
+  arithmetic on real data, but n=3 is nowhere near enough for these
+  numbers to mean anything statistically; see Section 16 of the
+  validation brief.
+- **`report.py`** -- NOT built yet.
 - **`configs/walk_forward_windows.yaml`, `run_validation.py`** -- NOT built
   yet. `run_validation.py` will wire `data_loader` -> `signal_runner` ->
   `trade_simulator` across `packages/backtest-core`'s walk-forward windows.
