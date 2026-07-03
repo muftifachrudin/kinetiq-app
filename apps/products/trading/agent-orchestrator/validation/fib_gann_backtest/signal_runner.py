@@ -26,14 +26,20 @@ early touch that fails the R:R gate or entry validity doesn't block a
 later, better touch of a different line from firing -- but a pivot that
 has already produced one signal won't fire again.
 
-Deliberately single-timeframe for this round -- confluence_across_
-timeframes() (weekly/daily/4h/1h, design brief Section 2e) needs aligned
-candle series at multiple timeframes simultaneously, which is real
-additional complexity (calendar alignment across timeframes, not just
-more bars) saved for a later round once single-timeframe wiring is
-verified end-to-end. Every score/confidence value here is on a single
-timeframe's own 0-1 scale, not yet the final 0-100 cross-timeframe score
-PRD B.6 describes.
+Deliberately single-timeframe for entry-signal generation itself --
+confluence_across_timeframes() (weekly/daily/4h/1h, design brief Section
+2e) needs aligned candle series at multiple timeframes simultaneously,
+which is real additional complexity (calendar alignment across
+timeframes, not just more bars) saved for a later round once
+single-timeframe wiring is verified end-to-end. Every score/confidence
+value here is on a single timeframe's own 0-1 scale, not yet the final
+0-100 cross-timeframe score PRD B.6 describes.
+
+Fase 2 (docs/sonnet5-implementation-roadmap.md) DOES now bring in a
+higher-timeframe factor, but as a score contributor plugged into
+score_confluence()'s htf_alignment slot (htf_bias.py), not as a second
+generate_signals() entry timeframe -- the entry trigger itself stays
+1h-only, only the bias check resamples 1h candles up to Daily/4h.
 
 Performance note: detect_swings() recomputes from scratch on every bar
 (O(n) per call), so this walk is O(n^2) overall -- fine for the hundreds
@@ -50,6 +56,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills", "strategy"))
 
 import fib_gann_timing as fgt  # noqa: E402
+import htf_bias as hb  # noqa: E402
 import market_structure as ms  # noqa: E402
 
 
@@ -134,13 +141,28 @@ def generate_signals(
         direction = fgt.trade_direction_from_pivot(pivot)
         structure_score = ms.structure_alignment_score(structure_event, direction)
 
+        # candles[: i + 1], not the full list, here too -- resample_candles()
+        # itself has no lookahead (closed-bucket-only), but feeding it bars
+        # beyond `i` would let a partially-formed *current* HTF bucket see
+        # 1h candles from later in the backtest than this signal is allowed
+        # to know about.
+        htf_candles = candles[: i + 1]
+        daily_bias = hb.compute_bias(htf_candles, "1d", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
+        h4_bias = hb.compute_bias(htf_candles, "4h", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
+        htf_score = hb.htf_alignment_score(direction, {"1d": daily_bias, "4h": h4_bias})
+
         # candles[: i + 1], not the full list: swing_quality()'s recency
         # component divides by len(candles) -- passing bars beyond `i`
         # would understate recency using data not yet known at this point
         # in the walk, a lookahead bug hiding inside a normalization, not
         # a raw price/time value.
         confidence = fgt.score_confluence(
-            pivot, candles[: i + 1], fib_confluence=fib_gann_conf, regime_alignment=structure_score, weights=confluence_weights
+            pivot,
+            candles[: i + 1],
+            fib_confluence=fib_gann_conf,
+            regime_alignment=structure_score,
+            htf_alignment=htf_score,
+            weights=confluence_weights,
         )
 
         entry_price = reference_price

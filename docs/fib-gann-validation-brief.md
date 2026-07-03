@@ -804,3 +804,37 @@ tidak pernah benar-benar diuji — endpoint ini terbukti sanggup menjalankan
 transaksi multi-statement besar langsung dari sandbox tanpa perlu Neon SQL
 Editor / paste manual founder sama sekali. Fase 0a sekarang beres, kerjaan
 agreement-rate/shadow-pair bisa mulai dari data ini.
+
+## 24. `skills/strategy/htf_bias.py` (Fase 2 roadmap, F2/F9) — DIIMPLEMENTASI 3 Juli 2026
+
+Bagian teori founder soal bias multi-timeframe (bag. 2e: Weekly>Daily>4h>1h)
+yang belum pernah diuji sama sekali sebelum ini. `resample_candles()` agregasi
+1h→4h/1d kalender UTC, closed-bucket-only (bucket yang belum tutup TIDAK
+ikut — dicek dari candle terakhir bucket itu sendiri, bukan hitung
+expected-count, biar toleran thd input yang berhenti di tengah bucket).
+`compute_bias()` REUSE `market_structure.trend_bias()` di atas swing hasil
+resample — bukan detektor tren baru, satu sumber kebenaran sama pola
+`market_structure.py` sendiri. `htf_alignment_score()` — faktor skor (BUKAN
+gate) 0-1, renormalize timeframe yang hadir mirip
+`confluence_across_timeframes()`, 0.15 (bukan 0) kalau berlawanan arah.
+`sma_trend_bias()` proxy close-vs-SMA(200) sengaja dibiarkan TERPISAH, jadi
+kandidat independen utk fitting Fase 3 (bukan di-blend duluan) — sesuai
+temuan F9 deep-dive bhw SMA-alignment yang tervalidasi kausal, bukan
+trend_bias berbasis swing per se.
+
+`ConfluenceWeights` dapat slot baru `htf_alignment=0.10` (0.05 diambil dari
+`swing_quality`), `score_confluence()` dapat parameter `htf_alignment` (default
+neutral 1.0 sama pola `regime_alignment`), `signal_runner.generate_signals()`
+hitung Daily+4h bias tiap bar dari `candles[:i+1]` (anti-lookahead) dan wire
+sebagai slot terpisah dari `regime_alignment` (structure BOS/CHoCH ≠ HTF
+trend, dua sinyal berbeda, tidak dicampur). 21 test baru, 330 test total
+lulus, `ruff check` bersih.
+
+**Diverifikasi thd data real** (BTC/USDT 1h Binance, full 1 tahun): decline
+10-hari tertajam di seluruh data (28.8%, berakhir 2026-02-05) correctly
+teridentifikasi `DOWNTREND` di Daily DAN 4h — `htf_alignment_score` utk
+sinyal SHORT di titik itu 1.000 (aligned), LONG 0.150 (opposed), persis
+sesuai ekspektasi. Funnel diagnostic tidak berubah: 6 sinyal dari fixture
+`noisy_zigzag()` (seed=42) tetap 6 sebelum/sesudah — `htf_alignment` cuma
+memodulasi nilai confidence, tidak pernah menggagalkan sinyal. Detail
+implementasi lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 2.

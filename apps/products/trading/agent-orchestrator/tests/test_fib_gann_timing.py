@@ -440,8 +440,17 @@ def test_score_confluence_defaults_regime_alignment_to_neutral():
         + weights.regime_alignment * 1.0  # neutral default
         + weights.volume_confirmation * vol_conf
         + weights.wick_rejection * 0.7
+        + weights.htf_alignment * 1.0  # neutral default
     )
     assert score == pytest.approx(expected)
+
+
+def test_score_confluence_defaults_htf_alignment_to_neutral():
+    candles = [mk(i, 100, 101, 99, 100) for i in range(25)]
+    swing = fgt.SwingPoint(index=20, ts=candles[20].ts, price=100, direction=fgt.SwingDirection.LOW, wick_rejection_score=0.7)
+    with_explicit_neutral = fgt.score_confluence(swing, candles, fib_confluence=0.8, regime_alignment=0.6, htf_alignment=1.0)
+    with_default = fgt.score_confluence(swing, candles, fib_confluence=0.8, regime_alignment=0.6, htf_alignment=None)
+    assert with_default == pytest.approx(with_explicit_neutral)
 
 
 # --- trade_direction_from_pivot / compute_stop_loss ---
