@@ -389,6 +389,55 @@ report (berapa % sinyal punya fitur derivatives tersedia H-1), dan
 kontribusi fitur terlihat di koefisien fitting F3 (boleh nol — L1 yang
 memutuskan).
 
+**Status: SELESAI (3 Juli 2026, hari yg sama).** `skills/strategy/
+derivatives_context.py` — pure function, no DB/HTTP, graduasi dari
+`validation/deep_dive_2026_07/coinglass_pull.py`+`cg_analysis.py` (scratch
+analysis deep-dive) ke modul teruji, pola yang sama dengan Fase 1-3.
+`compute_derivatives_context()` menghitung `funding_percentile_365d`,
+`global_ls_percentile_365d`, `top_vs_global_divergence`, `liq_cascade_flag`,
+`fuel_quadrant` dari trailing window (≤365 hari) SEBELUM `target_date`,
+menolak membaca record `target_date` itu sendiri (no-lookahead ditegakkan
+struktural, bukan cuma didokumentasikan). `funding_contrarian_alignment()`/
+`global_ls_contrarian_alignment()`/`top_vs_global_alignment()` mengubah
+ketiga fitur pertama jadi skor 0-1 relatif ke arah sinyal (fade-the-crowd:
+funding/GLS percentile tinggi → mendukung SHORT, divergence top-vs-global
+positif → mendukung LONG) — `liq_cascade_flag` SENGAJA TIDAK diberi arah
+(tidak ada teori arah yg established di codebase ini utknya, temuan
+deep-dive malah bilang "weak H+1, zero effect on trade outcomes" —
+memaksakan tanda arah di sini sama saja mengarang klaim). `fuel_quadrant`
+TIDAK PERNAH masuk `Signal`/fitting sama sekali — murni utk konsumsi
+`position_sizing.py` (`high_vol_flag`) via caller, persis pemisahan yg
+diminta roadmap.
+
+Wiring: `signal_runner.Signal` dapat 4 field baru (`funding_contrarian_
+alignment`, `global_ls_contrarian_alignment`, `top_vs_global_alignment`,
+`liq_cascade_flag`), semua default netral (additive, tidak mengubah call
+site lama). `generate_signals()` dapat parameter opsional baru
+`derivatives_records` — kalau tidak disuplai (default), field-field ini
+tetap netral, fully backward compatible. `fit_weights.py` dapat
+`DERIVATIVES_FEATURE_NAMES` (FEATURE_NAMES + 4 kolom baru) dan
+`WindowFitResult.binary_with_derivatives_candidate` — fit informational
+terpisah (persis pola `binary_with_sma_candidate` Fase 2), TIDAK memengaruhi
+`evaluate_adoption()`.
+
+37 test baru (`test_derivatives_context.py` 25, plus tambahan di
+`test_signal_runner.py`/`test_fit_weights.py`), 373 test total lulus, ruff
+clean. **Diverifikasi thd data CoinGlass BTC real** (400 hari harian ditarik
+langsung dari sandbox via endpoint yg sama dgn `coinglass_pull.py`, ~2.5s
+jeda per call, semua 6 endpoint `code=0`): `target_date`=2026-07-03,
+`funding_percentile_365d=0.936` (dekat ambang p90 yg disebut roadmap),
+`global_ls_percentile_365d=0.648`, `top_vs_global_divergence=-0.71`,
+`fuel_quadrant=UP_OI_UP`, `liq_cascade_flag=False` — alignment score
+SHORT>LONG utk funding & GLS (0.936/0.648 vs 0.064/0.352), konsisten
+dgn arah teori contrarian. **Join-coverage**: 11/11 (100%) hari candle
+BTC/USDT 1h production (250 candle terakhir) punya ≥1 record derivatives
+H-1. `generate_signals()` end-to-end dgn `derivatives_records` asli
+menghasilkan 18 sinyal real dgn field derivatives terisi penuh (bukan
+default netral) — mis. sinyal SHORT jam 2026-06-25T11:00Z dpt
+`funding_contrarian=0.168`, `global_ls_contrarian=0.762`,
+`top_vs_global=1.0`, `liq_cascade_flag=1.0` (real cascade event, 25-26
+Juni 2026 confirmed via `liq_cascade_flag=True` beberapa jam berturut).
+
 ## Fase 5 — R:R band & SL anti-hunt (F3/F4 deep-dive; eksperimen terkontrol, bukan tuning diam-diam)
 
 - Harness A/B di `validation/`: konfigurasi `min_rr_threshold` 1.5 vs 2.0
