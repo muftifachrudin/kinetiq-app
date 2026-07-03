@@ -575,3 +575,29 @@ Rata² gerak harga hari² yg OI-nya SEARAH sama harga (fuel confirmed, n=39): **
 - **2 dari 2 sampel real yg kena SL menghasilkan KEDUA outcome yg berbeda** (bukan cuma 1 jenis doang spt yg kejadian di verifikasi sintetis `duration_prediction.py` sebelumnya yg semua TIMEOUT) — sampel kecil (n=2) jelas belum cukup buat `predict_post_stop_outcome()` beneran dipakai produksi, tapi cukup buat bukti korektnes kode di kedua cabang outcome DAN cabang `structure_confirmed`, dari data real bukan dikarang.
 
 **Belum dikerjakan**: fitting `predict_post_stop_outcome()` ke bobot confidence scoring (Part #2, sama pola semua skill lain sesi ini — nunggu volume `trade_annotation` yg cukup), bucket per-confidence, dan wiring ke `signal_runner.py`/`score_confluence()` (belum ada keputusan desain gimana faktor ini masuk formula, sama kayak `level_strength.py`).
+
+## 16. `metrics.py` — DIIMPLEMENTASI 3 Juli 2026 (gap bag. 6, "Metrics — funding-aware")
+
+> **Verifikasi Claude Code**: `validation/fib_gann_backtest/metrics.py`. Mengisi gap terakhir yg tersisa dari bag. 6 (validation harness): PF/Sharpe/max-drawdown dari `SimulatedTrade`, sesuai spek "Metrics — funding-aware (WAJIB, bukan opsional)" yg udah dicatat sblm ini di dokumen ini.
+
+**Desain**:
+- Setiap metrik dihitung DUA KALI — gross (`label.return_pct`, raw price PnL) dan net (`net_return_pct`, stlh funding) — dilaporkan berdampingan, sesuai brief eksplisit ("gap besar = strategi terlalu bergantung raw momentum yg dimakan biaya holding").
+- **Sharpe di-annualize dari durasi holding AKTUAL** (`label.exit_ts - signal_ts`, waktu kalender real per trade) — BUKAN asumsi 252 trading days, sesuai spek brief persis ("crypto perp 24/7 dgn holding period tidak seragam"). `trades_per_year = 365.25 hari / rata² durasi holding`.
+- `_profit_factor()`: `None` (bukan infinity) kalau gak ada losing trade sama sekali — undefined, bukan angka besar yg bisa disalahartikan.
+- `_max_drawdown_pct()`: equity curve compounding (`equity *= 1+return`), butuh urutan KRONOLOGIS — `compute_metrics()` nge-sort by `signal_ts` internal, gak bergantung urutan input caller.
+- **Trade `censored` DIKECUALIKAN dari semua perhitungan** (disiplin right-censoring yg sama persis kayak seluruh modul lain sesi ini) — `censored_count` dilaporkan terpisah biar transparan, bukan hilang diam-diam.
+- `compute_metrics_by_regime(trades, regime_of)`: breakdown per regime (RISK_ON/OFF/NEUTRAL/FREEZE) yg diminta brief — **arsitekturnya udah ada via callable `regime_of` yg pluggable, TAPI belum pernah diverifikasi thd regime data real**, krn `market_regime.py` (PRD B.6) belum dibangun sama sekali — gak ada label regime asli buat di-group. Sama persis caveat "mekanisme udah ada, belum divalidasi thd hal yg dimaksud" kayak Gann-angle touch-tracking di `level_strength.py`.
+- 13 test baru (185 total di `agent-orchestrator`), ruff clean.
+
+**Diverifikasi thd 3 sinyal real BTC/USDT 1h yg sama dipakai sepanjang sesi ini**:
+```
+trade_count=3  censored_count=0
+win_count=1  loss_count=2
+profit_factor_gross=1.165  profit_factor_net=1.165  (sama krn funding_events=[] — konsisten sama gap data funding_rate bag. 12)
+sharpe_gross=1.801  sharpe_net=1.801
+max_drawdown_pct=0.0147  (1.47%)
+avg_holding_duration_hours=8.33  trades_per_year=1051.9
+```
+**Kesimpulan jujur**: arithmetic-nya BENAR di data real (gross=net krn belum ada funding event yg exercise, konsisten sama temuan bag. 12), tapi **n=3 jauh dari cukup buat angka PF/Sharpe/drawdown ini beneran dianggap valid statistik** — ini cuma bukti korektnes kode ujung-ke-ujung dari data real, bukan validasi performa strategi. Kriteria promosi bag. 7 (PF net > 1.3 di ≥4/6 window walk-forward) butuh jauh lebih banyak sinyal + window walk-forward asli (`run_validation.py`, masih belum dibangun) sblm bisa dijalankan beneran.
+
+**Belum dikerjakan (sisa dari bag. 6)**: `report.py` (dump hasil ke `docs/validation-results/`), `configs/walk_forward_windows.yaml` + `run_validation.py` (CLI yg nge-wire `data_loader → signal_runner → trade_simulator → metrics` across window walk-forward `packages/backtest-core`) — ini yg dibutuhkan sblm kriteria promosi bag. 7 beneran bisa dites.
