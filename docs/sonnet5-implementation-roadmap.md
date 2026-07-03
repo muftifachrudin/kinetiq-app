@@ -47,14 +47,16 @@ konteks. Wajib dibaca berpasangan dengan:
 
 ```
 F0 Data plumbing ──┬── F1 Fee-aware sim ──┬── F3 Per-factor dump + fitting ── F6 Kampanye validasi OOS ── F7 Shadow trading ── F9 Live gate
-                   ├── F2 htf_bias.py ────┤                                        │
-                   ├── F4 derivatives_context.py (paralel, faktor utk F3)          │
-                   └── F5 R:R band + SL anti-hunt (paralel, eksperimen harness)    │
+                   ├── F2 htf_bias.py ────┤                                        │            ├── F7a position_sizing.py + PreTradeCard
+                   ├── F4 derivatives_context.py (paralel, faktor utk F3)          │            │   (paralel, boleh kapan saja setelah F0)
+                   └── F5 R:R band + SL anti-hunt (paralel, eksperimen harness)    │            └── F7b cross-mode portfolio sim (SETELAH F7 jalan)
                                                        F8 Ekspansi universe (multi-koin → tokenized equity) — setelah F6 lolos di BTC+ETH
 ```
 
 Fase 1, 2, 4, 5 saling independen setelah F0 — kerjakan berurutan per PR
-kecil, jangan satu PR raksasa.
+kecil, jangan satu PR raksasa. F7a (position_sizing.py) juga independen:
+pure function tanpa DB, prasyarat nyata F7, boleh dikerjakan paralel dengan
+fase manapun.
 
 ---
 
@@ -91,6 +93,9 @@ servis. Buat role `kinetiq_app` tanpa BYPASSRLS, grant minimum, servis
 pindah konek pakai itu. Koordinasikan dengan founder (env Railway berubah).
 Acceptance: `SELECT` `trade_annotation` tanpa `set_config` dari role baru
 mengembalikan 0 baris meski data ada.
+Titipan di PR draft 0d yang sama (satu kali review CODEOWNERS): kolom
+`risk_mandate.default_margin_mode` + `risk_pct_per_trade` untuk F7a —
+spec di `docs/margin-mode-brief.md` bag. 5.
 
 **Status: DRAFT disiapkan (2026-07-03), BELUM DIEKSEKUSI — PR terpisah,
 menunggu review & konfirmasi founder per langkah.** Batasan desain yang
@@ -381,6 +386,34 @@ baru (bag. 10).
    manual, kill-switch, floor buffer_k TIDAK PERNAH dipelajari ML).
 Acceptance skor 9: 3+ bulan, PF real net ≥ 0.7× backtest, fidelity rolling
 ≥70, nol pelanggaran hard cap.
+
+### F7a — `skills/strategy/position_sizing.py` + PreTradeCard (paralel, boleh dikerjakan kapan saja)
+
+Spec lengkap + keputusan margin-mode di **`docs/margin-mode-brief.md`**
+(baca dulu sebelum implementasi). Ringkas: pure-function skill tanpa DB
+yang menghitung kartu pra-eksekusi per sinyal — `risk_amount` → `qty` →
+`leverage_used = min(cap_mandate, max_safe_leverage)` → `initial_margin`,
+est. liquidation price, margin ratio, jarak SL/TP dalam % notional DAN %
+margin, plus warnings. REUSE `max_safe_leverage()`/`build_margin_context()`/
+`assert_liquidation_safe()` yang sudah ada di `trade_simulator.py`, jangan
+tulis ulang. Margin mode datang dari mandate (bukan per-trade); MVP hanya
+ISOLATED — `cross` → `NotImplementedError` yang menunjuk F7b, jangan
+pura-pura menghitung. Tidak menyentuh `signal_runner`/gate manapun.
+Skema: kolom `default_margin_mode` di `risk_mandate` dititipkan di PR draft
+F0d (CODEOWNERS, satu kali review founder).
+
+### F7b — Portfolio-level margin simulator: cross mode, margin ratio akun (SETELAH F7 punya posisi nyata)
+
+Ditunda sadar, bukan ditolak — alasan lengkap di `docs/margin-mode-brief.md`
+bag. 1 & 6. Scope saat waktunya tiba: simulasi cross dengan state seluruh
+akun (total equity + unrealized PnL semua posisi → est. liquidasi akun yang
+bergeser setiap posisi lain bergerak), efek entri ke-2+ terhadap liq
+keseluruhan, margin-ratio telemetry akun + kill-switch (guardrail
+"total margin used / equity ≤ X% per regime, range 20-60%" dari
+shadow-simulator-brief bag. 5), dan pyramiding/multi-entry sebagai fitur
+yang diuji — bukan default. Prasyarat keras: shadow loop F7 sudah
+menghasilkan state posisi nyata; TANPA itu simulasi cross cuma tebakan
+`cross_buffer_pct` seperti sekarang.
 
 ## Fase 8 — Generalisasi universe: seluruh market kripto → tokenized equity
 
