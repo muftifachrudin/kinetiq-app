@@ -20,7 +20,16 @@ def _window_result_to_dict(window_result) -> dict:
         "test_end": w.test_end.isoformat(),
         "signal_count": window_result.signal_count,
         "trade_count": window_result.trade_count,
+        # "metrics" is net-of-funding-AND-fees once fees are configured (see
+        # run_validation.py's run_window()); "metrics_net_funding_only" is
+        # the same trades with fees zeroed out, isolating the fee-only cost
+        # -- together with metrics.profit_factor_gross this gives the
+        # 3-way gross/net-funding/net-fees comparison docs/validation-deep-
+        # dive-2026-07.md Section 6a (F5) asked every report to show.
         "metrics": dataclasses.asdict(window_result.metrics) if window_result.metrics is not None else None,
+        "metrics_net_funding_only": (
+            dataclasses.asdict(window_result.metrics_net_funding_only) if window_result.metrics_net_funding_only is not None else None
+        ),
     }
 
 
@@ -50,15 +59,20 @@ def to_markdown(result) -> str:
         f"**{'MET' if result.promotion_pf_criterion_met else 'NOT MET'}**",
         "- Promotion agreement-rate criterion: not computable yet (trade_annotation has no signal_id linkage)",
         "",
-        "| window | test_start | test_end | signals | trades | PF gross | PF net | Sharpe net | max DD net |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| window | test_start | test_end | signals | trades | PF gross | PF net-funding | PF net-fees | Sharpe net-fees | max DD net-fees |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for wr in result.windows:
         m = wr.metrics
+        # metrics_net_funding_only is None when fees weren't configured at
+        # all -- in that case "net" already IS "net-funding-only", so fall
+        # back to `m` rather than printing a redundant None column.
+        m_funding = wr.metrics_net_funding_only if wr.metrics_net_funding_only is not None else m
         lines.append(
             f"| {wr.window.window_id} | {wr.window.test_start.isoformat()} | {wr.window.test_end.isoformat()} | "
             f"{wr.signal_count} | {wr.trade_count} | "
-            f"{_format_metric(m.profit_factor_gross if m else None)} | {_format_metric(m.profit_factor_net if m else None)} | "
+            f"{_format_metric(m.profit_factor_gross if m else None)} | {_format_metric(m_funding.profit_factor_net if m_funding else None)} | "
+            f"{_format_metric(m.profit_factor_net if m else None)} | "
             f"{_format_metric(m.sharpe_net if m else None)} | {_format_metric(m.max_drawdown_pct_net if m else None)} |"
         )
     return "\n".join(lines) + "\n"

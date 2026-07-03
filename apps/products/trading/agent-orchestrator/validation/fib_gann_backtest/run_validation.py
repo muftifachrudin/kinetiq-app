@@ -87,7 +87,15 @@ class WindowResult:
     window: WalkForwardWindow
     signal_count: int
     trade_count: int
-    metrics: metrics.MetricsResult | None  # None when there are zero non-censored trades in this window
+    metrics: metrics.MetricsResult | None  # None when there are zero non-censored trades in this window; net-of-funding-AND-fees once fees are configured (see run_window())
+    # same trades, fee_entry_fraction=fee_exit_fraction=0.0 -- isolates the
+    # fee-only cost for the 3-way gross/net-funding/net-fees comparison
+    # deep-dive F5 asked for. Defaults to None: identical to `metrics` when
+    # fees aren't configured at all (no point computing it twice), also
+    # None when there are zero non-censored trades. Has a default so older
+    # call sites/tests constructing WindowResult before fees existed don't
+    # need updating.
+    metrics_net_funding_only: metrics.MetricsResult | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -110,18 +118,35 @@ def run_window(
     candles: list[fgt.Candle],
     funding_events: list[ts.FundingEvent],
     max_holding_bars: int,
+    fee_entry_fraction: float = 0.0,
+    fee_exit_fraction: float = 0.0,
 ) -> WindowResult:
     window_candles = [c for c in candles if c.ts < window.test_end]
     if not window_candles:
-        return WindowResult(window=window, signal_count=0, trade_count=0, metrics=None)
+        return WindowResult(window=window, signal_count=0, trade_count=0, metrics=None, metrics_net_funding_only=None)
 
     signals = sr.generate_signals(window_candles)
     test_signals = [s for s in signals if window.test_start <= s.ts < window.test_end]
-    trades = ts.simulate_trades(test_signals, window_candles, funding_events, max_holding_bars)
+    trades = ts.simulate_trades(test_signals, window_candles, funding_events, max_holding_bars, fee_entry_fraction, fee_exit_fraction)
     non_censored = [t for t in trades if not t.label.censored]
-
     window_metrics = metrics.compute_metrics(trades) if non_censored else None
-    return WindowResult(window=window, signal_count=len(test_signals), trade_count=len(trades), metrics=window_metrics)
+
+    metrics_net_funding_only = None
+    if fee_entry_fraction or fee_exit_fraction:
+        # Same signals/candles/funding, fees zeroed out -- isolates the
+        # fee-only cost without re-running generate_signals()'s O(n^2) walk
+        # (simulate_trades() itself is O(n), cheap to run twice).
+        trades_no_fee = ts.simulate_trades(test_signals, window_candles, funding_events, max_holding_bars, 0.0, 0.0)
+        non_censored_no_fee = [t for t in trades_no_fee if not t.label.censored]
+        metrics_net_funding_only = metrics.compute_metrics(trades_no_fee) if non_censored_no_fee else None
+
+    return WindowResult(
+        window=window,
+        signal_count=len(test_signals),
+        trade_count=len(trades),
+        metrics=window_metrics,
+        metrics_net_funding_only=metrics_net_funding_only,
+    )
 
 
 def _promotion_pf_stats(window_results: list[WindowResult], pf_net_threshold: float, pf_pass_fraction: float) -> tuple[int, bool]:
@@ -146,8 +171,10 @@ def run_validation(
     max_holding_bars: int,
     pf_net_threshold: float,
     pf_pass_fraction: float,
+    fee_entry_fraction: float = 0.0,
+    fee_exit_fraction: float = 0.0,
 ) -> ValidationRunResult:
-    window_results = [run_window(w, candles, funding_events, max_holding_bars) for w in windows]
+    window_results = [run_window(w, candles, funding_events, max_holding_bars, fee_entry_fraction, fee_exit_fraction) for w in windows]
     passing, met = _promotion_pf_stats(window_results, pf_net_threshold, pf_pass_fraction)
     return ValidationRunResult(
         windows=window_results,
@@ -200,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     validate_window_set(windows, embargo=datetime.timedelta(days=wf.get("embargo_days", 0)))
 
     promo = config.get("promotion", {})
+    fees = config.get("fees", {})
     result = run_validation(
         candles,
         windows,
@@ -207,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
         max_holding_bars=config.get("max_holding_bars", 20),
         pf_net_threshold=promo.get("pf_net_threshold", 1.3),
         pf_pass_fraction=promo.get("pf_pass_fraction", 4 / 6),
+        fee_entry_fraction=fees.get("entry_fraction", 0.0),
+        fee_exit_fraction=fees.get("exit_fraction", 0.0),
     )
 
     import report  # deferred: only needed on the non-dry-run path

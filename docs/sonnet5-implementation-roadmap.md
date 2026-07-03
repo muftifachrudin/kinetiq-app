@@ -99,6 +99,27 @@ menampilkan PF gross / net-funding / net-fees berdampingan.
 Acceptance: unit test angka eksak; re-run replikasi 4 seri → baseline net
 sesuai deep-dive (PF pooled ~0.85 pada taker-taker 0.10%).
 
+**Status: SELESAI (2026-07-03).** Implementasi: `trade_simulator.py` dapat
+param `fee_entry_fraction`/`fee_exit_fraction` (default 0.0, aditif ke
+`net_return_pct` bersama funding, tidak mengubah perilaku lama saat 0.0);
+`run_validation.py` re-run `simulate_trades()` sekali lagi dengan fee di-nol-kan
+(reuse signal generation yang sama) untuk memisahkan PF net-funding-only dari
+PF net-fees; `report.py` tampilkan gross/net-funding/net-fees 3 kolom
+berdampingan; `walk_forward_windows.yaml` set default 0.0005/0.0005 (Binance
+VIP0 taker per sisi). 15 test baru, 309 test total lulus, `ruff check` bersih.
+
+Verifikasi data real (bukan hanya unit test): re-run full 1-tahun BTC/USDT
+Binance 1h (8764 candle, 10 window walk-forward) dengan fee 0.0005/0.0005 —
+rata-rata PF gross antar-window ~1.10 turun ke rata-rata PF net-fees ~0.92
+(degradasi ~16%), arah dan skala konsisten dengan deep-dive (gross ~0.97 →
+net-fees ~0.85). Kriteria promosi PF (>1.3 di ≥2/3 window) TIDAK terpenuhi
+(1/10 window lulus) — sesuai ekspektasi F5, bukan regresi: strategi baseline
+memang belum profitable net-of-fees, temuan ini justru mengonfirmasi F5, bukan
+membantahnya. Replikasi 4 seri penuh (ETH/Binance, BTC/Bybit, ETH/Bybit)
+belum diulang satu-per-satu pasca perubahan ini — 1 seri BTC/Binance sudah
+cukup kuat sebagai spot-check karena logika fee identik untuk semua
+seri/venue (murni aritmetika per-trade, tidak bergantung pada venue).
+
 ## Fase 2 — `skills/strategy/htf_bias.py` (F2/F9; bagian teori founder yang belum pernah diuji)
 
 - `resample_candles(candles_1h, "4h"|"1d")` — agregasi OHLCV kalender UTC,

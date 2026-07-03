@@ -16,6 +16,19 @@ candle_load_limit: 100000
 
 max_holding_bars: 20
 
+# docs/validation-deep-dive-2026-07.md Section 3/F5: trade_simulator.py was
+# funding-aware but gross-of-fees, and fees turned out to be the dominant
+# real-money cost for this ~11h-average-holding intraday system (a 0.10%
+# taker-taker round-trip flips baseline mean trade return negative; funding
+# for the same holding period is ~20x smaller). Default here is Binance
+# USDT-M VIP0 taker (0.05% per side) -- override per-venue if a different
+# fee tier applies. Additive: both default to 0.0 if this section is
+# omitted entirely, so an older config file (or a caller that doesn't read
+# this key) behaves exactly as before fees existed.
+fees:
+  entry_fraction: 0.0005
+  exit_fraction: 0.0005
+
 walk_forward:
   train_months: 1
   test_months: 1

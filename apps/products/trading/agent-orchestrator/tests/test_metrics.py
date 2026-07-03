@@ -43,6 +43,7 @@ def mk_trade(
         label=label,
         funding_cost_pct=funding_cost_pct,
         funding_events_count=0,
+        fee_cost_pct=0.0,
         net_return_pct=return_pct - funding_cost_pct,
     )
 

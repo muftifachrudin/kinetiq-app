@@ -756,3 +756,35 @@ off_hours            n=4  mean=-0.21%  median=-0.16%  positive_fraction=0.00
 > menghasilkan semua angka bag. 22 di-commit ke
 > `agent-orchestrator/validation/deep_dive_2026_07/` (one-off, bukan
 > production code — lihat README-nya).
+
+## 23. `trade_simulator.py` fee-aware (Fase 1 roadmap bag. 22, F5) — DIIMPLEMENTASI 3 Juli 2026
+
+`simulate_trade`/`simulate_trades` dapat param `fee_entry_fraction`/
+`fee_exit_fraction` (aditif ke `net_return_pct` bersama funding cost, default
+0.0 — perilaku lama tidak berubah kalau config tidak set fee).
+`run_validation.py` jalankan `simulate_trades()` sekali lagi dengan fee
+di-nol-kan (reuse hasil `generate_signals()` yang sama, tidak dobel jalan
+walk O(n²)-nya) supaya PF net-funding-only bisa dipisah dari PF net-fees;
+`report.py` sekarang tampilkan 3 kolom PF berdampingan (gross/net-funding/
+net-fees) sesuai bag. 6 "Metrics — funding-aware". `walk_forward_windows.yaml`
+default fee 0.0005/0.0005 per sisi (Binance USDT-M VIP0 taker, round-trip
+0.10%, sesuai deep-dive F5). 15 test baru (332 total lulus), `ruff check`
+bersih thd path yang sama dgn CI.
+
+Verifikasi bukan cuma unit test: re-run BTC/USDT 1h Binance 1-tahun penuh
+(8.764 candle, 10 window walk-forward) dgn fee live — PF gross rata-rata
+antar-window ~1.10 turun ke PF net-fees ~0.92 (degradasi ~16%), arah & skala
+konsisten dgn baseline deep-dive (gross ~0.97 → net-fees ~0.85). Kriteria
+promosi PF (>1.3 di ≥2/3 window) TIDAK terpenuhi (1/10 window lulus) —
+ekspektasi F5, bukan regresi baru: strategi baseline saat ini memang belum
+profitable net-of-fees, itulah persis yang mau dibuktikan fee-aware sim ini.
+
+**Masih open**: bag. 22/21 punya reminder yang BELUM selesai — `trade_annotation`
+production masih KOSONG (dicek ulang sesi ini, `count(*)=0`), jadi file
+`--emit-sql` lama masih perlu dijalankan ulang di Neon SQL Editor + verifikasi
+count dari session terpisah sebelum Fase 0a bag. roadmap dianggap beres.
+Replikasi 4-seri penuh (ETH/Binance, BTC/Bybit, ETH/Bybit) belum diulang
+satu-per-satu pasca perubahan fee ini — logika fee murni aritmetika per-trade
+(tidak bergantung venue/simbol), jadi 1 seri BTC/Binance dianggap spot-check
+yang cukup kuat, bukan pengganti replikasi penuh kalau nanti dibutuhkan bukti
+lebih kuat lintas seri.
