@@ -892,3 +892,92 @@ kandidat kuat utk direvisit (mis. ganti/tambah `sma_trend_bias_alignment`
 jadi slot resmi `ConfluenceWeights`, atau bagian eksperimen Fase 6 kampanye
 OOS berikutnya), bukan keputusan yg diambil sepihak sekarang. Detail penuh:
 `docs/sonnet5-implementation-roadmap.md` Fase 3.
+
+## 26. R:R gate cap & SL anti-hunt — eksperimen A/B terkontrol (Fase 5 roadmap) — DIIMPLEMENTASI 3 Juli 2026, hasil: TIDAK ADA VARIAN YG LOLOS PROMOSI (temuan valid, F6 tetap perlu)
+
+Kode: `fib_gann_timing.passes_risk_reward_gate()` dapat parameter opsional
+`max_rr_threshold` (`None` = perilaku lama persis, gak ada caller yg
+berubah). `StopLossMethod` enum baru (`ATR_BUFFER`/`NEXT_FIB_LEVEL`) +
+`compute_stop_loss_next_fib_level()` — SL varian baru yg pakai satu rasio
+extension Fib (terkecil di ladder, default 1.13) di belakang swing, ganti
+buffer ATR tetap yg sekarang. Harness baru `validation/fib_gann_backtest/
+rr_sl_experiment.py`: 7 varian (sweep R:R + sweep SL vs default sbg
+baseline), REUSE skema walk-forward kalender (`train_months=1/test_months=
+1/embargo_days=1`) + `metrics.compute_metrics()` fee-aware yg SAMA persis
+dgn kampanye Fase 1 asli — angka di sini bisa dibandingkan langsung ke
+kampanye itu, bukan metodologi terpisah. 25 test baru, 397 test total
+lulus, ruff clean.
+
+**Real run thd 4 seri PENUH 1 tahun (BTC/ETH × Binance/Bybit, 8770 candle
+tiap seri, 10 window walk-forward tiap variant)** — dijalankan dari sandbox
+via adapter yg makan candle hasil pull Neon HTTP-SQL langsung (raw koneksi
+Postgres tetap hang dari sandbox ini, batasan lama yg sama), memanggil
+fungsi `run_variant()` yg SAMA persis dgn yg `main()` CLI harness pakai
+(bukan logic terpisah/duplikat).
+
+| Varian | avg PF net (4 seri) | window lolos PF>1.3 /40 | avg SL-hit fraction |
+|---|---|---|---|
+| baseline (rr≥1.5, SL 0.375×ATR — default produksi skrg) | 0.893 | 3/40 | 0.526 |
+| rr≥2.0, no cap | 0.942 | 6/40 | 0.525 |
+| rr≥1.5, cap≤5.0 | 0.902 | 3/40 | 0.518 |
+| **rr≥2.0, cap≤5.0** | **0.960** | 6/40 | 0.515 |
+| SL 0.75×ATR | 0.940 | 4/40 | 0.446 |
+| **SL 1.0×ATR** | 0.948 | **7/40** | **0.396** |
+| SL next-fib-level | 0.937 | 4/40 | 0.485 |
+
+**Temuan (termasuk yg kalah, sesuai acceptance eksplisit "hasil ditulis di
+brief")**:
+1. **Kriteria promosi bag. 7 (PF net >1.3 di ≥2/3 window) TIDAK terpenuhi
+   satu varian pun** — window lolos individual TERTINGGI cuma 3/10
+   (BTC/Bybit, rr≥2.0 cap≤5.0). Sesuai ekspektasi desain F5: ini screening
+   experiment sebelum kampanye OOS penuh (F6), bukan pengganti F6 — F6
+   tetap wajib jalan.
+2. **`min_rr_threshold` 1.5→2.0 membaik di 3 dari 4 seri** — BTC/Bybit
+   0.9848→1.0186, ETH/Binance 0.8030→0.8996, ETH/Bybit 0.8407→0.9232
+   (kenaikan besar, terutama di ETH). **Satu pengecualian: BTC/Binance
+   justru turun tipis** (0.9416→0.9273 tanpa cap, 0.9524→0.9468 dgn cap) —
+   jadi BUKAN unanimous, tapi mayoritas kuat & arahnya selaras dgn temuan
+   deep-dive F10 (kombinasi R:R∈[2,5) pernah naikkan PF in-sample). Filter
+   R:R lebih ketat membantu di 3 seri (sinyal lebih sedikit, rata² lebih
+   jarang gagal), tapi sedikit merugikan di seri yg baseline-nya sudah
+   relatif kuat (BTC/Binance).
+3. `max_rr_threshold=5.0` efeknya kecil & bergantung floor R:R yg
+   dipasangkan — nambah lumayan kalau digabung rr≥2.0 (avg PF 0.942→0.960),
+   nyaris tidak berubah kalau digabung rr≥1.5 (0.893→0.902). Jumlah window
+   lolos IDENTIK antara rr≥2.0 nocap vs cap (6/40 keduanya) — cap ini
+   penyaring marjinal, bukan game-changer.
+4. **SL 1.0×ATR (buffer terlebar yg diuji) menang telak di window-lolos
+   (7/40, TERBANYAK dari 7 varian)** dan SL-hit fraction PALING RENDAH
+   (0.396 vs baseline 0.526, turun ~25 poin persentase) — struktural masuk
+   akal & PERSIS tujuan "SL anti-hunt" di judul fase ini: buffer lebih
+   lebar = lebih jarang kena stop-hunt murni krn noise harga. avg PF
+   net-nya (0.948) sedikit di bawah rr≥2.0 cap≤5.0 (0.960) — dua sumbu
+   (R:R vs SL) mengoptimalkan hal yg agak beda (kualitas sinyal vs
+   ketahanan thd noise), bukan substitute satu sama lain.
+5. **SL next-fib-level TIDAK menunjukkan keunggulan** dibanding varian
+   ATR-buffer manapun yg diuji (avg PF 0.937 — di bawah SL 0.75×/1.0×ATR,
+   window lolos 4/40, SL-hit fraction 0.485 — cuma turun dikit drpd
+   baseline, jauh di atas SL 1.0×ATR) — kode tetap ada (teruji, reusable),
+   tapi TIDAK direkomendasikan jadi default berdasarkan data round ini.
+6. **ETH underperform BTC di 5 dari 7 varian** (keempat varian R:R + SL
+   next-fib-level) — replikasi temuan deep-dive lama "belum generalize ke
+   ETH". **Nuansa baru: di 2 varian SL terlebar (0.75×/1.0×ATR), ETH justru
+   SEDIKIT MENGUNGGULI BTC**: avg PF net (BTC/Binance+BTC/Bybit)/2 vs
+   (ETH/Binance+ETH/Bybit)/2 — SL 0.75×ATR: BTC 0.912 vs ETH 0.968; SL
+   1.0×ATR: BTC 0.918 vs ETH 0.977. Indikasi: setup ETH kena stop prematur
+   lebih sering drpd BTC di buffer default (0.375×ATR), pelebaran buffer
+   menolong ETH disproporsional lebih besar drpd BTC — bukan sekadar "ETH
+   selalu lebih jelek dari BTC di mana pun", tapi tergantung parameter SL
+   yg dipakai.
+
+**Kesimpulan praktis (input utk F6, BUKAN keputusan sepihak diambil
+sekarang)**: `min_rr_threshold=2.0` + `max_rr_threshold=5.0` adalah
+kandidat terkuat dari sweep R:R (avg PF net tertinggi lintas 4 seri),
+`sl_atr_buffer_multiplier=1.0` adalah kandidat terkuat dari sweep SL
+(window-lolos terbanyak + SL-hit-rate paling rendah) — keduanya layak
+dibawa masuk config kampanye OOS penuh F6 sbg kandidat yg diuji BARENG
+faktor lain (fitted weights Fase 3, derivatives context Fase 4), sama
+prinsip "never auto-applies keputusan sepihak" spt `evaluate_adoption()`
+Fase 3 — `fib_gann_timing.py`'s `DEFAULT_MIN_RR_THRESHOLD`/`DEFAULT_SL_
+ATR_BUFFER_MULTIPLIER` TIDAK diganti round ini sendiri. Detail penuh +
+tabel lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 5.

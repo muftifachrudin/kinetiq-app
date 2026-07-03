@@ -460,6 +460,79 @@ Juni 2026 confirmed via `liq_cascade_flag=True` beberapa jam berturut).
 - Acceptance: keputusan per varian berdasarkan walk-forward OOS net-fees di
   ≥2 aset × 2 venue; hasil (termasuk yang kalah) ditulis di brief.
 
+**Status: SELESAI (3 Juli 2026, hari yg sama).** Kode: `passes_risk_reward_
+gate()` dapat `max_rr_threshold` opsional (`None` = perilaku lama, tidak ada
+caller yg berubah), `StopLossMethod` enum + `compute_stop_loss_next_fib_
+level()` (SL satu rasio extension Fib di belakang swing, ganti buffer ATR
+tetap) nambah opsi kedua ke `build_exit_plan()`. Harness `validation/
+fib_gann_backtest/rr_sl_experiment.py` (7 varian: R:R sweep + SL sweep vs
+default sbg baseline, walk-forward calendar scheme + fee-aware metrics yg
+SAMA persis dgn kampanye Fase 1 asli). 25 test baru, 397 test total lulus,
+ruff clean.
+
+**Hasil real thd 4 seri penuh 1 tahun (BTC/ETH × Binance/Bybit, 8770 candle
+tiap seri, 10 window walk-forward tiap variant, net fee Binance VIP0
+taker)** — ringkasan PF net pooled (rata² 4 seri) & total window lolos PF>1.3
+dari 40 (4 seri × 10 window):
+
+| Varian | avg PF net | window lolos/40 | avg SL-hit fraction |
+|---|---|---|---|
+| **baseline** (rr≥1.5, SL 0.375×ATR — default produksi skrg) | 0.893 | 3/40 | 0.526 |
+| rr≥2.0, no cap | 0.942 | 6/40 | 0.525 |
+| rr≥1.5, cap≤5.0 | 0.902 | 3/40 | 0.518 |
+| **rr≥2.0, cap≤5.0** | **0.960** | 6/40 | 0.515 |
+| SL 0.75×ATR | 0.940 | 4/40 | 0.446 |
+| SL 1.0×ATR | 0.948 | **7/40** | **0.396** |
+| SL next-fib-level | 0.937 | 4/40 | 0.485 |
+
+**Temuan (termasuk yang kalah, sesuai acceptance)**:
+1. **TIDAK ADA satu pun varian yg lolos kriteria promosi bag. 7** (PF net >1.3
+   di ≥2/3 window) — window lolos individual max cuma 3/10 (BTC/Bybit,
+   rr≥2.0 cap≤5.0). Ini SESUAI EKSPEKTASI: F5 adalah screening experiment
+   sebelum kampanye OOS penuh (F6), bukan pengganti F6.
+2. **min_rr_threshold 1.5→2.0 membaik di 3 dari 4 seri** (BTC/Bybit +0.034,
+   ETH/Binance +0.097, ETH/Bybit +0.082 — kenaikan besar khususnya di ETH),
+   PENGECUALIAN BTC/Binance yg justru turun tipis (-0.014 tanpa cap, -0.006
+   dgn cap) — bukan unanimous, tapi mayoritas kuat & arahnya selaras dgn
+   deep-dive F10 (kombinasi R:R∈[2,5) + HTF-align pernah naikkan PF
+   in-sample). Naikkan floor R:R = sinyal lebih sedikit tapi rata² lebih
+   jarang gagal, KECUALI utk seri yg baseline-nya sudah relatif kuat
+   (BTC/Binance).
+3. `max_rr_threshold=5.0` cap efeknya kecil & tergantung floor R:R yg
+   dipasangkan: nambah dikit kalau digabung rr≥2.0 (0.942→0.960), nyaris
+   tidak berubah kalau digabung rr≥1.5 (0.893→0.902) — jumlah window lolos
+   IDENTIK antara rr≥2.0 nocap vs cap (6/40 keduanya), jadi cap ini bukan
+   game-changer, cuma penyaring marjinal.
+4. **SL 1.0×ATR menang di window-lolos (7/40, TERBANYAK dari 7 varian)** dan
+   SL-hit fraction PALING RENDAH (0.396 vs baseline 0.526) — struktural masuk
+   akal: buffer lebih lebar = lebih jarang kena stop-hunt, PERSIS tujuan
+   "SL anti-hunt" di judul fase ini. Tapi avg PF net-nya (0.948) sedikit di
+   bawah rr≥2.0 cap≤5.0 (0.960) — dua sumbu (R:R vs SL) mengoptimalkan hal
+   yg agak beda (kualitas sinyal vs ketahanan thd noise harga).
+5. **SL next-fib-level TIDAK menunjukkan keunggulan jelas** dibanding varian
+   ATR-buffer manapun (avg PF 0.937, window lolos 4/40, SL-hit fraction
+   0.485 — di antara baseline & varian ATR lebar) — TIDAK direkomendasikan
+   utk diadopsi, meski secara struktural valid & teruji.
+6. **ETH underperform BTC di 5 dari 7 varian** (semua varian R:R + SL
+   next-fib-level) — replikasi temuan deep-dive lama "belum generalize ke
+   ETH". **TAPI di 2 varian SL terlebar (0.75×/1.0×ATR), ETH justru
+   SEDIKIT MENGUNGGULI BTC** (avg PF ETH 0.968/0.977 vs BTC 0.912/0.918) —
+   pola menarik yg TIDAK terlihat kalau cuma lihat baseline: mengindikasikan
+   setup ETH lebih sering kena stop prematur di buffer default (0.375×ATR)
+   drpd BTC, dan pelebaran buffer disproporsional menolong ETH. Nuansa
+   baru, bukan sekadar "ETH selalu lebih jelek".
+
+**Kesimpulan praktis (bukan keputusan sepihak — input utk F6)**: kombinasi
+`min_rr_threshold=2.0` + `max_rr_threshold=5.0` adalah kandidat config
+terkuat dari sweep R:R (avg PF net tertinggi), `sl_atr_buffer_multiplier=
+1.0` adalah kandidat terkuat dari sweep SL (window-lolos terbanyak + SL-hit
+paling rendah) — keduanya layak masuk config F6's kampanye OOS penuh sbg
+kandidat yg diuji bareng faktor lain (fitted weights, derivatives context),
+BUKAN otomatis jadi default baru `fib_gann_timing.py` round ini sendiri
+(sama prinsip "never auto-applies" spt `evaluate_adoption()` Fase 3).
+`StopLossMethod.NEXT_FIB_LEVEL` tetap ada di kode (teruji, reusable) tapi
+tidak direkomendasikan jadi default berdasarkan data round ini.
+
 ## Fase 6 — Kampanye validasi OOS (gerbang skor 6→7)
 
 Jalankan `run-validation.yml` (config diperluas: 4 seri, fee-aware, fitted
