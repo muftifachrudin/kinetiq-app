@@ -712,3 +712,47 @@ off_hours            n=4  mean=-0.21%  median=-0.16%  positive_fraction=0.00
 **5 fungsi baru** (`_sql_literal`, `_tenant_id_sql`, `generate_instrument_provision_sql`, `generate_trade_annotation_insert_sql`, `generate_sql`) + 9 test baru — total 19 test di file ini, 269 test di `agent-orchestrator` + `backtest-core` gabungan. `_sql_literal` escape quote (`'` → `''`) utk semua value yg di-emit, termasuk yg berasal dari CSV (simbol/`rationale_text`), bukan cuma input manusia — defensif thd data CSV yg secara teori bisa ngandung karakter quote. Simulasi venv-fresh-persis-command-CI dijalanin sebelum push (269 test lulus, gak ada `kinetiq_db`/`sqlalchemy` ke-install, konsisten sama kebiasaan yg udah dibangun round-round sebelumnya).
 
 **Status**: tool-nya udah lengkap+teruji, tapi **generate file SQL final dari 3 CSV real founder + eksekusi lewat Neon SQL Editor masih langkah founder sendiri** — sama kayak bag. 20, ini bukan keputusan yg diambil otomatis oleh Claude Code krn data finansial real & actionnya susah dibalik.
+
+## 22. Deep-dive pasca run validasi pertama (2/10 window) — analisis 4 seri + derivatives, 3 Juli 2026
+
+> **Verifikasi Claude Code**: run `run-validation.yml` #2 (BTC/USDT 1h Binance,
+> 8760 candle, 10 window) GAGAL kriteria promosi bag. 7 — PF net > 1.3 cuma
+> 2/10 window. Founder minta analisis mendalam: kenapa meleset, teori & skill
+> apa yang dibutuhkan menuju skor 8/10, dan peran data derivatives
+> (funding/OI/long-short/liquidation). Analisis penuh — replikasi 4 seri
+> (BTC/ETH × Binance/Bybit, 8.763 candle 1h per seri dari `ohlcv` production),
+> 2.679 trade berlabel, overlay CoinGlass 399 hari × 2 koin — ada di
+> **`docs/validation-deep-dive-2026-07.md`** + summary angka mentah di
+> `docs/validation-results/replication-2026-07-03.json`. Temuan kunci:
+> mekanisme robust lintas bursa (Jaccard sinyal ~73%, PF per venue nyaris
+> identik) tapi TIDAK generalize ke ETH (0-1/10 window); confidence score
+> sekarang ANTI-prediktif (r=-0.05 — bukti empiris pertama bhw bobot
+> hand-tuned menyesatkan, dan dataset 2.679 label triple-barrier round ini
+> MENGHILANGKAN blocker lama Part #2); LONG rugi (PF 0.84) krn tak ada bias
+> HTF (multi-timeframe PRD B.6 memang belum dibangun); band R:R 1.5-2 justru
+> band terburuk; fee belum dihitung dan material (funding justru sepele utk
+> holding ~11 jam); OI-fuel tereplikasi kuat deskriptif (1.8-2.7×) tapi lemah
+> prediktif; positioning derivatives (funding≥p90, global L/S ekstrem,
+> top-vs-global divergence, liq cascade 20/20) = sinyal contrarian kecil tapi
+> konsisten 2 koin. Kombinasi dua perbaikan implementable (searah SMA200-1h +
+> rr∈[2,5)) menaikkan PF pooled 0.97→1.30 gross / 1.13 net taker fee — TAPI
+> in-sample, statusnya hipotesis utk diuji walk-forward, bukan hasil final.
+> **Temuan non-strategi yang butuh action founder: `trade_annotation`
+> production KOSONG** (pg_relation_size=0, `instrument` cuma 4 baris) padahal
+> bag. 21 mencatat import 276 terverifikasi — kemungkinan transaksi Neon SQL
+> Editor ter-rollback setelah verifikasi; jalankan ulang file `--emit-sql` dan
+> verifikasi count dari session terpisah. Roadmap skill lengkap (fee-aware
+> simulator, `htf_bias.py`, dump komponen skor per-faktor, Part #2 fitting,
+> `derivatives_context.py`, backfill funding/OI native, SL anti-hunt) +
+> rubric skor 3/10→10/10 yang objektif: lihat dokumen deep-dive.
+
+> **Handoff (3 Juli 2026, sesi yang sama)**: memory investigasi lengkap +
+> tabel status klaim lama dicatat permanen di
+> `docs/fable5-crypto-theory-investigation-2026-07.md`; tahapan implementasi
+> menyeluruh untuk sesi berikutnya (fee-aware sim → htf_bias → per-factor
+> dump + fitting → derivatives_context → eksperimen R:R/SL → kampanye OOS →
+> shadow trading → ekspansi universe kripto & tokenized equity → gerbang
+> live) di `docs/sonnet5-implementation-roadmap.md`. Script analisis yang
+> menghasilkan semua angka bag. 22 di-commit ke
+> `agent-orchestrator/validation/deep_dive_2026_07/` (one-off, bukan
+> production code — lihat README-nya).
