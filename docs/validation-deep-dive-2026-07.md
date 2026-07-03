@@ -250,7 +250,7 @@ internal anti-prediktif; biaya belum lengkap).
 
 | Skor | Syarat OBJEKTIF (kumulatif) |
 |---|---|
-| 4/10 | Simulator fee-aware; baseline & semua eksperimen dilaporkan net-of-fees. `trade_annotation` terisi ulang & terverifikasi (F11 beres). |
+| 4/10 | Simulator fee-aware; baseline & semua eksperimen dilaporkan net-of-fees. `trade_annotation` terisi ulang & terverifikasi (F11 beres). **Bagian fee-aware: SELESAI 2026-07-03** (lihat `docs/sonnet5-implementation-roadmap.md` Fase 1) — verifikasi data real BTC/Binance 1-tahun: PF gross rata-rata antar-window ~1.10 → PF net-fees ~0.92, konsisten arah dengan F5. `trade_annotation` masih KOSONG (F11 belum beres, tetap butuh founder re-run `--emit-sql` dari session Neon terpisah). |
 | 5/10 | HTF bias (Daily/4h dari resample 1h) masuk sebagai faktor; R:R band di-set dari data; PF net-of-fees pooled > 1.1 di ke-4 seri pada data yang sama (sanity, masih in-sample). |
 | 6/10 | Part #2 jalan: bobot di-fit logistic + L1/L2 pada label triple-barrier, refit per window walk-forward; confidence hasil fit berkorelasi POSITIF dengan outcome secara out-of-sample (bukti skor sudah informatif). |
 | 7/10 | Kriteria promosi asli brief bag. 7 tercapai di BTC pada walk-forward penuh: PF net > 1.3 di ≥2/3 window — net of fees. |

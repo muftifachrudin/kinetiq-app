@@ -3,6 +3,8 @@ import random
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "validation" / "fib_gann_backtest"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
 import fib_gann_timing as fgt  # noqa: E402
@@ -95,6 +97,35 @@ def test_run_window_metrics_none_when_every_trade_censored():
     assert result.metrics is None
 
 
+def test_run_window_metrics_net_funding_only_is_none_when_fees_not_configured():
+    candles = noisy_zigzag()
+    w = window(0, 0, 80, 80, 140)
+    result = rv.run_window(w, candles, funding_events=[], max_holding_bars=20)
+    assert result.metrics_net_funding_only is None
+
+
+def test_run_window_metrics_net_funding_only_computed_when_fees_configured():
+    candles = noisy_zigzag()
+    w = window(0, 0, 80, 80, 140)
+    result = rv.run_window(w, candles, funding_events=[], max_holding_bars=20, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005)
+    assert result.metrics is not None
+    assert result.metrics_net_funding_only is not None
+    # same trades, fees zeroed out -- net-funding-only PF must be >= the
+    # fully-net (fees included) PF, since fees are strictly a cost
+    assert result.metrics_net_funding_only.profit_factor_net >= result.metrics.profit_factor_net
+
+
+def test_run_window_fees_reduce_net_return_relative_to_gross():
+    candles = noisy_zigzag()
+    w = window(0, 0, 80, 80, 140)
+    no_fee = rv.run_window(w, candles, funding_events=[], max_holding_bars=20)
+    with_fee = rv.run_window(w, candles, funding_events=[], max_holding_bars=20, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005)
+    # identical gross PF (fees don't touch label.return_pct at all)
+    assert with_fee.metrics.profit_factor_gross == no_fee.metrics.profit_factor_gross
+    # net PF with fees must be <= net PF without fees (same trades, extra cost)
+    assert with_fee.metrics.profit_factor_net <= no_fee.metrics.profit_factor_net
+
+
 # --- _promotion_pf_stats ---
 
 
@@ -169,6 +200,16 @@ def test_run_validation_empty_windows_list():
     assert result.promotion_pf_criterion_met is False
 
 
+def test_run_validation_passes_fee_fractions_through_to_every_window():
+    candles = noisy_zigzag()
+    windows = [window(0, 0, 80, 80, 140), window(1, 0, 140, 140, 200)]
+    result = rv.run_validation(
+        candles, windows, funding_events=[], max_holding_bars=20, pf_net_threshold=1.3, pf_pass_fraction=0.6667,
+        fee_entry_fraction=0.0005, fee_exit_fraction=0.0005,
+    )
+    assert all(wr.metrics_net_funding_only is not None for wr in result.windows if wr.metrics is not None)
+
+
 # --- load_config ---
 
 
@@ -178,6 +219,8 @@ def test_load_config_reads_default_yaml():
     assert "walk_forward" in config
     assert config["walk_forward"]["train_months"] > 0
     assert "promotion" in config
+    assert config["fees"]["entry_fraction"] == pytest.approx(0.0005)
+    assert config["fees"]["exit_fraction"] == pytest.approx(0.0005)
 
 
 # --- default_output_dir ---

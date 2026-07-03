@@ -50,6 +50,20 @@ def mk_result() -> rv.ValidationRunResult:
     )
 
 
+def mk_result_with_fees() -> rv.ValidationRunResult:
+    # net-funding-only PF (1.7) is higher than fully-net PF (1.5) -- fees
+    # are strictly a cost, so removing them should never make PF worse.
+    windows = [
+        rv.WindowResult(
+            window=mk_window(0), signal_count=5, trade_count=4,
+            metrics=mk_metrics(1.5), metrics_net_funding_only=mk_metrics(1.7),
+        ),
+    ]
+    return rv.ValidationRunResult(
+        windows=windows, total_windows=1, windows_passing_pf=1, pf_net_threshold=1.3, pf_pass_fraction=0.6666, promotion_pf_criterion_met=True
+    )
+
+
 # --- to_dict ---
 
 
@@ -77,6 +91,17 @@ def test_to_dict_is_json_serializable():
     json.dumps(d)  # must not raise
 
 
+def test_to_dict_metrics_net_funding_only_none_when_fees_not_configured():
+    d = report.to_dict(mk_result())
+    assert d["windows"][0]["metrics_net_funding_only"] is None
+
+
+def test_to_dict_metrics_net_funding_only_serialized_when_present():
+    d = report.to_dict(mk_result_with_fees())
+    assert d["windows"][0]["metrics_net_funding_only"]["profit_factor_net"] == 1.7
+    assert d["windows"][0]["metrics"]["profit_factor_net"] == 1.5
+
+
 # --- to_markdown ---
 
 
@@ -85,6 +110,19 @@ def test_to_markdown_contains_summary_and_table():
     assert "MET" in md or "NOT MET" in md
     assert "1/2" in md
     assert "n/a" in md  # the window with no metrics renders as n/a, not a crash
+
+
+def test_to_markdown_falls_back_to_net_when_fees_not_configured():
+    # without metrics_net_funding_only, the "PF net-funding" column should
+    # show the SAME value as PF net-fees (there's no fee cost to isolate)
+    md = report.to_markdown(mk_result())
+    assert "1.5000" in md  # appears at least twice: once for net-funding fallback, once for net-fees
+
+
+def test_to_markdown_shows_distinct_net_funding_and_net_fees_columns():
+    md = report.to_markdown(mk_result_with_fees())
+    assert "1.7000" in md  # PF net-funding (fees excluded)
+    assert "1.5000" in md  # PF net-fees (fully net)
 
 
 # --- write_report ---

@@ -114,6 +114,60 @@ def test_simulate_trade_preserves_censored_flag_from_label():
     assert trade.label.censored is True
 
 
+# --- fees (default 0.0, additive -- deep-dive F5) ---
+
+
+def test_simulate_trade_defaults_fees_to_zero_no_behavior_change():
+    signal = mk_signal(fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=95.0, take_profit=110.0, index=10)
+    granular = [mk(11, 100, 111, 99, 110)]
+    trade = ts.simulate_trade(signal, granular, funding_events=[], max_holding_bars=5)
+    assert trade.fee_cost_pct == pytest.approx(0.0)
+    assert trade.net_return_pct == pytest.approx(trade.label.return_pct)
+
+
+def test_simulate_trade_fee_cost_is_sum_of_entry_and_exit_fractions():
+    signal = mk_signal(fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=95.0, take_profit=110.0, index=10)
+    granular = [mk(11, 100, 111, 99, 110)]
+    trade = ts.simulate_trade(
+        signal, granular, funding_events=[], max_holding_bars=5, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005
+    )
+    assert trade.fee_cost_pct == pytest.approx(0.001)
+    assert trade.net_return_pct == pytest.approx(trade.label.return_pct - 0.001)
+
+
+def test_simulate_trade_fee_cost_is_direction_agnostic_unlike_funding():
+    # a SHORT pays the same fee a LONG would -- fees don't flip sign by
+    # direction the way funding_cost_pct does.
+    signal = mk_signal(fgt.TradeDirection.SHORT, entry_price=100.0, stop_loss=105.0, take_profit=90.0, index=10)
+    granular = [mk(11, 100, 101, 89, 90)]
+    trade = ts.simulate_trade(
+        signal, granular, funding_events=[], max_holding_bars=5, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005
+    )
+    assert trade.fee_cost_pct == pytest.approx(0.001)
+    assert trade.net_return_pct == pytest.approx(trade.label.return_pct - 0.001)
+
+
+def test_simulate_trade_combines_funding_and_fee_costs():
+    signal = mk_signal(fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=95.0, take_profit=110.0, index=10)
+    granular = [mk(11, 100, 101, 99, 100.5), mk(12, 100.5, 111, 100, 110)]
+    funding_events = [ts.FundingEvent(ts=mk(11, 0, 0, 0, 0).ts, rate=0.001)]
+    trade = ts.simulate_trade(
+        signal, granular, funding_events, max_holding_bars=5, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005
+    )
+    assert trade.funding_cost_pct == pytest.approx(0.001)
+    assert trade.fee_cost_pct == pytest.approx(0.001)
+    assert trade.net_return_pct == pytest.approx(trade.label.return_pct - 0.001 - 0.001)
+
+
+def test_simulate_trades_batch_passes_fee_fractions_through():
+    signal = mk_signal(fgt.TradeDirection.LONG, entry_price=100.0, stop_loss=95.0, take_profit=110.0, index=1)
+    candles = [mk(i, 100, 111, 99, 110) for i in range(4)]
+    trades = ts.simulate_trades(
+        [signal], candles, funding_events=[], max_holding_bars=5, fee_entry_fraction=0.0005, fee_exit_fraction=0.0005
+    )
+    assert trades[0].fee_cost_pct == pytest.approx(0.001)
+
+
 # --- simulate_trades (batch) ---
 
 

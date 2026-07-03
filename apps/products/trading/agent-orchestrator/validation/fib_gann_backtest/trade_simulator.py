@@ -116,7 +116,8 @@ class SimulatedTrade:
     label: fgt.TripleBarrierLabel
     funding_cost_pct: float  # direction-adjusted; positive = net cost, negative = net benefit
     funding_events_count: int
-    net_return_pct: float  # label.return_pct - funding_cost_pct
+    fee_cost_pct: float  # fee_entry_fraction + fee_exit_fraction, always a cost (fees don't care about direction, unlike funding)
+    net_return_pct: float  # label.return_pct - funding_cost_pct - fee_cost_pct
 
 
 def _funding_cost_pct(direction: fgt.TradeDirection, events_in_window: list[FundingEvent]) -> float:
@@ -129,15 +130,29 @@ def simulate_trade(
     granular_candles: list[fgt.Candle],
     funding_events: list[FundingEvent],
     max_holding_bars: int,
+    fee_entry_fraction: float = 0.0,
+    fee_exit_fraction: float = 0.0,
 ) -> SimulatedTrade:
     """Labels one signal's realized outcome (label_triple_barrier) and
-    deducts direction-adjusted funding cost accrued over the holding
-    window. granular_candles should already be sliced to start immediately
-    after the signal's own bar -- same caller responsibility
-    label_triple_barrier() itself documents."""
+    deducts direction-adjusted funding cost plus round-trip trading fees
+    accrued over the holding window. granular_candles should already be
+    sliced to start immediately after the signal's own bar -- same caller
+    responsibility label_triple_barrier() itself documents.
+
+    fee_entry_fraction/fee_exit_fraction default to 0.0 -- ADDITIVE, not a
+    behavior change for any existing caller that doesn't pass them (deep-dive
+    finding F5, docs/validation-deep-dive-2026-07.md: fees were entirely
+    unmodeled before this, and turned out to be the dominant real-money cost
+    for this ~11h-average-holding intraday system, not funding -- a 0.10%
+    Binance VIP0 taker-taker round-trip flips baseline mean trade return
+    negative, while funding for the same holding period is roughly 20x
+    smaller). Unlike funding_cost_pct, fees are NOT direction-adjusted --
+    both a taker entry and a taker exit cost the same regardless of
+    long/short, so fee_cost_pct is just the sum of the two fractions."""
     label = fgt.label_triple_barrier(signal.exit_plan, granular_candles, max_holding_bars)
     window_events = [event for event in funding_events if signal.ts <= event.ts <= label.exit_ts]
     funding_cost_pct = _funding_cost_pct(signal.direction, window_events)
+    fee_cost_pct = fee_entry_fraction + fee_exit_fraction
     return SimulatedTrade(
         signal_ts=signal.ts,
         signal_index=signal.index,
@@ -147,7 +162,8 @@ def simulate_trade(
         label=label,
         funding_cost_pct=funding_cost_pct,
         funding_events_count=len(window_events),
-        net_return_pct=label.return_pct - funding_cost_pct,
+        fee_cost_pct=fee_cost_pct,
+        net_return_pct=label.return_pct - funding_cost_pct - fee_cost_pct,
     )
 
 
@@ -156,6 +172,8 @@ def simulate_trades(
     candles: list[fgt.Candle],
     funding_events: list[FundingEvent],
     max_holding_bars: int,
+    fee_entry_fraction: float = 0.0,
+    fee_exit_fraction: float = 0.0,
 ) -> list[SimulatedTrade]:
     """Batch version: slices candles[signal.index + 1:] as the granular
     window for each signal (single-timeframe for now, matching
@@ -166,7 +184,7 @@ def simulate_trades(
         granular = candles[signal.index + 1 :]
         if not granular:
             continue
-        trades.append(simulate_trade(signal, granular, funding_events, max_holding_bars))
+        trades.append(simulate_trade(signal, granular, funding_events, max_holding_bars, fee_entry_fraction, fee_exit_fraction))
     return trades
 
 
