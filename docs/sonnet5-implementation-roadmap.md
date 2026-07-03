@@ -97,9 +97,8 @@ Titipan di PR draft 0d yang sama (satu kali review CODEOWNERS): kolom
 `risk_mandate.default_margin_mode` + `risk_pct_per_trade` untuk F7a —
 spec di `docs/margin-mode-brief.md` bag. 5.
 
-**Status: DRAFT disiapkan (2026-07-03), BELUM DIEKSEKUSI — PR terpisah,
-menunggu review & konfirmasi founder per langkah.** Batasan desain yang
-wajib dipatuhi (arahan founder eksplisit):
+**Status: SELESAI — DIEKSEKUSI PENUH DI PRODUCTION (2026-07-03).** Batasan
+desain yang dipatuhi (arahan founder eksplisit):
 
 - **`CREATE ROLE ... LOGIN` TIDAK boleh masuk migration Alembic** — password
   gak boleh ada di git, dan role itu sendiri objek CLUSTER-level (bukan
@@ -154,16 +153,56 @@ wajib dipatuhi (arahan founder eksplisit):
   sudah otomatis ke-cover krn grant-nya scope seluruh schema `public`,
   bukan daftar tabel manual per-servis.
 
-**Urutan eksekusi selanjutnya (BUKAN sekarang, tiap langkah butuh
-konfirmasi eksplisit founder sebelum dijalankan)**:
-1. Merge PR grant-migration ini (inert, gak ubah role aktif production).
-2. Founder bikin role `kinetiq_app` via Neon SQL Editor (langkah manual,
-   lihat batasan desain di atas).
-3. Uji acceptance di Neon **preview branch** dari role baru: `SELECT
-   trade_annotation` tanpa `set_config` harus 0 baris, INSERT ke tenant
-   salah harus ditolak, `rolbypassrls=false` terverifikasi lagi.
-4. Baru switch env Railway **satu servis dulu** (bukan langsung dua-duanya),
-   dengan `DATABASE_URL` lama disimpan terpisah untuk rollback cepat.
+**Eksekusi nyata (2026-07-03, founder yang jalankan tiap langkah manual,
+dikonfirmasi eksplisit per tahap sesuai urutan di atas)**:
+
+1. **PR #74 (migration grant-only) di-merge** — inert seperti didesain.
+2. **Role `kinetiq_app` dibuat founder via Neon SQL Editor** (bukan Console),
+   pakai `DO $$ IF EXISTS ... ALTER ROLE ... ELSE CREATE ROLE ... $$` supaya
+   satu blok jalan baik role sudah ada (placeholder NOLOGIN dari migration)
+   maupun belum. Terverifikasi: `rolbypassrls=false`, `rolsuper=false`,
+   `SELECT` `pg_auth_members` utk membership `neon_superuser` → **0 baris**
+   (tidak ada bypass tersembunyi).
+3. **Acceptance test di Neon preview branch — SEMUA LULUS**:
+   - `SELECT trade_annotation` tanpa `set_config` (sbg `kinetiq_app`, via
+     `SET ROLE`) → **0 baris** (RLS `USING` clause bekerja).
+   - `INSERT trade_annotation` tanpa `set_config`, pakai `tenant_id` ASLI
+     yg valid (bukan UUID palsu — biar gak ketabrak FK, murni tes RLS) →
+     **ditolak**, `ERROR: new row violates row-level security policy`
+     (SQLSTATE 42501) — RLS `WITH CHECK` clause bekerja.
+   - Jalur tulis worker ingestion (`INSERT`/`UPDATE`/`DELETE` `ohlcv`) →
+     **sukses semua**, tanpa error permission — grant migration 0006
+     lengkap utk tabel non-RLS juga.
+   - **Gotcha nyata ketemu di jalan**: tiap klik "Run" terpisah di Neon SQL
+     Editor ternyata bisa jadi KONEKSI BARU (bukan sesi yg sama walau di
+     tab yg sama) — `SET ROLE` dari satu klik TIDAK kebawa ke klik
+     berikutnya, bikin test awal salah baca (kelihatan `rolbypassrls`-like
+     alias masih `neondb_owner`, count kebaca 277 bukan 0, insert yg
+     seharusnya ditolak malah sukses). Fix: `SET ROLE` + query tes HARUS
+     digabung jadi SATU statement batch/klik Run, bukan dipisah — begitu
+     digabung, semua hasil sesuai ekspektasi. Beberapa baris tes nyasar
+     (dari percobaan yg salah-koneksi ini) dibersihkan manual sebelum
+     lanjut.
+4. **Switch env Railway, bertahap per servis, dikonfirmasi terpisah**:
+   - **Ingestion worker duluan** (blast radius kecil, gak ada dependency
+     migration): `DATABASE_URL` diganti ke `kinetiq_app`. **Diverifikasi
+     thd Railway asli**: `backfill SKIPPED (already covered)` semua
+     venue/symbol, `funding_rate OK`/`ohlcv OK` (ccxt) semua kombinasi
+     binance+bybit × BTC+ETH, `sleeping ...s until next 1h close` — siklus
+     normal penuh, nol error permission.
+   - **api-gateway kedua**: `DATABASE_URL_MIGRATIONS` (nilai `neondb_owner`
+     lama) ditambah SEBAGAI variable baru, `DATABASE_URL` diganti ke
+     `kinetiq_app`. **Diverifikasi thd Railway asli**: step `alembic
+     upgrade head` sukses bersih (baca `DATABASE_URL_MIGRATIONS`, bukan
+     `DATABASE_URL`, persis sesuai desain `env.py`), app start normal
+     (`Uvicorn running`), healthcheck **`GET /health` 200 OK**.
+
+**Hasil**: kedua servis production sekarang genuinely konek sebagai
+`kinetiq_app` (non-owner, `rolbypassrls=false`) — `FORCE ROW LEVEL
+SECURITY` (migration 0002) yg sebelumnya efektif NOL utk `neondb_owner`
+sekarang BENERAN aktif utk trafik aplikasi sehari-hari. Ini menutup temuan
+keamanan yg tercatat di `docs/prd.md`/`CLAUDE.md` sejak investigasi awal
+Juli 2026.
 
 ## Fase 1 — Simulator fee-aware (F5 deep-dive)
 
