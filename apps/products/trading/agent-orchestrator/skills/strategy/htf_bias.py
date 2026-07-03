@@ -142,7 +142,14 @@ def compute_bias(
     return ms.trend_bias(swings)
 
 
-def _bias_alignment(direction: fgt.TradeDirection, bias: ms.TrendBias) -> float:
+def bias_alignment(direction: fgt.TradeDirection, bias: ms.TrendBias) -> float:
+    """Single-timeframe 0-1 alignment score: HTF_ALIGNMENT_SCORE_ALIGNED
+    if `bias` agrees with `direction`, _OPPOSED if not, _NEUTRAL if `bias`
+    is UNDEFINED. Public (not just an internal helper of
+    htf_alignment_score() below) so any OTHER bias source -- e.g.
+    sma_trend_bias()'s candidate signal, per Fase 3
+    (docs/sonnet5-implementation-roadmap.md) -- can be turned into the
+    same comparable 0-1 scale without duplicating this mapping."""
     if bias is ms.TrendBias.UNDEFINED:
         return HTF_ALIGNMENT_SCORE_NEUTRAL
     wants_uptrend = direction is fgt.TradeDirection.LONG
@@ -172,7 +179,7 @@ def htf_alignment_score(
     total_weight = sum(present.values())
     if total_weight <= 0:
         return HTF_ALIGNMENT_SCORE_NEUTRAL
-    weighted_sum = sum(_bias_alignment(direction, biases[tf]) * w for tf, w in present.items())
+    weighted_sum = sum(bias_alignment(direction, biases[tf]) * w for tf, w in present.items())
     return weighted_sum / total_weight
 
 

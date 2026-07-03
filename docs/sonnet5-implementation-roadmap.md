@@ -205,6 +205,56 @@ jangan paksakan.
 Acceptance: report per window berisi AUC/Brier/korelasi; keputusan
 adopsi/tolak eksplisit di brief.
 
+**Status: SELESAI (2026-07-03).** `signal_runner.Signal` dapat 7 field baru
+(default 0.5 supaya ADITIF — 2 test lama yg konstruksi `Signal` langsung,
+`test_shadow_pair.py`/`test_trade_simulator.py`, TIDAK perlu disentuh sama
+sekali): `swing_quality`, `fib_gann_confluence`, `volume_confirmation`,
+`wick_rejection`, `structure_alignment`, `htf_alignment`, `regime_alignment`
+— plus `sma_trend_bias_alignment` sbg **kolom kandidat terpisah**
+(`htf_bias.sma_trend_bias()` diubah jadi skor 0-1 lewat `htf_bias.
+bias_alignment()`, yg sekarang public, BUKAN di-blend ke `htf_alignment`
+sesuai desain Fase 2). Modul baru `fit_weights.py`: `LogisticRegression
+(solver="saga", l1_ratio=0.5)` — elastic-net L1+L2 dlm 1 fit, tanpa feature
+scaling (semua faktor udah 0-1 native). Refit PER window walk-forward
+(train-range fit, test-range evaluasi, JANGAN sekali di seluruh data). Dua
+skema label dilaporkan: binary (TP=1/SL=0, TIMEOUT dikecualikan) dan
+3-kelas (BarrierOutcome +1/-1/0 langsung sbg label), trade `censored`
+dikecualikan dari keduanya. `regime_alignment` SENGAJA dikeluarkan dari
+fitur yg di-fit (identik `structure_alignment` di wiring skrg — collinearity
+sempurna tanpa nilai tambah, dicatat jelas di kode utk dipromosikan lagi
+begitu `market_regime.py` bikin keduanya beda beneran).
+`scikit-learn`/`numpy` HANYA masuk `packages/backtest-core[dev]` (CI `test`
+job doang) — TIDAK pernah masuk `requirements.txt` root atau
+`apps/products/trading/ingestion/requirements.txt` yg dipakai servis
+production. 25 test baru (`test_fit_weights.py` + tambahan
+`test_htf_bias.py`/`test_signal_runner.py`), 355 test total lulus, `ruff
+check` bersih.
+
+**Hasil real-data (BTC/USDT 1h Binance, 10 window walk-forward, bukan cuma
+unit test)**: skema binary primer (6 faktor yg sudah wired) — median AUC
+OOS **0.522**, korelasi confidence-vs-return OOS pooled (367 sampel)
+**+0.018**. **Kriteria adopsi TIDAK terpenuhi** (AUC median di bawah 0.55) —
+`ConfluenceWeights` default TIDAK diganti, sesuai "kalau tidak tercapai,
+laporkan jangan paksakan". Catatan jujur: korelasi +0.018 masih SANGAT
+lemah, tapi arahnya sudah POSITIF — perbaikan nyata drpd baseline
+hand-tuned lama yg r=-0.05 (F1), meski belum cukup kuat utk diadopsi.
+
+**Temuan sampingan yg justru paling penting**: fit `binary_with_sma_
+candidate` (6 faktor primer + `sma_trend_bias_alignment`) dpt median AUC
+**0.617** (naik dari 0.522) — dan `sma_trend_bias_alignment` dapat
+koefisien BUKAN-NOL di **SEMUA 10 dari 10 window** (rentang 0.164-1.448),
+sedangkan `htf_alignment` (basis swing, yg sekarang benerannya di-wire ke
+confidence) di-nolkan L1 di beberapa window (window 0, 3 antara lain) atau
+turun jauh saat kandidat SMA ikut di-fit bareng. Ini KONSISTEN PERSIS sama
+temuan F9 deep-dive (SMA50/200-alignment yg tervalidasi kausal, bukan
+trend_bias berbasis swing) — TAPI ini baru 1 sinyal dari fitting kandidat,
+BUKAN kriteria adopsi resmi (yg tetap dievaluasi di skema 6-faktor primer
+sesuai instruksi "kriteria adopsi tetap"). **Belum diadopsi/di-wire round
+ini** — dicatat sbg kandidat kuat utk direvisit (mis. ganti/tambah
+`sma_trend_bias_alignment` sbg slot resmi `ConfluenceWeights`, atau jadi
+bagian F6 kampanye OOS berikutnya) bukan keputusan yg diambil sepihak
+sekarang.
+
 ## Fase 4 — `skills/strategy/derivatives_context.py` (F6/F7; jawaban untuk funding/OI/long-short founder)
 
 Sumber: CoinGlass Hobbyist HARIAN (cukup; `1h` = 403 terkonfirmasi) +

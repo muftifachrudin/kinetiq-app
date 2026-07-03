@@ -71,6 +71,40 @@ class Signal:
     exit_plan: fgt.ExitPlan
     confidence: float  # 0-1, single-timeframe score_confluence() output
     structure_event: ms.StructureEvent | None
+    # Fase 3 (docs/sonnet5-implementation-roadmap.md) per-factor dump: the
+    # exact 0-1 values score_confluence() weighted-summed into `confidence`
+    # above, kept individually so fit_weights.py (or any other future
+    # consumer) can fit/inspect each factor's own relationship to trade
+    # outcomes instead of only ever seeing the pre-blended final score.
+    # structure_alignment and regime_alignment are stored SEPARATELY even
+    # though generate_signals() currently feeds score_confluence() the
+    # same value for both -- see fit_weights.py's module docstring on why
+    # a fitter should treat that as one factor, not two, until they
+    # actually diverge (e.g. once market_regime.py, PRD B.6, exists).
+    #
+    # All seven default to 0.5 (neutral) purely so this stays an ADDITIVE
+    # change: existing tests/call sites that construct a Signal directly
+    # without caring about these factors (test_shadow_pair.py,
+    # test_trade_simulator.py) don't need to be touched. generate_signals()
+    # itself always fills in the real computed values below, never these
+    # defaults.
+    swing_quality: float = 0.5
+    fib_gann_confluence: float = 0.5
+    volume_confirmation: float = 0.5
+    wick_rejection: float = 0.5
+    structure_alignment: float = 0.5
+    htf_alignment: float = 0.5
+    regime_alignment: float = 0.5
+    # sma_trend_bias() (htf_bias.py) is a SEPARATE candidate column, not
+    # part of the wired confidence formula at all (Fase 2 deliberately
+    # left it unblended -- deep-dive F9 found SMA-alignment causally
+    # validated, distinct from swing-based trend_bias/htf_alignment
+    # above). Same 0-1 alignment convention as htf_alignment
+    # (htf_bias.bias_alignment against the signal's own direction), kept
+    # here purely so Fase 3's fitting can evaluate it against
+    # htf_alignment and let the data decide which one (if either) earns
+    # a real weight -- see fit_weights.CANDIDATE_FEATURE_NAMES.
+    sma_trend_bias_alignment: float = 0.5
 
 
 def _entry_is_valid(direction: fgt.TradeDirection, entry_price: float, stop_loss: float) -> bool:
@@ -141,29 +175,40 @@ def generate_signals(
         direction = fgt.trade_direction_from_pivot(pivot)
         structure_score = ms.structure_alignment_score(structure_event, direction)
 
-        # candles[: i + 1], not the full list, here too -- resample_candles()
-        # itself has no lookahead (closed-bucket-only), but feeding it bars
-        # beyond `i` would let a partially-formed *current* HTF bucket see
-        # 1h candles from later in the backtest than this signal is allowed
-        # to know about.
-        htf_candles = candles[: i + 1]
-        daily_bias = hb.compute_bias(htf_candles, "1d", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
-        h4_bias = hb.compute_bias(htf_candles, "4h", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
+        # candles[: i + 1], not the full list, for everything below --
+        # resample_candles()/swing_quality() have no lookahead of their
+        # own, but feeding bars beyond `i` would let a partially-formed
+        # *current* HTF bucket, or swing_quality()'s recency component
+        # (which divides by len(candles)), see data from later in the
+        # backtest than this signal is allowed to know about.
+        signal_candles = candles[: i + 1]
+        daily_bias = hb.compute_bias(signal_candles, "1d", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
+        h4_bias = hb.compute_bias(signal_candles, "4h", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
         htf_score = hb.htf_alignment_score(direction, {"1d": daily_bias, "4h": h4_bias})
 
-        # candles[: i + 1], not the full list: swing_quality()'s recency
-        # component divides by len(candles) -- passing bars beyond `i`
-        # would understate recency using data not yet known at this point
-        # in the walk, a lookahead bug hiding inside a normalization, not
-        # a raw price/time value.
+        # sma_trend_bias() candidate column (Fase 3) -- NOT wired into
+        # confidence at all, purely dumped onto Signal below for
+        # fit_weights.py to evaluate against htf_score independently
+        # (see htf_bias.py's module docstring / deep-dive F9).
+        sma_bias = hb.sma_trend_bias(signal_candles)
+        sma_alignment_score = hb.bias_alignment(direction, sma_bias)
+
         confidence = fgt.score_confluence(
             pivot,
-            candles[: i + 1],
+            signal_candles,
             fib_confluence=fib_gann_conf,
             regime_alignment=structure_score,
             htf_alignment=htf_score,
             weights=confluence_weights,
         )
+        # Fase 3's per-factor dump (Signal.swing_quality/volume_confirmation
+        # below) needs these two RAW values individually, but
+        # score_confluence() only returns the pre-blended `confidence`
+        # total -- so they're recomputed here with the exact same call
+        # score_confluence() makes internally, rather than changing that
+        # function's public return type for every existing caller/test.
+        swing_quality_value = fgt.swing_quality(pivot, signal_candles)
+        volume_confirmation_value = min(1.0, fgt.volume_confirmation(pivot, signal_candles) / 2.0)
 
         entry_price = reference_price
         exit_plan = fgt.build_exit_plan(
@@ -187,6 +232,14 @@ def generate_signals(
                 exit_plan=exit_plan,
                 confidence=confidence,
                 structure_event=structure_event,
+                swing_quality=swing_quality_value,
+                fib_gann_confluence=fib_gann_conf,
+                volume_confirmation=volume_confirmation_value,
+                wick_rejection=pivot.wick_rejection_score,
+                structure_alignment=structure_score,
+                htf_alignment=htf_score,
+                regime_alignment=structure_score,
+                sma_trend_bias_alignment=sma_alignment_score,
             )
         )
 

@@ -838,3 +838,57 @@ sesuai ekspektasi. Funnel diagnostic tidak berubah: 6 sinyal dari fixture
 `noisy_zigzag()` (seed=42) tetap 6 sebelum/sesudah — `htf_alignment` cuma
 memodulasi nilai confidence, tidak pernah menggagalkan sinyal. Detail
 implementasi lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 2.
+
+## 25. Dump per-faktor + Part #2 fitting (Fase 3 roadmap, F1) — DIIMPLEMENTASI 3 Juli 2026, hasil: BELUM DIADOPSI (temuan valid, bukan kegagalan)
+
+Bagian yang mengubah confidence scoring dari opini (bobot hand-tuned) jadi
+sains (fitting thd outcome triple-barrier real). `signal_runner.Signal`
+dapat 7 field per-faktor baru — semua default `0.5` biar ADITIF murni,
+2 test lama yg konstruksi `Signal` langsung (`test_shadow_pair.py`,
+`test_trade_simulator.py`) TIDAK perlu disentuh sama sekali. Modul baru
+`validation/fib_gann_backtest/fit_weights.py`: `LogisticRegression
+(solver="saga", l1_ratio=0.5)` (elastic-net L1+L2 satu fit, bukan dua model
+terpisah), **refit PER window walk-forward** (train di train-range, evaluasi
+HANYA di test-range — bukan sekali di seluruh tahun, itu persis kesalahan yg
+bikin temuan F10 deep-dive cuma berstatus hipotesis in-sample). Dua skema
+label dilaporkan sesuai brief: binary (TAKE_PROFIT=1/STOP_LOSS=0, TIMEOUT
+dikecualikan total) dan 3-kelas (`BarrierOutcome` +1/-1/0 langsung jadi
+label). Trade `censored` dikecualikan dari kedua skema — outcome-nya belum
+genuinely diketahui, bukan TIMEOUT asli. `regime_alignment` SENGAJA
+dikeluarkan dari fitur yg di-fit (nilainya identik `structure_alignment` di
+wiring sekarang — collinearity sempurna tanpa nilai tambah).
+`scikit-learn`/`numpy` cuma masuk `packages/backtest-core[dev]` (CI `test`
+job doang), TIDAK PERNAH masuk `requirements.txt` root maupun
+`apps/products/trading/ingestion/requirements.txt` yg dipakai servis
+production beneran. 25 test baru, 355 test total lulus, ruff clean.
+
+**Kriteria adopsi (bag. 3c roadmap): AUC OOS median > 0.55 DAN korelasi
+confidence-vs-return OOS > 0.** Hasil real thd BTC/USDT 1h Binance (10
+window walk-forward, bukan cuma unit test): skema binary 6-faktor primer —
+median AUC OOS **0.522**, korelasi pooled (367 sampel OOS) **+0.018**.
+**TIDAK diadopsi** — AUC median di bawah ambang 0.55, meski korelasinya
+sudah POSITIF (perbaikan nyata drpd baseline hand-tuned lama F1 yg
+r=-0.05, walau masih sangat lemah). Sesuai prinsip "kalau tidak tercapai,
+laporkan jangan paksakan" — `ConfluenceWeights` default TIDAK diganti round
+ini.
+
+**Temuan sampingan (kolom kandidat `sma_trend_bias_alignment`) yg justru
+paling penting round ini**: sesuai arahan founder eksplisit, Fase 2's
+`htf_bias.sma_trend_bias()` (proxy close-vs-SMA200, sengaja TIDAK di-blend
+ke `htf_alignment` sejak Fase 2) di-dump jadi kolom kandidat terpisah dan
+di-fit sbg varian ke-3 (`binary_with_sma_candidate`, 6 faktor primer + kolom
+ini) — murni informational, TIDAK ikut kriteria adopsi resmi. Hasilnya:
+median AUC naik ke **0.617** (dari 0.522), dan `sma_trend_bias_alignment`
+dapat koefisien BUKAN-NOL di **SEMUA 10 dari 10 window** (rentang
+0.164-1.448) — sedangkan `htf_alignment` (basis swing, yg sekarang
+benerannya di-wire ke confidence via Fase 2) di-nolkan L1 di beberapa window
+atau turun jauh begitu kandidat SMA ikut di-fit bareng. Ini **konsisten
+persis** dengan temuan F9 deep-dive (SMA50/200-alignment yg tervalidasi
+kausal, bukan trend_bias berbasis swing) — tapi ini baru 1 sinyal dari
+fitting kandidat round ini, bukan kriteria adopsi resmi yg tetap dievaluasi
+di skema 6-faktor primer sesuai instruksi founder "kriteria adopsi tetap".
+**Belum diadopsi/di-wire ke `htf_alignment_score` round ini** — dicatat sbg
+kandidat kuat utk direvisit (mis. ganti/tambah `sma_trend_bias_alignment`
+jadi slot resmi `ConfluenceWeights`, atau bagian eksperimen Fase 6 kampanye
+OOS berikutnya), bukan keputusan yg diambil sepihak sekarang. Detail penuh:
+`docs/sonnet5-implementation-roadmap.md` Fase 3.
