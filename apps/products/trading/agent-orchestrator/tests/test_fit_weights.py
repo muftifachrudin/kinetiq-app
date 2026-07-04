@@ -87,6 +87,7 @@ def test_feature_vector_matches_feature_names_order():
     assert vec == [getattr(signal, name) for name in fw.FEATURE_NAMES]
     assert fw.FEATURE_NAMES == (
         "swing_quality", "fib_gann_confluence", "volume_confirmation", "wick_rejection", "structure_alignment", "htf_alignment",
+        "sma_trend_bias_alignment",
     )
 
 
@@ -276,12 +277,9 @@ def test_run_fit_weights_returns_one_result_per_window():
         assert r.test_count >= 0
         assert isinstance(r.binary, fw.SchemeResult)
         assert isinstance(r.three_class, fw.SchemeResult)
-        assert isinstance(r.binary_with_sma_candidate, fw.SchemeResult)
         assert isinstance(r.binary_with_derivatives_candidate, fw.SchemeResult)
         # candidate variant's coefficients (when fit succeeds) must cover
-        # exactly CANDIDATE_FEATURE_NAMES, one extra key vs the primary fit
-        if r.binary_with_sma_candidate.coefficients is not None:
-            assert set(r.binary_with_sma_candidate.coefficients) == set(fw.CANDIDATE_FEATURE_NAMES)
+        # exactly DERIVATIVES_FEATURE_NAMES, four extra keys vs the primary fit
         if r.binary_with_derivatives_candidate.coefficients is not None:
             assert set(r.binary_with_derivatives_candidate.coefficients) == set(fw.DERIVATIVES_FEATURE_NAMES)
 
@@ -295,44 +293,7 @@ def test_run_fit_weights_handles_window_with_no_candles():
     assert len(results) == 1
     assert results[0].binary.skip_reason is not None
     assert results[0].three_class.skip_reason is not None
-    assert results[0].binary_with_sma_candidate.skip_reason is not None
     assert results[0].binary_with_derivatives_candidate.skip_reason is not None
-
-
-# --- CANDIDATE_FEATURE_NAMES / sma_trend_bias candidate fit ---
-
-
-def mk_signal_with_sma(index: int, swing_quality: float, sma_trend_bias_alignment: float) -> sr.Signal:
-    signal = mk_signal(index, swing_quality=swing_quality)
-    return dataclasses.replace(signal, sma_trend_bias_alignment=sma_trend_bias_alignment)
-
-
-def test_candidate_feature_names_appends_sma_trend_bias_alignment():
-    assert fw.CANDIDATE_FEATURE_NAMES == fw.FEATURE_NAMES + ("sma_trend_bias_alignment",)
-
-
-def test_fit_binary_with_candidate_features_reports_one_more_coefficient():
-    rng = random.Random(11)
-
-    def build(n, start_idx):
-        out = []
-        for j in range(n):
-            i = start_idx + j
-            quality = 0.9 if j % 2 == 0 else 0.1
-            outcome = TP if rng.random() < (0.85 if quality > 0.5 else 0.15) else SL
-            signal = mk_signal_with_sma(i, swing_quality=quality, sma_trend_bias_alignment=quality)
-            trade = mk_trade(signal, outcome, 0.03 if outcome is TP else -0.02)
-            out.append(fw.LabeledSignal(signal=signal, trade=trade))
-        return out
-
-    train = build(60, 0)
-    test = build(20, 1000)
-    primary = fw._fit_binary(train, test)
-    candidate = fw._fit_binary(train, test, feature_names=fw.CANDIDATE_FEATURE_NAMES)
-    assert set(primary.coefficients) == set(fw.FEATURE_NAMES)
-    assert set(candidate.coefficients) == set(fw.CANDIDATE_FEATURE_NAMES)
-    assert "sma_trend_bias_alignment" in candidate.coefficients
-    assert "sma_trend_bias_alignment" not in primary.coefficients
 
 
 # --- DERIVATIVES_FEATURE_NAMES / derivatives candidate fit (Fase 4) ---
@@ -383,15 +344,7 @@ def _mk_window_fit_result(window_id: int, auc: float | None, oos_predictions: li
     w = WalkForwardWindow(window_id=window_id, train_start=ts_at(0), train_end=ts_at(10), test_start=ts_at(10), test_end=ts_at(20))
     binary = fw.SchemeResult(auc=auc, brier=0.2 if auc is not None else None, coefficients={} if auc is not None else None, skip_reason=None if auc is not None else "skipped", oos_predictions=oos_predictions)
     empty = fw.SchemeResult(None, None, None, "not exercised in this test", [])
-    return fw.WindowFitResult(
-        window=w,
-        train_count=10,
-        test_count=len(oos_predictions),
-        binary=binary,
-        three_class=empty,
-        binary_with_sma_candidate=empty,
-        binary_with_derivatives_candidate=empty,
-    )
+    return fw.WindowFitResult(window=w, train_count=10, test_count=len(oos_predictions), binary=binary, three_class=empty, binary_with_derivatives_candidate=empty)
 
 
 def test_evaluate_adoption_not_adopted_when_no_valid_windows():
@@ -432,3 +385,17 @@ def test_evaluate_adoption_not_adopted_when_correlation_passes_but_auc_does_not(
     decision = fw.evaluate_adoption(results)
     assert decision.pooled_oos_correlation > 0
     assert decision.adopted is False
+
+
+def test_evaluate_adoption_pools_across_concatenated_series():
+    # Fase 6b I3's formal sma_trend_bias_alignment adoption check
+    # (docs/sonnet5-implementation-roadmap.md) was evaluated this same
+    # way: this same function called on the CONCATENATION of multiple
+    # series' own window_results lists -- no separate pooling function
+    # needed.
+    predictions = [(0.9, 0.05), (0.8, 0.03), (0.2, -0.03), (0.1, -0.05), (0.6, 0.01), (0.4, -0.01)]
+    series_a = [_mk_window_fit_result(0, auc=0.6, oos_predictions=predictions)]
+    series_b = [_mk_window_fit_result(0, auc=0.8, oos_predictions=predictions)]
+    pooled_decision = fw.evaluate_adoption(series_a + series_b)
+    assert pooled_decision.total_windows == 2
+    assert pooled_decision.pooled_oos_sample_count == len(predictions) * 2

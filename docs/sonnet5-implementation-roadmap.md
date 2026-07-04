@@ -655,17 +655,86 @@ F7 Tahap 2).
   memangkas ~50% sinyal → funnel diagnostic wajib, dan statusnya kandidat
   yang diuji, bukan keputusan. Ekspektasi (hipotesis in-sample deep-dive):
   ini yang menggerakkan BTC dari ~1.0.
+
+  **Varian (b) SUDAH diuji empiris (3 Juli 2026, hari yg sama, sebelum
+  checklist ini digabung ke main) — kode baru `validation/fib_gann_
+  backtest/gated_campaign.py`, 4 seri × 4 gate (`no_gate`/
+  `confidence_only`/`trend_alignment_only`/`both_gates`), pakai
+  `sma_trend_bias_alignment` (bukan literal daily-bias swing-based) sbg
+  gate. **Hipotesis TERBUKTI BENAR**: `trend_alignment_only` naikkan avg
+  PF net BTC (rata² Binance+Bybit) ke **1.185** (dari baseline 0.963) dan
+  window lolos ke 8/20 (40%, dari 15%) — **PF net tertinggi di SELURUH
+  investigasi F1-F6**. Funnel: ~34-35% sinyal asli BTC tersisa (konsisten
+  dgn estimasi "~50% sinyal terpangkas" di atas). `confidence_only`
+  sendirian (bukan direction-gate) cuma naik tipis (0.973, 4/20) — jadi
+  yg terbukti "menggerakkan BTC" adalah trend-ALIGNMENT gate-nya (varian
+  b), bukan skor confidence umum. Utk ETH efeknya JAUH lebih lemah
+  (`both_gates` terbaik 0.903, `trend_alignment_only` sendiri nyaris tidak
+  membantu) — MASIH BELUM lolos kriteria promosi resmi bag. 7 di seri
+  manapun (individual tertinggi 4/10, butuh ≥7/10). Varian (a) *sizing
+  multiplier* BELUM diuji. Detail penuh: `docs/fib-gann-validation-brief.md`
+  Section 28.
 - **I2 — Bedah "bull terburuk universal"**: slice hasil campaign F6 per
   arah × regime. Hipotesis: cermin F2 lama — di bull, SHORT counter-trend
   yang membunuh (simetris LONG di bear). Kalau benar, I1 menyelesaikan
   keduanya; kalau salah, ada masalah lain yang wajib diketahui SEBELUM
   shadow.
+
+  **SUDAH dikerjakan (3 Juli 2026) — hipotesis TERBUKTI BENAR utk BTC**:
+  breakdown BTC/Binance per arah×regime (full-series, bukan per-window)
+  konfirmasi pola simetris persis: bull+long PF 1.20 (n=75) vs bull+short
+  PF 0.64 (n=96); bear+short PF 1.38 (n=133) vs bear+long PF 0.61 (n=139).
+  "Bull terburuk" ternyata artefak campuran dua populasi berlawanan arah,
+  bukan properti regime itu sendiri — I1(b) (gate trend-alignment)
+  memang menyelesaikan sebagian besar masalah ini sesuai prediksi. **Utk
+  ETH pola JAUH lebih kabur** (bahkan LONG di bulan bull ETH PF net cuma
+  0.66, tidak bagus) — bukan simetri bersih spt BTC, konsisten dgn kenapa
+  gate I1(b) juga jauh lebih lemah efeknya di ETH. Detail penuh:
+  `docs/fib-gann-validation-brief.md` Section 28.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
   koefisien non-nol 10/10 window di F3). Catatan dari F6 temuan #4: refit
   di config ketat makin noisy karena sampel kecil — laporkan juga fit
   pooled-lintas-seri sebagai sensitivity check, bukan pengganti kriteria.
+
+  **SELESAI — ADOPTED (3 Juli 2026, hari yg sama).** Kriteria di-pre-
+  register PERSIS spt di atas SEBELUM dijalankan thd data real (bukan
+  post-hoc): (a) tes kanonik BTC/Binance, config produksi default,
+  `fit_weights.evaluate_sma_candidate_adoption()` (fungsi baru,
+  refactor `evaluate_adoption()` jadi `_evaluate_adoption_generic()` yg
+  bisa dipakai ulang utk skema mana pun); (b) tes korroborasi 3 seri lain
+  scr terpisah; (c) sensitivity check pooled lintas SEMUA 4 seri (window
+  results dari 4 seri sekadar di-concat, fungsi yg sama, tanpa fungsi
+  pooling terpisah). **Hasil real (bukan dari memori F3, dijalankan ulang
+  fresh)**: kriteria terpenuhi di **SEMUA 4 seri secara independen** —
+  BTC/Binance AUC 0.617 korelasi +0.125; BTC/Bybit AUC 0.562 korelasi
+  +0.083; ETH/Binance AUC 0.584 korelasi +0.117; ETH/Bybit AUC 0.598
+  korelasi +0.128 — dan pooled-lintas-4-seri (n=1496, jauh lebih besar
+  drpd F6 temuan #4's kekhawatiran sampel kecil) AUC 0.583 korelasi
+  +0.116. **Adopted=True bulat di semua level pengujian, tanpa
+  pengecualian.**
+
+  **Diimplementasi**: `fit_weights.FEATURE_NAMES` sekarang 7 faktor
+  (nambah `sma_trend_bias_alignment` resmi), `CANDIDATE_FEATURE_NAMES`
+  + `WindowFitResult.binary_with_sma_candidate` + `evaluate_sma_
+  candidate_adoption()` DIHAPUS (tujuannya sudah tercapai, tidak ada lagi
+  perbedaan "candidate vs primary" utk sma khusus). `DERIVATIVES_FEATURE_
+  NAMES`/`ALL_CANDIDATE_FEATURE_NAMES` otomatis ikut nyakup sma (11 faktor
+  total), TANPA perubahan behavior ke `campaign.py`/`gated_campaign.py`
+  yg sudah ada (tuple isinya identik persis, cuma jalur turunannya beda).
+  6 test lama yg jadi usang dihapus, 1 test baru (`test_evaluate_adoption_
+  pools_across_concatenated_series`) gantiin fungsinya. 425 test total
+  lulus, ruff clean.
+
+  **PENTING — batas keputusan ini**: adopsi ini HANYA memformalkan
+  `sma_trend_bias_alignment` sbg bagian skema FITTING resmi
+  (`fit_weights.py`, validation harness, offline analysis) — TIDAK
+  mengubah `fib_gann_timing.ConfluenceWeights`/`score_confluence()`
+  produksi sama sekali. Sesuai prinsip gate-vs-skor (konteks F6b di
+  atas): mengubah bobot confidence produksi TIDAK ADA EFEK ke PF tanpa
+  konsumen (gate/sizing) — itu keputusan TERPISAH, later (mis. lewat I1
+  atau `gated_campaign.py`), BUKAN bagian I3 ini.
 - **I4 — Tutup F0c (backfill funding/OI native)** sebelum shadow Tahap 2:
   di shadow, gap sim-vs-real yang tak terjelaskan jatuh ke `residual` —
   semua komponen biaya harus hidup dulu supaya attribution bisa dipercaya.
