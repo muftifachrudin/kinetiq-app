@@ -96,15 +96,17 @@ class Signal:
     structure_alignment: float = 0.5
     htf_alignment: float = 0.5
     regime_alignment: float = 0.5
-    # sma_trend_bias() (htf_bias.py) is a SEPARATE candidate column, not
-    # part of the wired confidence formula at all (Fase 2 deliberately
-    # left it unblended -- deep-dive F9 found SMA-alignment causally
-    # validated, distinct from swing-based trend_bias/htf_alignment
-    # above). Same 0-1 alignment convention as htf_alignment
-    # (htf_bias.bias_alignment against the signal's own direction), kept
-    # here purely so Fase 3's fitting can evaluate it against
-    # htf_alignment and let the data decide which one (if either) earns
-    # a real weight -- see fit_weights.CANDIDATE_FEATURE_NAMES.
+    # sma_trend_bias() (htf_bias.py) -- NOT part of the wired confidence
+    # formula (Fase 2 deliberately left it unblended -- deep-dive F9 found
+    # SMA-alignment causally validated, distinct from swing-based
+    # trend_bias/htf_alignment above). Same 0-1 alignment convention as
+    # htf_alignment (htf_bias.bias_alignment against the signal's own
+    # direction). Officially adopted into fit_weights.FEATURE_NAMES (Fase
+    # 6b I3, 3 Juli 2026, pre-registered check: median AUC/correlation
+    # cleared on all 4 real series + pooled) -- still not blended into
+    # ConfluenceWeights/this dataclass's own confidence formula, that
+    # remains a separate, later decision (see fit_weights.py's module
+    # docstring).
     sma_trend_bias_alignment: float = 0.5
     # Fase 4 (docs/sonnet5-implementation-roadmap.md) derivatives_context.py
     # candidate columns -- same additive discipline as every field above:

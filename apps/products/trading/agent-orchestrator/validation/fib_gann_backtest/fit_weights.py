@@ -6,9 +6,8 @@ currently ANTI-predictive, pearson r=-0.05 against net_return_pct).
 
 3a (per-factor dump): reads signal_runner.Signal's per-factor fields
 directly (swing_quality, fib_gann_confluence, volume_confirmation,
-wick_rejection, structure_alignment, htf_alignment, plus the
-sma_trend_bias_alignment CANDIDATE column -- see CANDIDATE_FEATURE_NAMES
-below) -- nothing here recomputes those, this module is purely a
+wick_rejection, structure_alignment, htf_alignment, sma_trend_bias_
+alignment) -- nothing here recomputes those, this module is purely a
 consumer of the dump.
 
 3b (fitting): refits a logistic regression PER walk-forward window --
@@ -69,32 +68,45 @@ symmetrically: this module never mutates fib_gann_timing.ConfluenceWeights
 itself; adopting a fitted result is a deliberate, separate follow-up
 commit a human makes after reading this report.
 
-sma_trend_bias candidate: WindowFitResult.binary_with_sma_candidate is a
-THIRD, purely informational fit -- same binary TP-vs-SL scheme, same
-train/test split, but using CANDIDATE_FEATURE_NAMES (FEATURE_NAMES with
-sma_trend_bias_alignment appended) instead of FEATURE_NAMES alone. This
-answers Fase 2's deferred question -- whether swing-based htf_alignment
-or SMA-based sma_trend_bias_alignment is the more informative HTF
-signal -- by literally comparing coefficient magnitudes side by side,
-rather than guessing. It does NOT feed evaluate_adoption()'s decision;
-that stays defined on the primary FEATURE_NAMES fit only, per "kriteria
-adopsi tetap" (the acceptance criterion is unchanged by adding a
-candidate column).
+sma_trend_bias_alignment -- OFFICIALLY ADOPTED into FEATURE_NAMES (Fase
+6b I3, docs/sonnet5-implementation-roadmap.md, 3 Juli 2026): originally
+Fase 2's deferred question (swing-based htf_alignment vs SMA-based
+sma_trend_bias_alignment, which is the more informative HTF signal) was
+answered by keeping it as a separate unblended CANDIDATE_FEATURE_NAMES
+column and comparing coefficients side by side (Fase 3). That candidate
+fit cleared evaluate_adoption()'s own two criteria (median AUC > 0.55 AND
+correlation > 0) on a formal, pre-registered check -- individually on all
+4 real series (BTC/ETH x Binance/Bybit: AUC 0.56-0.62, correlation all
+positive 0.08-0.13) AND on the pooled-across-series sensitivity check
+(AUC 0.583, correlation +0.116, n=1496) -- so it graduated into FEATURE_
+NAMES directly; CANDIDATE_FEATURE_NAMES and the now-redundant informational-
+only comparison fit no longer exist as separate concepts. This does NOT
+by itself change fib_gann_timing.ConfluenceWeights/production signal
+scoring -- that's still a distinct, later decision (see the "gate-vs-
+skor" principle CLAUDE.md's F6b review recorded: a fitted-weights change
+here has no live consumer to move PF at all without a gate/sizing
+mechanism, e.g. F7a's PreTradeCard or the gated_campaign.py experiment).
 
 derivatives candidate (Fase 4, docs/sonnet5-implementation-roadmap.md):
-WindowFitResult.binary_with_derivatives_candidate is a FOURTH, likewise
+WindowFitResult.binary_with_derivatives_candidate is a SECOND, likewise
 purely informational fit, using DERIVATIVES_FEATURE_NAMES (FEATURE_NAMES
 plus derivatives_context.py's four direction-candidate columns:
 funding_contrarian_alignment, global_ls_contrarian_alignment,
-top_vs_global_alignment, liq_cascade_flag). Same rationale as the sma
-candidate: these are dumped onto Signal but never blended into
-ConfluenceWeights, so their coefficients only become visible through a
-separate fit, never through the primary adoption-gating one. A near-zero
-coefficient here is an expected, valid outcome for at least liq_cascade_
-flag -- the July deep-dive already found that whole OI/liq family to be
-"a coincident/volatility-regime indicator, not a directional predictor...
-zero effect on trade outcomes" (CLAUDE.md) -- this fit is what would make
-that concretely visible per-window rather than asserted from memory.
+top_vs_global_alignment, liq_cascade_flag). These are dumped onto Signal
+but never blended into ConfluenceWeights, so their coefficients only
+become visible through a separate fit, never through the primary
+adoption-gating one. A near-zero coefficient here is an expected, valid
+outcome for at least liq_cascade_flag -- the July deep-dive already found
+that whole OI/liq family to be "a coincident/volatility-regime indicator,
+not a directional predictor... zero effect on trade outcomes" (CLAUDE.md)
+-- this fit is what would make that concretely visible per-window rather
+than asserted from memory. ALL_CANDIDATE_FEATURE_NAMES is now identical
+to DERIVATIVES_FEATURE_NAMES (both = FEATURE_NAMES + the four derivatives
+columns) since sma_trend_bias_alignment's promotion above removed the
+distinction between "primary" and "sma-candidate" -- kept as its own name
+since campaign.py/gated_campaign.py already reference it and its meaning
+("every factor this codebase currently computes, in one fit") is still
+useful on its own terms.
 
 Depends on scikit-learn/numpy -- see packages/backtest-core/pyproject.toml's
 [dev] extra comment for why that's validation-harness-only, never a
@@ -126,12 +138,11 @@ FEATURE_NAMES = (
     "wick_rejection",
     "structure_alignment",
     "htf_alignment",
+    # Officially adopted (Fase 6b I3, 3 Juli 2026) -- see module docstring
+    # for the pre-registered check this cleared. Formerly a separate
+    # CANDIDATE_FEATURE_NAMES column; that distinction no longer exists.
+    "sma_trend_bias_alignment",
 )
-
-# FEATURE_NAMES plus the candidate column htf_bias.sma_trend_bias()
-# produces, deliberately kept separate from the primary fit -- see
-# WindowFitResult.binary_with_sma_candidate in the module docstring.
-CANDIDATE_FEATURE_NAMES = FEATURE_NAMES + ("sma_trend_bias_alignment",)
 
 # FEATURE_NAMES plus derivatives_context.py's four direction-candidate
 # columns (Fase 4) -- see WindowFitResult.binary_with_derivatives_candidate
@@ -145,20 +156,10 @@ DERIVATIVES_FEATURE_NAMES = FEATURE_NAMES + (
     "liq_cascade_flag",
 )
 
-# CANDIDATE_FEATURE_NAMES (the sma candidate) plus derivatives_context.py's
-# four columns -- every candidate this codebase has, combined. Fase 6
-# (docs/sonnet5-implementation-roadmap.md) refits with this full set to
-# check whether Fase 3's adoption bar (median AUC > 0.55, correlation > 0)
-# is newly met now that Fase 4's richer factor set exists -- Fase 3's own
-# 6-factor fit did not clear it. Purely informational (see campaign.py):
-# this constant does not change what feeds evaluate_adoption()'s official
-# decision, which stays defined on FEATURE_NAMES alone.
-ALL_CANDIDATE_FEATURE_NAMES = CANDIDATE_FEATURE_NAMES + (
-    "funding_contrarian_alignment",
-    "global_ls_contrarian_alignment",
-    "top_vs_global_alignment",
-    "liq_cascade_flag",
-)
+# Same tuple as DERIVATIVES_FEATURE_NAMES today -- kept as its own name
+# since campaign.py/gated_campaign.py already reference it (module
+# docstring explains why).
+ALL_CANDIDATE_FEATURE_NAMES = DERIVATIVES_FEATURE_NAMES
 
 # Fewer usable (non-TIMEOUT, non-censored) train samples than this and a
 # logistic fit is noise, not signal -- arbitrary-but-documented floor, not
@@ -333,11 +334,6 @@ class WindowFitResult:
     test_count: int
     binary: SchemeResult
     three_class: SchemeResult
-    # Same binary TP-vs-SL scheme as `binary`, but fit on
-    # CANDIDATE_FEATURE_NAMES (adds sma_trend_bias_alignment) -- purely
-    # informational, does NOT feed evaluate_adoption(). See module
-    # docstring's "sma_trend_bias candidate" section.
-    binary_with_sma_candidate: SchemeResult
     # Same binary TP-vs-SL scheme, fit on DERIVATIVES_FEATURE_NAMES (Fase
     # 4) -- purely informational, does NOT feed evaluate_adoption(). See
     # module docstring's "derivatives candidate" section.
@@ -373,7 +369,6 @@ def run_fit_weights(
                     test_count=0,
                     binary=empty,
                     three_class=empty,
-                    binary_with_sma_candidate=empty,
                     binary_with_derivatives_candidate=empty,
                 )
             )
@@ -390,7 +385,6 @@ def run_fit_weights(
                 test_count=len(test),
                 binary=_fit_binary(train, test),
                 three_class=_fit_three_class(train, test),
-                binary_with_sma_candidate=_fit_binary(train, test, feature_names=CANDIDATE_FEATURE_NAMES),
                 binary_with_derivatives_candidate=_fit_binary(train, test, feature_names=DERIVATIVES_FEATURE_NAMES),
             )
         )
@@ -407,22 +401,22 @@ class AdoptionDecision:
     adopted: bool
 
 
-def _evaluate_adoption_generic(window_results: list[WindowFitResult], get_scheme) -> AdoptionDecision:
-    """Shared logic behind evaluate_adoption()/evaluate_sma_candidate_
-    adoption() -- get_scheme(wr) picks which SchemeResult on a
-    WindowFitResult to evaluate (wr.binary for the primary FEATURE_NAMES
-    fit, wr.binary_with_sma_candidate for the I3 formal check below).
+def evaluate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
+    """3c: reports whether ConfluenceWeights' hand-tuned defaults should
+    be replaced by a fitted result -- never applies that decision itself.
+    See module docstring for exactly which two conditions must BOTH hold.
+
     window_results is a flat list with no special handling for which
     series/window each entry came from -- passing in the CONCATENATION of
-    multiple series' own window_results lists is exactly how a pooled-
-    across-series sensitivity check is computed (docs/sonnet5-
-    implementation-roadmap.md Fase 6b I3's "sensitivity check" note), no
-    separate pooling function needed."""
-    schemes = [get_scheme(wr) for wr in window_results]
-    aucs = [s.auc for s in schemes if s.auc is not None]
-    median_auc = statistics.median(aucs) if aucs else None
+    multiple series' own window_results lists pools the check across
+    series (this is exactly how Fase 6b I3's formal sma_trend_bias_
+    alignment adoption decision was evaluated, both per-series and
+    pooled, before it graduated into FEATURE_NAMES -- see module
+    docstring)."""
+    binary_aucs = [wr.binary.auc for wr in window_results if wr.binary.auc is not None]
+    median_auc = statistics.median(binary_aucs) if binary_aucs else None
 
-    pooled = [pair for s in schemes for pair in s.oos_predictions]
+    pooled = [pair for wr in window_results for pair in wr.binary.oos_predictions]
     correlation = None
     if len(pooled) >= 2:
         confidences = [p[0] for p in pooled]
@@ -433,31 +427,10 @@ def _evaluate_adoption_generic(window_results: list[WindowFitResult], get_scheme
     adopted = median_auc is not None and median_auc > ADOPTION_MIN_MEDIAN_AUC and correlation is not None and correlation > ADOPTION_MIN_CORRELATION
 
     return AdoptionDecision(
-        windows_with_valid_binary_fit=len(aucs),
+        windows_with_valid_binary_fit=len(binary_aucs),
         total_windows=len(window_results),
         median_binary_auc=median_auc,
         pooled_oos_correlation=correlation,
         pooled_oos_sample_count=len(pooled),
         adopted=adopted,
     )
-
-
-def evaluate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
-    """3c: reports whether ConfluenceWeights' hand-tuned defaults should
-    be replaced by a fitted result -- never applies that decision itself.
-    See module docstring for exactly which two conditions must BOTH hold."""
-    return _evaluate_adoption_generic(window_results, lambda wr: wr.binary)
-
-
-def evaluate_sma_candidate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
-    """Fase 6b I3 (docs/sonnet5-implementation-roadmap.md): a formal,
-    pre-registered decision on whether sma_trend_bias_alignment (Fase 2's
-    htf_bias.sma_trend_bias() candidate column, kept unblended since Fase
-    2 pending exactly this check) should graduate from CANDIDATE_FEATURE_
-    NAMES into the primary FEATURE_NAMES fitting scheme -- SAME two
-    criteria as evaluate_adoption() (median AUC > 0.55 AND correlation >
-    0), applied to binary_with_sma_candidate instead of binary. Never
-    applies the promotion itself, same "report, don't force" discipline;
-    see the roadmap doc for the actual decision once real data is run
-    through this."""
-    return _evaluate_adoption_generic(window_results, lambda wr: wr.binary_with_sma_candidate)
