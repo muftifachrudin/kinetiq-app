@@ -106,13 +106,26 @@ FACTOR_SCORE_FIELDS = (
 def load_candles(db: Session, instrument_id: int, timeframe: str) -> list[fgt.Candle]:
     """Every ohlcv row on file for this (instrument, timeframe), ascending by
     ts -- Numeric columns come back as Decimal via SQLAlchemy, cast to float
-    since every fib_gann_timing/signal_runner function expects plain floats."""
+    since every fib_gann_timing/signal_runner function expects plain floats.
+
+    Commits immediately after the read (real production bug, caught via
+    Railway Deploy Logs post-F0e-P1 3-year backfill: this SELECT can now
+    return ~26k rows/instrument, and the caller's very next step is
+    generate_signals() -- CPU-bound, zero DB traffic, potentially tens of
+    seconds -- with NO commit in between. That leaves this query's
+    implicit transaction sitting idle for the whole computation, which
+    Neon's idle_in_transaction_session_timeout kills, failing the NEXT
+    query issued afterward with psycopg.errors.IdleInTransactionSession
+    Timeout even though nothing was actually stuck. A plain SELECT has
+    nothing to commit -- this call is about closing the transaction, not
+    persisting data."""
     rows = (
         db.query(Ohlcv)
         .filter_by(instrument_id=instrument_id, timeframe=timeframe)
         .order_by(Ohlcv.ts.asc())
         .all()
     )
+    db.commit()
     return [
         fgt.Candle(ts=row.ts, open=float(row.open), high=float(row.high), low=float(row.low), close=float(row.close), volume=float(row.volume))
         for row in rows
