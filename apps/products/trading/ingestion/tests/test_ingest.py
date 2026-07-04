@@ -62,13 +62,45 @@ def test_get_session_enables_pool_pre_ping(monkeypatch):
     captured = {}
 
     def fake_create_engine(url, **kwargs):
-        captured["kwargs"] = kwargs
+        captured["engine_kwargs"] = kwargs
         return "fake-engine"
 
+    def fake_sessionmaker(bind, **kwargs):
+        captured["sessionmaker_kwargs"] = kwargs
+        return lambda: "fake-session"
+
     monkeypatch.setattr(ingest, "create_engine", fake_create_engine)
-    monkeypatch.setattr(ingest, "sessionmaker", lambda bind: (lambda: "fake-session"))
+    monkeypatch.setattr(ingest, "sessionmaker", fake_sessionmaker)
 
     ingest.get_session()
 
-    assert captured["kwargs"]["pool_pre_ping"] is True
-    assert captured["kwargs"]["pool_recycle"] == 300
+    assert captured["engine_kwargs"]["pool_pre_ping"] is True
+    assert captured["engine_kwargs"]["pool_recycle"] == 300
+
+
+def test_get_session_disables_expire_on_commit(monkeypatch):
+    # Regression test for a real production crash found chasing the above
+    # fix further: SQLAlchemy's default expire_on_commit=True marks every
+    # already-loaded ORM object (e.g. the long-lived `instrument`/`venue`
+    # objects setup_venues() loads once and every cycle reuses) stale
+    # after ANY commit, forcing a lazy-reload SELECT the next time code
+    # merely reads instrument.id -- fatal when that next read comes after
+    # signal_loop.py's multi-minute generate_signals() CPU-bound gap, since
+    # by then Neon has already killed the idle connection and this lazy
+    # reload fails with IdleInTransactionSessionTimeout (pool_pre_ping/
+    # pool_recycle don't help: this session's one connection is never
+    # returned to the pool between operations for them to validate).
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host/db")
+    captured = {}
+
+    monkeypatch.setattr(ingest, "create_engine", lambda url, **kwargs: "fake-engine")
+
+    def fake_sessionmaker(bind, **kwargs):
+        captured["sessionmaker_kwargs"] = kwargs
+        return lambda: "fake-session"
+
+    monkeypatch.setattr(ingest, "sessionmaker", fake_sessionmaker)
+
+    ingest.get_session()
+
+    assert captured["sessionmaker_kwargs"]["expire_on_commit"] is False
