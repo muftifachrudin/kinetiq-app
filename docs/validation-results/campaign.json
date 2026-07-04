@@ -1,0 +1,466 @@
+[
+  {
+    "series": "binance_BTC",
+    "config_name": "current_defaults",
+    "total_signals": 2044,
+    "total_windows": 35,
+    "windows_passing_pf": 1,
+    "promoted": false,
+    "pooled_pf_net": 0.8857350325266818,
+    "pooled_pf_net_ci90": [
+      0.8002910633358005,
+      0.9711983001574697
+    ],
+    "regime_metrics": {
+      "range": {
+        "trade_count": 569,
+        "profit_factor_net": 0.9487833704545859
+      },
+      "bear": {
+        "trade_count": 537,
+        "profit_factor_net": 0.8846513156729104
+      },
+      "bull": {
+        "trade_count": 832,
+        "profit_factor_net": 0.8427135906366249
+      }
+    },
+    "direction_regime_metrics": {
+      "long_range": {
+        "trade_count": 279,
+        "profit_factor_net": 0.9774083010309239
+      },
+      "long_bear": {
+        "trade_count": 285,
+        "profit_factor_net": 0.6552502326881771
+      },
+      "short_bear": {
+        "trade_count": 252,
+        "profit_factor_net": 1.2936178978767041
+      },
+      "short_range": {
+        "trade_count": 290,
+        "profit_factor_net": 0.9181112603530671
+      },
+      "short_bull": {
+        "trade_count": 435,
+        "profit_factor_net": 0.6408332605026836
+      },
+      "long_bull": {
+        "trade_count": 397,
+        "profit_factor_net": 1.0968364289865018
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.5540540540540541,
+      "pooled_correlation": 0.03809412856378834,
+      "adopted": true
+    }
+  },
+  {
+    "series": "binance_BTC",
+    "config_name": "f5_candidate",
+    "total_signals": 1133,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.9202446937407812,
+    "pooled_pf_net_ci90": [
+      0.8029934936493233,
+      1.0460628446814306
+    ],
+    "regime_metrics": {
+      "bear": {
+        "trade_count": 308,
+        "profit_factor_net": 0.9033029608179767
+      },
+      "range": {
+        "trade_count": 315,
+        "profit_factor_net": 0.879465723177181
+      },
+      "bull": {
+        "trade_count": 452,
+        "profit_factor_net": 0.9680681720571722
+      }
+    },
+    "direction_regime_metrics": {
+      "long_bear": {
+        "trade_count": 175,
+        "profit_factor_net": 0.6480143801937759
+      },
+      "short_bear": {
+        "trade_count": 133,
+        "profit_factor_net": 1.4218232580353805
+      },
+      "long_range": {
+        "trade_count": 152,
+        "profit_factor_net": 0.9792535562654231
+      },
+      "short_range": {
+        "trade_count": 163,
+        "profit_factor_net": 0.7783666592100796
+      },
+      "short_bull": {
+        "trade_count": 254,
+        "profit_factor_net": 0.6433517660768442
+      },
+      "long_bull": {
+        "trade_count": 198,
+        "profit_factor_net": 1.530515330571141
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.5,
+      "pooled_correlation": 0.03243899987974772,
+      "adopted": false
+    }
+  },
+  {
+    "series": "bybit_BTC",
+    "config_name": "current_defaults",
+    "total_signals": 2020,
+    "total_windows": 35,
+    "windows_passing_pf": 2,
+    "promoted": false,
+    "pooled_pf_net": 0.9100202164630516,
+    "pooled_pf_net_ci90": [
+      0.824155059125855,
+      1.0012631084677635
+    ],
+    "regime_metrics": {
+      "range": {
+        "trade_count": 569,
+        "profit_factor_net": 0.968070893443373
+      },
+      "bear": {
+        "trade_count": 520,
+        "profit_factor_net": 0.8897600979751844
+      },
+      "bull": {
+        "trade_count": 829,
+        "profit_factor_net": 0.8838996088846173
+      }
+    },
+    "direction_regime_metrics": {
+      "long_range": {
+        "trade_count": 280,
+        "profit_factor_net": 0.9359330884013667
+      },
+      "long_bear": {
+        "trade_count": 276,
+        "profit_factor_net": 0.6752891480451679
+      },
+      "short_bear": {
+        "trade_count": 244,
+        "profit_factor_net": 1.2547971071877957
+      },
+      "short_range": {
+        "trade_count": 289,
+        "profit_factor_net": 1.0045241394850273
+      },
+      "short_bull": {
+        "trade_count": 427,
+        "profit_factor_net": 0.6400461588167594
+      },
+      "long_bull": {
+        "trade_count": 402,
+        "profit_factor_net": 1.1978131756861752
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.508,
+      "pooled_correlation": -0.016143429667156897,
+      "adopted": false
+    }
+  },
+  {
+    "series": "bybit_BTC",
+    "config_name": "f5_candidate",
+    "total_signals": 1125,
+    "total_windows": 35,
+    "windows_passing_pf": 8,
+    "promoted": false,
+    "pooled_pf_net": 0.9381203628583676,
+    "pooled_pf_net_ci90": [
+      0.8272685995824217,
+      1.0662699932949573
+    ],
+    "regime_metrics": {
+      "bear": {
+        "trade_count": 300,
+        "profit_factor_net": 0.9021657817415852
+      },
+      "range": {
+        "trade_count": 319,
+        "profit_factor_net": 0.91083718873622
+      },
+      "bull": {
+        "trade_count": 447,
+        "profit_factor_net": 0.9908035988727066
+      }
+    },
+    "direction_regime_metrics": {
+      "long_bear": {
+        "trade_count": 168,
+        "profit_factor_net": 0.623993638215859
+      },
+      "short_bear": {
+        "trade_count": 132,
+        "profit_factor_net": 1.5105619543007023
+      },
+      "long_range": {
+        "trade_count": 157,
+        "profit_factor_net": 1.0473948485645634
+      },
+      "short_range": {
+        "trade_count": 162,
+        "profit_factor_net": 0.7710597468329943
+      },
+      "short_bull": {
+        "trade_count": 247,
+        "profit_factor_net": 0.6581563800011765
+      },
+      "long_bull": {
+        "trade_count": 200,
+        "profit_factor_net": 1.5589479020161194
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.5178571428571428,
+      "pooled_correlation": 0.0340091494482038,
+      "adopted": false
+    }
+  },
+  {
+    "series": "binance_ETH",
+    "config_name": "current_defaults",
+    "total_signals": 2050,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.8833104048351038,
+    "pooled_pf_net_ci90": [
+      0.8029365047746357,
+      0.9740122702628733
+    ],
+    "regime_metrics": {
+      "bear": {
+        "trade_count": 843,
+        "profit_factor_net": 0.807931010601319
+      },
+      "range": {
+        "trade_count": 441,
+        "profit_factor_net": 1.1492556220337176
+      },
+      "bull": {
+        "trade_count": 658,
+        "profit_factor_net": 0.8406544791284511
+      }
+    },
+    "direction_regime_metrics": {
+      "long_bear": {
+        "trade_count": 444,
+        "profit_factor_net": 0.6796899563964902
+      },
+      "short_bear": {
+        "trade_count": 399,
+        "profit_factor_net": 0.9874962194521493
+      },
+      "long_range": {
+        "trade_count": 217,
+        "profit_factor_net": 1.4580681343680222
+      },
+      "short_range": {
+        "trade_count": 224,
+        "profit_factor_net": 0.8961473715166804
+      },
+      "short_bull": {
+        "trade_count": 353,
+        "profit_factor_net": 0.6903196312419169
+      },
+      "long_bull": {
+        "trade_count": 305,
+        "profit_factor_net": 1.0100294825055556
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.5384615384615384,
+      "pooled_correlation": 0.10070589000790175,
+      "adopted": false
+    }
+  },
+  {
+    "series": "binance_ETH",
+    "config_name": "f5_candidate",
+    "total_signals": 1143,
+    "total_windows": 35,
+    "windows_passing_pf": 10,
+    "promoted": false,
+    "pooled_pf_net": 1.0390646911972816,
+    "pooled_pf_net_ci90": [
+      0.9163543023834205,
+      1.1908324454716592
+    ],
+    "regime_metrics": {
+      "bear": {
+        "trade_count": 461,
+        "profit_factor_net": 1.0313422794666245
+      },
+      "range": {
+        "trade_count": 248,
+        "profit_factor_net": 1.3302875050221807
+      },
+      "bull": {
+        "trade_count": 375,
+        "profit_factor_net": 0.896790392760427
+      }
+    },
+    "direction_regime_metrics": {
+      "long_bear": {
+        "trade_count": 243,
+        "profit_factor_net": 0.8678311975269565
+      },
+      "short_bear": {
+        "trade_count": 218,
+        "profit_factor_net": 1.272408330495415
+      },
+      "short_range": {
+        "trade_count": 128,
+        "profit_factor_net": 0.9994070680440402
+      },
+      "long_range": {
+        "trade_count": 120,
+        "profit_factor_net": 1.712981486627024
+      },
+      "short_bull": {
+        "trade_count": 207,
+        "profit_factor_net": 0.7062083475311249
+      },
+      "long_bull": {
+        "trade_count": 168,
+        "profit_factor_net": 1.153926459946137
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.6833333333333333,
+      "pooled_correlation": 0.07631800426507777,
+      "adopted": true
+    }
+  },
+  {
+    "series": "bybit_ETH",
+    "config_name": "current_defaults",
+    "total_signals": 2039,
+    "total_windows": 35,
+    "windows_passing_pf": 2,
+    "promoted": false,
+    "pooled_pf_net": 0.9015200779302158,
+    "pooled_pf_net_ci90": [
+      0.816265837200135,
+      0.9880500870527203
+    ],
+    "regime_metrics": {
+      "range": {
+        "trade_count": 441,
+        "profit_factor_net": 1.1584399405890125
+      },
+      "bear": {
+        "trade_count": 831,
+        "profit_factor_net": 0.8160709768320576
+      },
+      "bull": {
+        "trade_count": 665,
+        "profit_factor_net": 0.8772287266322382
+      }
+    },
+    "direction_regime_metrics": {
+      "short_range": {
+        "trade_count": 227,
+        "profit_factor_net": 0.9705255463694875
+      },
+      "long_bear": {
+        "trade_count": 437,
+        "profit_factor_net": 0.7288876924838325
+      },
+      "short_bear": {
+        "trade_count": 394,
+        "profit_factor_net": 0.9331726154447141
+      },
+      "long_range": {
+        "trade_count": 214,
+        "profit_factor_net": 1.376654441213129
+      },
+      "short_bull": {
+        "trade_count": 357,
+        "profit_factor_net": 0.7131452727683868
+      },
+      "long_bull": {
+        "trade_count": 308,
+        "profit_factor_net": 1.0699170976134242
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.5203761755485894,
+      "pooled_correlation": 0.07834525337402848,
+      "adopted": false
+    }
+  },
+  {
+    "series": "bybit_ETH",
+    "config_name": "f5_candidate",
+    "total_signals": 1145,
+    "total_windows": 35,
+    "windows_passing_pf": 10,
+    "promoted": false,
+    "pooled_pf_net": 1.0458416069327074,
+    "pooled_pf_net_ci90": [
+      0.9162860895987677,
+      1.193214296194006
+    ],
+    "regime_metrics": {
+      "bear": {
+        "trade_count": 458,
+        "profit_factor_net": 0.9973767802366075
+      },
+      "range": {
+        "trade_count": 251,
+        "profit_factor_net": 1.273786837178796
+      },
+      "bull": {
+        "trade_count": 376,
+        "profit_factor_net": 0.9817725923320235
+      }
+    },
+    "direction_regime_metrics": {
+      "long_bear": {
+        "trade_count": 240,
+        "profit_factor_net": 0.886340371117219
+      },
+      "short_bear": {
+        "trade_count": 218,
+        "profit_factor_net": 1.1501860639344825
+      },
+      "long_range": {
+        "trade_count": 121,
+        "profit_factor_net": 1.4802813097088345
+      },
+      "short_range": {
+        "trade_count": 130,
+        "profit_factor_net": 1.0798149711281795
+      },
+      "short_bull": {
+        "trade_count": 203,
+        "profit_factor_net": 0.76020742933916
+      },
+      "long_bull": {
+        "trade_count": 173,
+        "profit_factor_net": 1.2828505594019257
+      }
+    },
+    "fit_report": {
+      "median_auc": 0.6111111111111112,
+      "pooled_correlation": 0.03249109740065976,
+      "adopted": true
+    }
+  }
+]
