@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "validation" / "fib_gann_b
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
 import derivatives_context as dc  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
+import htf_bias as hb  # noqa: E402
 import signal_runner as sr  # noqa: E402
 
 UTC = datetime.timezone.utc
@@ -238,7 +239,7 @@ def test_generate_signals_populates_per_factor_dump_fields():
         for value in (
             s.swing_quality, s.fib_gann_confluence, s.volume_confirmation, s.wick_rejection,
             s.structure_alignment, s.htf_alignment, s.regime_alignment, s.sma_trend_bias_alignment,
-            s.funding_contrarian_alignment, s.global_ls_contrarian_alignment, s.top_vs_global_alignment,
+            s.daily_bias_alignment, s.funding_contrarian_alignment, s.global_ls_contrarian_alignment, s.top_vs_global_alignment,
         ):
             assert 0.0 <= value <= 1.0
         assert s.fib_gann_confluence > 0.0  # the touch-trigger condition itself guarantees this
@@ -249,6 +250,24 @@ def test_generate_signals_populates_per_factor_dump_fields():
         assert s.global_ls_contrarian_alignment == 0.5
         assert s.top_vs_global_alignment == 0.5
         assert s.liq_cascade_flag == 0.0
+
+
+def test_generate_signals_daily_bias_alignment_matches_single_timeframe_daily_bias():
+    # F6b I1(b) (docs/sonnet5-implementation-roadmap.md): daily_bias_alignment
+    # must be the literal single-timeframe Daily bias_alignment, NOT the
+    # htf_alignment blend (which also folds in 4h) and NOT sma_trend_bias_
+    # alignment (a different, SMA-based proxy) -- recomputed independently
+    # here via the same htf_bias.compute_bias()/bias_alignment() calls
+    # generate_signals() itself uses, against the causally-truncated candle
+    # slice available at each signal's own bar.
+    candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
+    assert signals
+    for s in signals:
+        signal_candles = candles[: s.index + 1]
+        expected_daily_bias = hb.compute_bias(signal_candles, "1d")
+        expected_alignment = hb.bias_alignment(s.direction, expected_daily_bias)
+        assert s.daily_bias_alignment == expected_alignment
 
 
 def test_generate_signals_wires_derivatives_context_when_records_supplied():
