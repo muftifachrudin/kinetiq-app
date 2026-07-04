@@ -66,12 +66,31 @@ def get_session() -> Session:
     # "SSL connection has been closed unexpectedly" instead of transparently
     # reconnecting. pool_recycle is a second layer (proactively discard
     # connections older than this, rather than only reacting to a dead one).
+    #
+    # expire_on_commit=False: real production bug (found chasing the
+    # signal_loop idle-in-transaction fix further) -- SQLAlchemy's DEFAULT
+    # expire_on_commit=True marks every already-loaded ORM object's
+    # attributes (e.g. the long-lived `instrument`/`venue` objects
+    # setup_venues() loads once at startup and every cycle reuses from
+    # ctx.instruments) as stale after ANY db.commit() anywhere in the
+    # session, forcing a fresh SELECT the next time code merely reads
+    # instrument.id. That's harmless when the gap before the next read is
+    # short, but signal_loop.py's generate_signals() call is a multi-
+    # minute CPU-bound gap with zero DB traffic (worse now with F0e P1's
+    # 3-year/~26k-candle backfill) -- by the time the lazy-reload SELECT
+    # fires, Neon has already killed the connection, and pool_pre_ping/
+    # pool_recycle above don't help here because this session's single
+    # connection is never returned to the pool between operations for
+    # them to validate at checkout. expire_on_commit=False keeps already-
+    # loaded scalar attributes (id, venue_id, symbol, ...) cached in
+    # Python memory across commits instead, so this lazy-reload never
+    # happens for objects already in memory.
     engine = create_engine(
         normalize_db_url(os.environ["DATABASE_URL"]),
         pool_pre_ping=True,
         pool_recycle=300,
     )
-    return sessionmaker(bind=engine)()
+    return sessionmaker(bind=engine, expire_on_commit=False)()
 
 
 def upsert_venue(db: Session, venue_name: str, venue_type: str) -> Venue:
