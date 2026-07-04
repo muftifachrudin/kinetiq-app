@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "connectors", "cex"))
 
 import ccxt  # noqa: E402
 import ingest  # noqa: E402
+import signal_loop  # noqa: E402
 
 _shutdown_requested = False
 
@@ -84,11 +85,26 @@ def run_forever(
     setup_venues_fn=ingest.setup_venues,
     backfill_run_fn=ingest.backfill_run,
     poll_once_fn=ingest.poll_once,
+    generate_signals=True,
+    generate_signals_fn=signal_loop.run_signal_loop_once,
 ) -> None:
     """The *_fn params default to the real ingest.py functions -- tests
     inject fakes instead, so this function's own sequencing/looping logic
     (backfill once, then poll-sleep-poll-sleep until should_stop()) is
-    exercised without touching a real DB or network."""
+    exercised without touching a real DB or network.
+
+    generate_signals_fn (F0e P3, docs/sonnet5-implementation-roadmap.md):
+    runs right after poll_once_fn each cycle, same freshly-polled candles
+    the OHLCV path just wrote -- Shadow Tahap 1's signal-collection loop,
+    same process/service as the OHLCV poll rather than a new one (see
+    signal_loop.py's own module docstring). Only exercised for `timeframe
+    == "1h"` -- signal_runner.py/fib_gann_timing.py's HTF resampling (4h/1d)
+    and ATR period assume a 1h entry timeframe throughout this codebase, so
+    running this against a different --timeframe would be silently
+    meaningless rather than genuinely supported. generate_signals=False
+    (mirrors --no-backfill) is an escape hatch, not expected to be used in
+    production.
+    """
     db = get_session_fn()
     contexts = setup_venues_fn(db, venue_names, symbols)
 
@@ -100,6 +116,8 @@ def run_forever(
 
     while not should_stop():
         poll_once_fn(db, contexts, timeframe, poll_limit)
+        if generate_signals and timeframe == "1h":
+            generate_signals_fn(db, contexts, timeframe)
         sleep_seconds = seconds_until_next_close(timeframe, now_fn())
         print(f"sleeping {sleep_seconds:.0f}s until next {timeframe} close")
         sleep_fn(sleep_seconds)
@@ -129,6 +147,9 @@ if __name__ == "__main__":
         help="deep pull once at startup (and again on every restart, cheaply skipped once covered -- see ingest.needs_backfill). Pass 0 or a negative number's not valid; omit via --no-backfill instead",
     )
     parser.add_argument("--no-backfill", action="store_true", help="skip the startup backfill entirely, just poll")
+    parser.add_argument(
+        "--no-signals", action="store_true", help="skip Shadow Tahap 1 signal generation/persistence, just poll OHLCV/funding (see signal_loop.py)"
+    )
     args = parser.parse_args()
 
     run_forever(
@@ -137,4 +158,5 @@ if __name__ == "__main__":
         args.timeframe,
         args.poll_limit,
         None if args.no_backfill else args.backfill_since_days,
+        generate_signals=not args.no_signals,
     )
