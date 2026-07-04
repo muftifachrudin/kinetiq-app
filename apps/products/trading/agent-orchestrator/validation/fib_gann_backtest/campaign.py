@@ -128,12 +128,26 @@ class FitReport:
     adopted: bool  # same two-criteria test as fit_weights.evaluate_adoption(), applied to the expanded feature set
 
 
-def run_fit_report(candles: list[fgt.Candle], windows, funding_events: list[ts.FundingEvent], max_holding_bars: int) -> FitReport:
+def run_fit_report(
+    signals: list[sr.Signal], candles: list[fgt.Candle], windows, funding_events: list[ts.FundingEvent], max_holding_bars: int
+) -> FitReport:
     """Refits per window with fit_weights.ALL_CANDIDATE_FEATURE_NAMES (Fase
     3's six + sma candidate + Fase 4's four derivatives candidates) and
     reports whether Fase 3's own adoption criteria are newly met -- never
-    applies a gate, purely informational (module docstring)."""
-    signals = sr.generate_signals(candles)
+    applies a gate, purely informational (module docstring).
+
+    Takes the SAME `signals` run_series_campaign() already generated for
+    this exact (series, config, derivatives_records) combination, rather
+    than regenerating them here -- two real bugs this fixes at once: (1)
+    a second call to generate_signals() without derivatives_records would
+    leave every derivatives factor at its neutral default (constant across
+    every signal), making them contribute nothing to the fit despite the
+    whole point of this report being to check THEIR contribution; (2)
+    generate_signals() is O(n^2) and expensive (~115s for one full year in
+    this sandbox) -- recomputing it a second time per (series, config)
+    would double this module's runtime for no reason, since the exact
+    signals already exist.
+    """
     labeled = fw.build_labeled_signals(signals, candles, funding_events, max_holding_bars)
     results = []
     for window in windows:
@@ -213,7 +227,7 @@ def run_series_campaign(
     if pooled_non_censored:
         regime_metrics = metrics.compute_metrics_by_regime(pooled_trades, lambda t: regime_of_trade(t, drift_by_month))
 
-    fit_report = run_fit_report(candles, windows, [], exp.MAX_HOLDING_BARS)
+    fit_report = run_fit_report(signals, candles, windows, [], exp.MAX_HOLDING_BARS)
 
     total_windows = len(windows)
     promoted = total_windows > 0 and (windows_passing / total_windows) >= PF_PASS_FRACTION

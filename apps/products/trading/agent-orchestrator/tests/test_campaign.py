@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
 import campaign  # noqa: E402
 import derivatives_context as dc  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
+import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
 
 UTC = datetime.timezone.utc
@@ -159,12 +160,13 @@ def test_run_series_campaign_wires_derivatives_records():
 
 def test_run_fit_report_returns_well_formed_result():
     candles = noisy_zigzag()
+    signals = sr.generate_signals(candles)
     windows = campaign.exp.generate_windows_by_calendar(
         start=candles[0].ts, end=candles[-1].ts,
         train_months=campaign.exp.TRAIN_MONTHS, test_months=campaign.exp.TEST_MONTHS,
         embargo_days=campaign.exp.EMBARGO_DAYS, step_months=campaign.exp.STEP_MONTHS, mode=campaign.exp.WINDOW_MODE,
     )
-    report = campaign.run_fit_report(candles, windows, [], campaign.exp.MAX_HOLDING_BARS)
+    report = campaign.run_fit_report(signals, candles, windows, [], campaign.exp.MAX_HOLDING_BARS)
     assert isinstance(report, campaign.FitReport)
     if report.median_auc is not None:
         assert 0.0 <= report.median_auc <= 1.0
@@ -173,6 +175,30 @@ def test_run_fit_report_returns_well_formed_result():
 
 def test_run_fit_report_not_adopted_when_no_windows():
     candles = noisy_zigzag()
-    report = campaign.run_fit_report(candles, [], [], campaign.exp.MAX_HOLDING_BARS)
+    signals = sr.generate_signals(candles)
+    report = campaign.run_fit_report(signals, candles, [], [], campaign.exp.MAX_HOLDING_BARS)
     assert report.median_auc is None
     assert report.adopted is False
+
+
+def test_run_fit_report_uses_supplied_signals_derivatives_fields_not_neutral_defaults():
+    # Regression test for the bug this function's docstring describes:
+    # it must fit against the SUPPLIED signals (with real derivatives
+    # fields, when the caller generated them that way), not silently
+    # regenerate a fresh, derivatives-blind signal set of its own.
+    candles = noisy_zigzag()
+    base_date = candles[0].ts.date()
+    records = [
+        dc.DailyDerivativesRecord(
+            date=base_date - datetime.timedelta(days=400 - i),
+            price_close=100.0 + i, oi_close=1000.0 + i, funding_rate=0.0001 * i,
+            global_ls_ratio=1.0, top_ls_ratio=1.0,
+        )
+        for i in range(400)
+    ]
+    signals = sr.generate_signals(candles, derivatives_records=records)
+    assert any(s.funding_contrarian_alignment != 0.5 for s in signals)  # sanity: derivatives fields are real, not all-neutral
+
+    labeled = campaign.fw.build_labeled_signals(signals, candles, [], campaign.exp.MAX_HOLDING_BARS)
+    # at least one non-neutral derivatives value must actually reach the labeled set used for fitting
+    assert any(ls.signal.funding_contrarian_alignment != 0.5 for ls in labeled)
