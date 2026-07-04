@@ -59,7 +59,18 @@ VENUES = {
 
 
 def get_session() -> Session:
-    engine = create_engine(normalize_db_url(os.environ["DATABASE_URL"]))
+    # worker.py holds one Session for the whole process, idle-sleeping up to
+    # ~1h between poll cycles (one timeframe close) -- Neon closes idle
+    # connections well before that, so without pre_ping the next query after
+    # a sleep reuses a dead connection and blows up with
+    # "SSL connection has been closed unexpectedly" instead of transparently
+    # reconnecting. pool_recycle is a second layer (proactively discard
+    # connections older than this, rather than only reacting to a dead one).
+    engine = create_engine(
+        normalize_db_url(os.environ["DATABASE_URL"]),
+        pool_pre_ping=True,
+        pool_recycle=300,
+    )
     return sessionmaker(bind=engine)()
 
 

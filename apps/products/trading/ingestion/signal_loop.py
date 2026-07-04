@@ -86,11 +86,6 @@ REPRESENTATIVE_MARGIN_MODE = ts.MarginMode.ISOLATED  # the only mode position_si
 # explicitly rather than dataclasses.asdict(signal) so nested non-JSON
 # objects (pivot, exit_plan, structure_event, the direction enum) are never
 # accidentally dumped wholesale into this column.
-# daily_bias_alignment (F6b I1(b)) is deliberately NOT listed here yet --
-# this module was branched off main before that field existed (it lands via
-# the separate F6b PR-1 harness PR). Add it once that PR merges; listing a
-# field signal_runner.Signal doesn't have yet would crash every signal this
-# loop tries to persist, not just silently omit one column.
 FACTOR_SCORE_FIELDS = (
     "swing_quality",
     "fib_gann_confluence",
@@ -100,6 +95,7 @@ FACTOR_SCORE_FIELDS = (
     "htf_alignment",
     "regime_alignment",
     "sma_trend_bias_alignment",
+    "daily_bias_alignment",
     "funding_contrarian_alignment",
     "global_ls_contrarian_alignment",
     "top_vs_global_alignment",

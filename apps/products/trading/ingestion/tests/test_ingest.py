@@ -50,3 +50,25 @@ def test_needs_backfill_true_when_gap_exceeds_tolerance():
     existing = datetime.datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC)
     requested = datetime.datetime(2024, 1, 1, 7, 14, 27, tzinfo=UTC)  # gap is ~2h45m, bigger than a 1h tolerance
     assert ingest.needs_backfill(existing, requested, tolerance=datetime.timedelta(hours=1)) is True
+
+
+def test_get_session_enables_pool_pre_ping(monkeypatch):
+    # Regression test for a real production crash: worker.py holds one
+    # Session for the whole process and sleeps up to ~1h between poll
+    # cycles, so Neon closes the idle connection before the next query --
+    # without pool_pre_ping, SQLAlchemy reuses the dead connection and raises
+    # "SSL connection has been closed unexpectedly" instead of reconnecting.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host/db")
+    captured = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured["kwargs"] = kwargs
+        return "fake-engine"
+
+    monkeypatch.setattr(ingest, "create_engine", fake_create_engine)
+    monkeypatch.setattr(ingest, "sessionmaker", lambda bind: (lambda: "fake-session"))
+
+    ingest.get_session()
+
+    assert captured["kwargs"]["pool_pre_ping"] is True
+    assert captured["kwargs"]["pool_recycle"] == 300
