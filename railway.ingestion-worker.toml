@@ -60,10 +60,21 @@
 # too, run it as its own separate Railway service with its own
 # --symbols BTC/USDC:USDC ETH/USDC:USDC, not bolted onto this one.
 #
-# --backfill-since-days default (365, see worker.py) is NOT overridden here
-# -- it's cheap to re-run on every restart (ingest.needs_backfill() skips
-# ranges already covered), so there's no reason to hardcode a narrower value
-# just because this is a "restart", the whole design is meant to make that
-# distinction not matter.
-startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT"
+# --backfill-since-days default (now 1100, see worker.py -- F0e P1) is NOT
+# overridden here -- it's cheap to re-run on every restart (ingest.
+# needs_backfill() skips ranges already covered), so there's no reason to
+# hardcode a narrower value just because this is a "restart", the whole
+# design is meant to make that distinction not matter.
+#
+# --backfill-15m-since-days 1100: F0e P2 staged rollout stage 2 (docs/
+# sonnet5-implementation-roadmap.md, PR #87's own test plan) -- stage 1
+# (the 1100-day 1h default above) already verified live via real Deploy
+# Logs (`backfill SKIPPED (already covers 2023-06-30...)` for all 4
+# series). Same lookback window as the 1h backfill, one-time (idempotent
+# skip-if-covered like every other backfill here) -- raises intrabar
+# TP-vs-SL resolution fidelity for the validation harness, per P1's own
+# rationale. funding/OI flags (stage 3/4) deliberately NOT added yet --
+# staged one at a time per the roadmap's explicit ask, verified via HTTP-SQL
+# count+coverage before the next stage.
+startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100"
 restartPolicyType = "always"
