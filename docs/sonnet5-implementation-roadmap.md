@@ -655,11 +655,42 @@ F7 Tahap 2).
   memangkas ~50% sinyal → funnel diagnostic wajib, dan statusnya kandidat
   yang diuji, bukan keputusan. Ekspektasi (hipotesis in-sample deep-dive):
   ini yang menggerakkan BTC dari ~1.0.
+
+  **Varian (b) SUDAH diuji empiris (3 Juli 2026, hari yg sama, sebelum
+  checklist ini digabung ke main) — kode baru `validation/fib_gann_
+  backtest/gated_campaign.py`, 4 seri × 4 gate (`no_gate`/
+  `confidence_only`/`trend_alignment_only`/`both_gates`), pakai
+  `sma_trend_bias_alignment` (bukan literal daily-bias swing-based) sbg
+  gate. **Hipotesis TERBUKTI BENAR**: `trend_alignment_only` naikkan avg
+  PF net BTC (rata² Binance+Bybit) ke **1.185** (dari baseline 0.963) dan
+  window lolos ke 8/20 (40%, dari 15%) — **PF net tertinggi di SELURUH
+  investigasi F1-F6**. Funnel: ~34-35% sinyal asli BTC tersisa (konsisten
+  dgn estimasi "~50% sinyal terpangkas" di atas). `confidence_only`
+  sendirian (bukan direction-gate) cuma naik tipis (0.973, 4/20) — jadi
+  yg terbukti "menggerakkan BTC" adalah trend-ALIGNMENT gate-nya (varian
+  b), bukan skor confidence umum. Utk ETH efeknya JAUH lebih lemah
+  (`both_gates` terbaik 0.903, `trend_alignment_only` sendiri nyaris tidak
+  membantu) — MASIH BELUM lolos kriteria promosi resmi bag. 7 di seri
+  manapun (individual tertinggi 4/10, butuh ≥7/10). Varian (a) *sizing
+  multiplier* BELUM diuji. Detail penuh: `docs/fib-gann-validation-brief.md`
+  Section 28.
 - **I2 — Bedah "bull terburuk universal"**: slice hasil campaign F6 per
   arah × regime. Hipotesis: cermin F2 lama — di bull, SHORT counter-trend
   yang membunuh (simetris LONG di bear). Kalau benar, I1 menyelesaikan
   keduanya; kalau salah, ada masalah lain yang wajib diketahui SEBELUM
   shadow.
+
+  **SUDAH dikerjakan (3 Juli 2026) — hipotesis TERBUKTI BENAR utk BTC**:
+  breakdown BTC/Binance per arah×regime (full-series, bukan per-window)
+  konfirmasi pola simetris persis: bull+long PF 1.20 (n=75) vs bull+short
+  PF 0.64 (n=96); bear+short PF 1.38 (n=133) vs bear+long PF 0.61 (n=139).
+  "Bull terburuk" ternyata artefak campuran dua populasi berlawanan arah,
+  bukan properti regime itu sendiri — I1(b) (gate trend-alignment)
+  memang menyelesaikan sebagian besar masalah ini sesuai prediksi. **Utk
+  ETH pola JAUH lebih kabur** (bahkan LONG di bulan bull ETH PF net cuma
+  0.66, tidak bagus) — bukan simetri bersih spt BTC, konsisten dgn kenapa
+  gate I1(b) juga jauh lebih lemah efeknya di ETH. Detail penuh:
+  `docs/fib-gann-validation-brief.md` Section 28.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,

@@ -1081,3 +1081,104 @@ adopsi config baru yg diambil sepihak sekarang. `fib_gann_timing.py`'s
 `DEFAULT_MIN_RR_THRESHOLD`/`DEFAULT_SL_ATR_BUFFER_MULTIPLIER`/
 `ConfluenceWeights` semua TIDAK diganti round ini. Detail lengkap:
 `docs/sonnet5-implementation-roadmap.md` Fase 6.
+
+## 28. Eksperimen gate confidence & trend-alignment (tindak lanjut langsung Fase 6) — DIIMPLEMENTASI 3 Juli 2026, hasil: BELUM LOLOS PROMOSI tapi PENINGKATAN TERBESAR di seluruh investigasi
+
+Dua investigasi kecil langsung dari temuan Section 27 di atas, sebelum
+lanjut ke rekomendasi konkret:
+
+**Investigasi 1 (confidence yg terbuang)**: model refit `fit_weights.
+ALL_CANDIDATE_FEATURE_NAMES` (per-window, out-of-sample) py kekuatan
+ranking NYATA utk BTC — dicek langsung: filter sinyal BTC/Binance
+(current_defaults) pakai predicted-probability model ini, top-third by
+predicted prob dapat PF net **0.925** vs **0.612** kalau semua sinyal
+ditradingkan tanpa filter (bottom-third cuma 0.441). Tapi confidence ini
+**TIDAK PERNAH dipakai sbg gate** di sistem manapun sekarang — semua
+sinyal yg lolos R:R tetap ditradingkan tanpa pandang confidence.
+
+**Investigasi 2 (artefak regime bull)**: breakdown trade BTC/Binance per
+arah×regime (data current_defaults, full-series, bukan walk-forward
+window terpisah):
+
+| Regime | Arah | n | Win rate | PF net |
+|---|---|---|---|---|
+| bull | long (searah tren) | 75 | 41.3% | **1.20** |
+| bull | short (lawan tren) | 96 | 31.2% | 0.64 |
+| bear | long (lawan tren) | 139 | 29.5% | 0.61 |
+| bear | short (searah tren) | 133 | 42.9% | **1.38** |
+| range | long | 110 | 43.6% | 1.06 |
+| range | short | 115 | 40.9% | 0.92 |
+
+Pola simetris jelas: trade SEARAH tren menang, trade LAWAN tren kalah.
+"Bull regime terburuk" (Section 27) ternyata artefak campuran dua
+populasi berlawanan arah, bukan properti regime itu sendiri. Utk ETH,
+pola ini JAUH lebih kabur (bahkan LONG di bulan bull ETH pun PF net cuma
+0.66, tidak bagus).
+
+**Kode baru `validation/fib_gann_backtest/gated_campaign.py`**: 4 varian
+gate — `no_gate`, `confidence_only` (fit `LogisticRegression` PER WINDOW
+di TRAIN saja, cutoff dari persentil distribusi prediksi TRAIN sendiri —
+tanpa lookahead), `trend_alignment_only` (`sma_trend_bias_alignment` >
+threshold — faktor yg SUDAH ADA sejak Fase 2/3, cuma belum pernah dipakai
+sbg gate keras), `both_gates`. Tidak satu pun diasumsikan menang duluan.
+
+**Bug metodologi nyata ketemu & di-fix via sanity-check SEBELUM commit ke
+run 4-seri**: versi pertama menghitung PF/promosi langsung dari trade
+hasil label hindsight-penuh (`fit_weights.build_labeled_signals`, yg
+memang tepat dipakai utk FITTING tapi TIDAK utk pengukuran PF/promosi) —
+bikin baseline `no_gate` (PF 1.10) tidak cocok dgn baseline Section 27 F6
+sendiri (PF 0.94, seri identik binance_BTC). Fix: sinyal yg lolos gate
+di-SIMULASI ULANG pakai candle dibatasi per-window (persis pola
+`campaign.py`'s `run_series_campaign()`), baseline `no_gate` skrg cocok
+PERSIS ke F6 (0.941619896597325...). 16 test baru, 415 test total lulus,
+ruff clean.
+
+**Hasil real 4 seri × 4 gate (data & window walk-forward SAMA PERSIS dgn
+Fase 6 — 8770 candle/seri, 10 window/gate, derivatives context nyata)**:
+
+| Gate | avg PF net (4 seri) | Window lolos PF>1.3 /40 |
+|---|---|---|
+| no_gate (baseline) | 0.893 | 3/40 |
+| confidence_only | 0.941 | 6/40 |
+| **trend_alignment_only** | **1.019** | 10/40 |
+| both_gates | 1.020 | **12/40** |
+
+**Khusus BTC (rata² Binance+Bybit)**: `trend_alignment_only` → avg PF net
+**1.185**, window lolos **8/20 (40%)** — naik drastis dari baseline
+0.963/3-20 (15%). **Ini PF net TERTINGGI di SELURUH investigasi F1
+sampai F6** (lebih tinggi dari kandidat R:R/SL manapun yg diuji Fase
+5/6). `both_gates` juga kuat (1.137, 7/20) tapi sedikit di bawah
+trend-alignment sendirian — menambahkan confidence gate DI ATAS
+trend-alignment tidak menambah nilai, malah sedikit menurunkan (buang
+beberapa trade searah-tren yg genuinely bagus tapi kebetulan di-skor
+rendah oleh model confidence). `confidence_only` sendirian cuma naik
+tipis (avg PF 0.973, 4/20) — **trend-alignment adalah driver utama
+perbaikan BTC, bukan confidence**.
+
+**Khusus ETH (rata² Binance+Bybit)**: gate JAUH lebih lemah — `both_gates`
+terbaik (avg PF 0.903, 5/20), `trend_alignment_only` HAMPIR TIDAK
+membantu (0.853, cuma sedikit di atas baseline 0.822) — konsisten
+persis dgn Investigasi 2 di atas: pola arah×regime ETH lebih kabur,
+gate trend-alignment yg ampuh utk BTC tidak serta-merta ampuh utk ETH.
+
+**MASIH BELUM lolos kriteria promosi bag. 7** (butuh ≥7/10 per seri,
+individual tertinggi cuma 4/10 baik Binance maupun Bybit BTC) — tapi ini
+lompatan PALING BESAR yg pernah terlihat di seluruh investigasi ini,
+kontras jelas dgn F5/F6 yg cuma variasi kecil (rentang 0.80-1.13). Jumlah
+sinyal turun signifikan dgn `trend_alignment_only` (~34-35% dari sinyal
+asli tersisa utk BTC) — trade-off eksplisit (lebih sedikit tapi jauh
+lebih berkualitas), konsisten arah dgn semua eksperimen sizing
+sebelumnya.
+
+**Kesimpulan praktis (bukan keputusan sepihak diambil sekarang)**: gate
+trend-alignment berbasis `sma_trend_bias_alignment` (faktor yg SUDAH ADA
+sejak Fase 2/3, cuma belum pernah dipakai sbg gate keras, hanya faktor
+skor pasif) adalah kandidat PALING KUAT dan PALING BERBEDA drpd semua
+kandidat R:R/SL yg dicoba sejauh ini — layak jadi FOKUS UTAMA ronde F3/F6
+berikutnya utk BTC spesifik (mis. kalibrasi `trend_alignment_threshold`,
+kombinasi dgn kandidat R:R/SL Fase 5, atau replikasi metodologi ini utk
+cari gate serupa yg cocok utk ETH). `fib_gann_timing.py`/`signal_runner.py`
+TIDAK diubah — eksperimen ini murni modul terpisah
+(`gated_campaign.py`), tidak menyentuh kode produksi manapun. Detail
+lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 6 (subseksi
+"Tindak lanjut F6").
