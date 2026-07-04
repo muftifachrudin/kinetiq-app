@@ -72,12 +72,24 @@ penuh). Acceptance terpenuhi: `count(*)=276` terverifikasi dari query terpisah
 setelahnya, `instrument`=55. Detail: `docs/fib-gann-validation-brief.md`
 bag. 23 update, CLAUDE.md.
 
-**0b. Migration `signal_id` linkage** (`packages/db/migrations/` —
-CODEOWNERS, review founder). Kolom nullable `signal_id` + tabel `signal`
-minimal (id, ts, instrument_id, timeframe, direction, entry, sl, tp1,
-confidence, per-factor scores JSONB) — sekarang sudah ADA penulisnya
-(harness F3 & shadow loop F7), jadi tidak melanggar prinsip "jangan desain
-untuk kebutuhan hipotetis" lagi.
+**0b. Migration `signal_id` linkage — SELESAI, PR draft (3 Juli 2026,
+menunggu review CODEOWNERS founder, BELUM di-merge).** Tabel `signal`
+(id, instrument_id, timeframe, ts, direction, entry_price, stop_loss,
+take_profit_1, confidence, factor_scores JSONB, unique constraint
+instrument+timeframe+ts, CHECK direction) + kolom nullable
+`trade_annotation.signal_id` (FK ke `signal.id`) — migrasi 0008. Tidak ada
+tenant_id/RLS di `signal` (sama pola dgn ohlcv/funding_rate/open_interest —
+output strategy-engine bersama, bukan data per-tenant), tidak dipartisi
+(volume setara trade_annotation, bukan ohlcv). Diverifikasi end-to-end thd
+Postgres 16 lokal sekali pakai: full chain `alembic upgrade head` (0001→
+0008) sukses, `\d signal`/`\d trade_annotation` konfirmasi kolom+constraint
+persis sesuai spec, grant `kinetiq_app` (migrasi 0006's `ALTER DEFAULT
+PRIVILEGES`) otomatis nyakup tabel baru ini (diverifikasi query
+`information_schema.role_table_grants`, bukan diasumsikan), `alembic
+downgrade -1` bersih (tabel+kolom hilang), upgrade ulang sukses lagi.
+`shadow_pair.py`'s heuristic matcher (time+direction) TETAP jalan apa
+adanya — belum ada live writer yg isi `signal`/`signal_id` (itu kerjaan F7),
+migrasi ini cuma nyiapin skema.
 
 **0c. Backfill & poll `funding_rate` + `open_interest` native** dari
 Binance/Bybit via worker ingestion yang sudah jalan untuk ohlcv (perluas
@@ -448,6 +460,79 @@ Juni 2026 confirmed via `liq_cascade_flag=True` beberapa jam berturut).
 - Acceptance: keputusan per varian berdasarkan walk-forward OOS net-fees di
   ≥2 aset × 2 venue; hasil (termasuk yang kalah) ditulis di brief.
 
+**Status: SELESAI (3 Juli 2026, hari yg sama).** Kode: `passes_risk_reward_
+gate()` dapat `max_rr_threshold` opsional (`None` = perilaku lama, tidak ada
+caller yg berubah), `StopLossMethod` enum + `compute_stop_loss_next_fib_
+level()` (SL satu rasio extension Fib di belakang swing, ganti buffer ATR
+tetap) nambah opsi kedua ke `build_exit_plan()`. Harness `validation/
+fib_gann_backtest/rr_sl_experiment.py` (7 varian: R:R sweep + SL sweep vs
+default sbg baseline, walk-forward calendar scheme + fee-aware metrics yg
+SAMA persis dgn kampanye Fase 1 asli). 25 test baru, 397 test total lulus,
+ruff clean.
+
+**Hasil real thd 4 seri penuh 1 tahun (BTC/ETH × Binance/Bybit, 8770 candle
+tiap seri, 10 window walk-forward tiap variant, net fee Binance VIP0
+taker)** — ringkasan PF net pooled (rata² 4 seri) & total window lolos PF>1.3
+dari 40 (4 seri × 10 window):
+
+| Varian | avg PF net | window lolos/40 | avg SL-hit fraction |
+|---|---|---|---|
+| **baseline** (rr≥1.5, SL 0.375×ATR — default produksi skrg) | 0.893 | 3/40 | 0.526 |
+| rr≥2.0, no cap | 0.942 | 6/40 | 0.525 |
+| rr≥1.5, cap≤5.0 | 0.902 | 3/40 | 0.518 |
+| **rr≥2.0, cap≤5.0** | **0.960** | 6/40 | 0.515 |
+| SL 0.75×ATR | 0.940 | 4/40 | 0.446 |
+| SL 1.0×ATR | 0.948 | **7/40** | **0.396** |
+| SL next-fib-level | 0.937 | 4/40 | 0.485 |
+
+**Temuan (termasuk yang kalah, sesuai acceptance)**:
+1. **TIDAK ADA satu pun varian yg lolos kriteria promosi bag. 7** (PF net >1.3
+   di ≥2/3 window) — window lolos individual max cuma 3/10 (BTC/Bybit,
+   rr≥2.0 cap≤5.0). Ini SESUAI EKSPEKTASI: F5 adalah screening experiment
+   sebelum kampanye OOS penuh (F6), bukan pengganti F6.
+2. **min_rr_threshold 1.5→2.0 membaik di 3 dari 4 seri** (BTC/Bybit +0.034,
+   ETH/Binance +0.097, ETH/Bybit +0.082 — kenaikan besar khususnya di ETH),
+   PENGECUALIAN BTC/Binance yg justru turun tipis (-0.014 tanpa cap, -0.006
+   dgn cap) — bukan unanimous, tapi mayoritas kuat & arahnya selaras dgn
+   deep-dive F10 (kombinasi R:R∈[2,5) + HTF-align pernah naikkan PF
+   in-sample). Naikkan floor R:R = sinyal lebih sedikit tapi rata² lebih
+   jarang gagal, KECUALI utk seri yg baseline-nya sudah relatif kuat
+   (BTC/Binance).
+3. `max_rr_threshold=5.0` cap efeknya kecil & tergantung floor R:R yg
+   dipasangkan: nambah dikit kalau digabung rr≥2.0 (0.942→0.960), nyaris
+   tidak berubah kalau digabung rr≥1.5 (0.893→0.902) — jumlah window lolos
+   IDENTIK antara rr≥2.0 nocap vs cap (6/40 keduanya), jadi cap ini bukan
+   game-changer, cuma penyaring marjinal.
+4. **SL 1.0×ATR menang di window-lolos (7/40, TERBANYAK dari 7 varian)** dan
+   SL-hit fraction PALING RENDAH (0.396 vs baseline 0.526) — struktural masuk
+   akal: buffer lebih lebar = lebih jarang kena stop-hunt, PERSIS tujuan
+   "SL anti-hunt" di judul fase ini. Tapi avg PF net-nya (0.948) sedikit di
+   bawah rr≥2.0 cap≤5.0 (0.960) — dua sumbu (R:R vs SL) mengoptimalkan hal
+   yg agak beda (kualitas sinyal vs ketahanan thd noise harga).
+5. **SL next-fib-level TIDAK menunjukkan keunggulan jelas** dibanding varian
+   ATR-buffer manapun (avg PF 0.937, window lolos 4/40, SL-hit fraction
+   0.485 — di antara baseline & varian ATR lebar) — TIDAK direkomendasikan
+   utk diadopsi, meski secara struktural valid & teruji.
+6. **ETH underperform BTC di 5 dari 7 varian** (semua varian R:R + SL
+   next-fib-level) — replikasi temuan deep-dive lama "belum generalize ke
+   ETH". **TAPI di 2 varian SL terlebar (0.75×/1.0×ATR), ETH justru
+   SEDIKIT MENGUNGGULI BTC** (avg PF ETH 0.968/0.977 vs BTC 0.912/0.918) —
+   pola menarik yg TIDAK terlihat kalau cuma lihat baseline: mengindikasikan
+   setup ETH lebih sering kena stop prematur di buffer default (0.375×ATR)
+   drpd BTC, dan pelebaran buffer disproporsional menolong ETH. Nuansa
+   baru, bukan sekadar "ETH selalu lebih jelek".
+
+**Kesimpulan praktis (bukan keputusan sepihak — input utk F6)**: kombinasi
+`min_rr_threshold=2.0` + `max_rr_threshold=5.0` adalah kandidat config
+terkuat dari sweep R:R (avg PF net tertinggi), `sl_atr_buffer_multiplier=
+1.0` adalah kandidat terkuat dari sweep SL (window-lolos terbanyak + SL-hit
+paling rendah) — keduanya layak masuk config F6's kampanye OOS penuh sbg
+kandidat yg diuji bareng faktor lain (fitted weights, derivatives context),
+BUKAN otomatis jadi default baru `fib_gann_timing.py` round ini sendiri
+(sama prinsip "never auto-applies" spt `evaluate_adoption()` Fase 3).
+`StopLossMethod.NEXT_FIB_LEVEL` tetap ada di kode (teruji, reusable) tapi
+tidak direkomendasikan jadi default berdasarkan data round ini.
+
 ## Fase 6 — Kampanye validasi OOS (gerbang skor 6→7)
 
 Jalankan `run-validation.yml` (config diperluas: 4 seri, fee-aware, fitted
@@ -458,6 +543,82 @@ sejati untuk filter yang lahir dari data setahun ini — jangan buang.
 Acceptance: BTC lolos (skor 7); BTC+ETH dua venue lolos → lanjut F7 (skor 8
 track). Gagal → kembali ke F3/F5 dengan temuan baru, BUKAN menambah teori
 baru (bag. 10).
+
+**Status: SELESAI (3 Juli 2026, hari yg sama) — GAGAL kriteria promosi
+(temuan valid, bukan kegagalan implementasi).** Kode: `validation/
+fib_gann_backtest/campaign.py` — kampanye 4 seri × 2 config (default
+produksi vs kandidat F5: rr≥2.0/cap≤5.0/SL 1.0×ATR) side-by-side, REUSE
+mesin walk-forward/metrics `rr_sl_experiment.py`. `derivatives_records`
+(Fase 4) di-wire nyata ke tiap sinyal. Refit per seri pakai `fit_weights.
+ALL_CANDIDATE_FEATURE_NAMES` (6 faktor Fase 3 + kandidat sma + 4 kandidat
+derivatives Fase 4) — informational, TIDAK jadi gate baru, sama disiplin
+`evaluate_adoption()` Fase 3. Regime classifier bear/range/bull dari
+drift bulanan (deskriptif, tidak masuk signal generation). Bug nyata
+ketemu & di-fix SEBELUM run 4-seri: `run_fit_report()` versi pertama
+regenerasi sinyal internal TANPA `derivatives_records`, bikin fitur
+derivatives selalu konstan/netral dlm refit (kontribusi nol) + duplikat
+panggilan `generate_signals()` O(n²) yg mahal (sanity-check 233s vs 117s
+setelah fix) — ketauan krn beneran dijalankan penuh sebelum commit ke run
+mahal, bukan diasumsikan benar dari test sintetis doang. 13 test baru
+(+1 regression test bug di atas), 399 test total lulus, ruff clean.
+
+**Hasil real 4 seri × 2 config (8 run, data & window sama persis dgn
+F5)**:
+
+| Seri | Config | Sinyal | Window lolos PF>1.3 | Pooled PF net | Promoted? |
+|---|---|---|---|---|---|
+| BTC/Binance | default | 669 | 1/10 | 0.942 | Tidak |
+| BTC/Binance | kandidat F5 | 379 | 1/10 | 0.995 | Tidak |
+| BTC/Bybit | default | 655 | 2/10 | 0.985 | Tidak |
+| BTC/Bybit | kandidat F5 | 379 | 2/10 | 0.986 | Tidak |
+| ETH/Binance | default | 685 | 0/10 | 0.803 | Tidak |
+| **ETH/Binance** | **kandidat F5** | 364 | **4/10** | **1.126** | Tidak |
+| ETH/Bybit | default | 675 | 0/10 | 0.841 | Tidak |
+| **ETH/Bybit** | **kandidat F5** | 362 | **4/10** | **1.099** | Tidak |
+
+**GAGAL kriteria promosi bag. 7** — window lolos TERTINGGI cuma 4/10 (butuh
+≥7/10), BTC (kedua venue) mentok di 1-2/10 di KEDUA config. Acceptance
+minimal "BTC lolos" (skor 7) TIDAK terpenuhi. Sesuai instruksi eksplisit
+roadmap: **kembali ke F3/F5 dgn temuan baru, BUKAN menambah teori baru.**
+Temuan baru dari campaign ini:
+1. **Kandidat F5 (gabungan rr≥2.0+cap≤5.0+SL 1.0×ATR SEKALIGUS) membaik di
+   SEMUA 4 seri tanpa kecuali** — beda dari sweep F5 yg satu-satu (isolated
+   BTC/Binance sempat turun tipis di F5). Kombinasi 3 tweak sekaligus py
+   efek interaksi lebih kuat drpd masing² diuji sendiri-sendiri, TERUTAMA
+   di ETH (+0.32 Binance, +0.26 Bybit — PF net ETH tembus di ATAS 1.0
+   utk PERTAMA KALI di seluruh investigasi ini). BTC cuma naik tipis
+   (+0.05 Binance, nyaris flat Bybit).
+2. **Window-lolos cuma naik di ETH (0→4 tiap venue), BTC TETAP (1→1,
+   2→2)** — walau PF net pooled BTC ikut naik dikit, distribusi PF net
+   antar-window BTC tetap terlalu variatif (beberapa window bagus,
+   banyak yg jelek) utk lolos ambang konsistensi ≥7/10. Config R:R/SL
+   TIDAK cukup utk BTC — BTC butuh lever lain (bukan tuning R:R/SL) utk
+   capai promosi.
+3. **Regime bull adalah TERBURUK di SEMUA 8 kombinasi tanpa kecuali**
+   (config × seri manapun) — temuan paling robust round ini: sistem
+   fib/gann ini secara struktural underperform di pasar bull tren kuat,
+   lebih baik di bear/range. Di kandidat F5, bull BTC malah tambah jelek
+   (0.56 Binance/0.52 Bybit dari baseline 0.73/0.70) sementara bear BTC
+   membaik banyak (1.22/1.19) — pergeseran config mengalihkan regime mana
+   yg dominan, bukan memperbaiki semua regime rata.
+4. **Refit-adoption (fitur diperluas + derivatives) hasilnya campuran,
+   tergantung config & seri** — adopted di 4/8 kombinasi, TAPI TIDAK
+   pernah adopted utk ETH di KEDUA config (median AUC 0.534/0.467
+   default/kandidat Binance, 0.577/0.398 default/kandidat Bybit — kandidat
+   F5 malah turunkan AUC ETH & bikin korelasi NEGATIF -0.086/-0.138) —
+   sampel makin sedikit (sinyal makin ketat) bikin fit makin noisy justru
+   di seri yg PF-nya membaik.
+5. Jumlah sinyal turun ~45% di kandidat F5 di semua seri (floor R:R lebih
+   tinggi + cap + SL lebih lebar = risk lebih besar per unit R:R,
+   menyaring lebih banyak setup) — trade-off eksplisit yg sudah diketahui
+   dari F5, bukan temuan baru.
+
+**Tidak ada teori baru ditambahkan** sesuai instruksi — temuan di atas
+(regime bull terburuk universal, config R:R/SL menolong ETH tapi bukan
+BTC, interaksi 3-tweak lebih kuat dari isolated) dicatat sbg input utk
+ronde F3/F5 berikutnya, BUKAN keputusan adopsi/config baru yg diambil
+sepihak sekarang. `fib_gann_timing.py` defaults TIDAK diganti. Detail
+lengkap: `docs/fib-gann-validation-brief.md` Section 27.
 
 ## Fase 7 — Shadow trading & jembatan paper-vs-real (gerbang skor 8→9)
 

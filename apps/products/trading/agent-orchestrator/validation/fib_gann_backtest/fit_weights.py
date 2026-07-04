@@ -145,6 +145,21 @@ DERIVATIVES_FEATURE_NAMES = FEATURE_NAMES + (
     "liq_cascade_flag",
 )
 
+# CANDIDATE_FEATURE_NAMES (the sma candidate) plus derivatives_context.py's
+# four columns -- every candidate this codebase has, combined. Fase 6
+# (docs/sonnet5-implementation-roadmap.md) refits with this full set to
+# check whether Fase 3's adoption bar (median AUC > 0.55, correlation > 0)
+# is newly met now that Fase 4's richer factor set exists -- Fase 3's own
+# 6-factor fit did not clear it. Purely informational (see campaign.py):
+# this constant does not change what feeds evaluate_adoption()'s official
+# decision, which stays defined on FEATURE_NAMES alone.
+ALL_CANDIDATE_FEATURE_NAMES = CANDIDATE_FEATURE_NAMES + (
+    "funding_contrarian_alignment",
+    "global_ls_contrarian_alignment",
+    "top_vs_global_alignment",
+    "liq_cascade_flag",
+)
+
 # Fewer usable (non-TIMEOUT, non-censored) train samples than this and a
 # logistic fit is noise, not signal -- arbitrary-but-documented floor, not
 # derived from a power calculation.

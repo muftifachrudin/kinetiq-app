@@ -7,21 +7,32 @@ them (discipline? sizing? fees?), not just that it does.
 Scope decision (3 Juli 2026): this is the pure-function attribution/
 fidelity layer ONLY, deliberately without any new DB table or migration.
 Investigated first: docs/shadow-simulator-brief.md Section 6 sketches a
-persisted `shadow_pair` table keyed by `signal_id`, but no such
-`signal_id` exists anywhere in this codebase today, because there is no
-live signal-emission pipeline yet -- `signal_runner.Signal` is a pure
-in-memory dataclass only ever consumed by validation/backtest scripts
-(apps/products/trading/agent-orchestrator/graphs/, skills/execution/,
-telegram-bot/ are all still empty `.gitkeep` scaffolding). Building a
-`signal` table now, with no live writer, would be exactly the kind of
-"design for a hypothetical future requirement" this codebase's own
-conventions warn against. So: match_signal_to_trade() below is a
-heuristic (instrument+direction+time-window) matcher over whatever
-in-memory Signal list a caller already has (e.g. from a backtest/
-validation run), not a DB join -- and everything in this module stays a
-plain function over dataclasses, same discipline as trade_simulator.py
-and metrics.py. Persisting shadow_pair rows is deferred until an actual
-live signal path exists to give signal_id a real writer.
+persisted `shadow_pair` table keyed by `signal_id`, but at the time this
+module was written no such `signal_id` existed anywhere in this codebase,
+because there was no live signal-emission pipeline yet -- `signal_runner.
+Signal` was a pure in-memory dataclass only ever consumed by validation/
+backtest scripts (apps/products/trading/agent-orchestrator/graphs/,
+skills/execution/, telegram-bot/ were all still empty `.gitkeep`
+scaffolding). Building a `signal` table then, with no live writer, would
+have been exactly the kind of "design for a hypothetical future
+requirement" this codebase's own conventions warn against. So:
+match_signal_to_trade() below is a heuristic (instrument+direction+time-
+window) matcher over whatever in-memory Signal list a caller already has
+(e.g. from a backtest/validation run), not a DB join -- and everything in
+this module stays a plain function over dataclasses, same discipline as
+trade_simulator.py and metrics.py.
+
+Update (F0b, docs/sonnet5-implementation-roadmap.md): the `signal` table
+and `trade_annotation.signal_id` linkage column now exist (migration
+0008) -- Fase 3 (fit_weights.py) and the F7 shadow loop are real
+consumers/writers that resolve the blocker above. This module's own
+heuristic matching is UNCHANGED by that migration: there is still no live
+writer populating `signal`/`signal_id` for real trades (F7's own loop is
+what would do that), so match_signal_to_trade() remains how pairing
+actually happens today. Once a live writer exists, a signal_id-based exact
+join becomes possible and would likely replace or supplement this
+heuristic -- not done here, since building that consumer is F7's job, not
+a schema-only migration's.
 
 Real-data honesty note: the founder's 276 bulk-imported trade_annotation
 rows (docs/fib-gann-validation-brief.md Section 20) have leverage AND

@@ -199,6 +199,31 @@ def test_generate_signals_accepts_custom_min_rr_threshold():
     assert strict == []
 
 
+def test_generate_signals_accepts_max_rr_threshold_cap():
+    # Fase 5: an extremely tight cap should filter out every signal whose
+    # R:R is real (min_rr_threshold=0.0 lets everything with a TP1 through
+    # first, so this isolates the max cap's own effect).
+    candles = noisy_zigzag()
+    uncapped = sr.generate_signals(candles, min_rr_threshold=0.0, max_rr_threshold=None)
+    capped = sr.generate_signals(candles, min_rr_threshold=0.0, max_rr_threshold=0.001)
+    assert len(uncapped) >= len(capped)
+    assert capped == []
+
+
+def test_generate_signals_accepts_next_fib_level_sl_method():
+    # Fase 5: switching sl_method must not crash the full walk and must
+    # produce a genuinely different stop_loss than the ATR-buffer default
+    # for at least one signal (same series, same everything else).
+    candles = noisy_zigzag()
+    atr_buffer_signals = sr.generate_signals(candles)
+    next_fib_signals = sr.generate_signals(candles, sl_method=fgt.StopLossMethod.NEXT_FIB_LEVEL)
+    assert atr_buffer_signals  # sanity: this series does produce signals at all
+    assert next_fib_signals
+    atr_stop_losses = [s.exit_plan.stop_loss for s in atr_buffer_signals]
+    next_fib_stop_losses = [s.exit_plan.stop_loss for s in next_fib_signals]
+    assert atr_stop_losses != next_fib_stop_losses
+
+
 def test_generate_signals_populates_per_factor_dump_fields():
     # Fase 3 (docs/sonnet5-implementation-roadmap.md): every emitted
     # Signal must carry real computed per-factor values, not the

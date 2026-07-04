@@ -148,6 +148,8 @@ def generate_signals(
     extension_levels: tuple[float, ...] = fgt.DEFAULT_FIB_EXTENSION_LEVELS,
     confluence_weights: fgt.ConfluenceWeights = fgt.ConfluenceWeights(),
     derivatives_records: list[dc.DailyDerivativesRecord] | None = None,
+    max_rr_threshold: float | None = None,
+    sl_method: fgt.StopLossMethod = fgt.StopLossMethod.ATR_BUFFER,
 ) -> list[Signal]:
     """At most one Signal per pivot -- fires on the bar price actually
     TOUCHES a fib/gann line (fib_gann_confluence_score > 0), watching
@@ -167,6 +169,11 @@ def generate_signals(
     defaults rather than raising, same no-lookahead spirit as
     fib_gann_timing/htf_bias's own early-series handling elsewhere in this
     module.
+
+    max_rr_threshold/sl_method (Fase 5, docs/sonnet5-implementation-
+    roadmap.md): both default to the pre-Fase-5 behavior (no upper R:R
+    cap, ATR-buffer SL) -- purely additive options for the F5 A/B harness
+    (validation/) to sweep, not a change to any existing caller.
     """
     signals: list[Signal] = []
     signaled_pivot_indices: set[int] = set()
@@ -253,12 +260,12 @@ def generate_signals(
 
         entry_price = reference_price
         exit_plan = fgt.build_exit_plan(
-            pivot, basis, entry_price, atr_value, gann_prices, extension_levels, sl_atr_buffer_multiplier
+            pivot, basis, entry_price, atr_value, gann_prices, extension_levels, sl_atr_buffer_multiplier, sl_method
         )
 
         if not _entry_is_valid(direction, entry_price, exit_plan.stop_loss):
             continue
-        if not fgt.passes_risk_reward_gate(exit_plan, min_rr_threshold):
+        if not fgt.passes_risk_reward_gate(exit_plan, min_rr_threshold, max_rr_threshold):
             continue
 
         signaled_pivot_indices.add(pivot.index)
