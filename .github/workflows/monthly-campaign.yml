@@ -1,0 +1,76 @@
+name: Monthly Validation Campaign (F7 Tahap 1 forward evaluation)
+
+# F0e P4 (docs/sonnet5-implementation-roadmap.md): F7 Tahap 1's own
+# instruction is to evaluate the growing shadow-signal dataset FORWARD,
+# monthly -- that evaluation must not depend on a human remembering to
+# trigger run-validation.yml (workflow_dispatch-only) or on GitHub Actions
+# artifacts, which expire (already happened once: campaign run #2's report
+# expired Oct 2026, per the roadmap's own record). This workflow commits
+# campaign.py's report straight into docs/validation-results/ instead.
+#
+# Same ephemeral-Neon-branch pattern as run-validation.yml (copy-on-write
+# snapshot of the real "production" branch, read-only queries via
+# data_loader.py) -- reuses the same NEON_API_KEY/NEON_PROJECT_ID secrets,
+# no new Neon credential needed for THIS workflow (see data-freshness.yml
+# for the one job in this PR that genuinely does need live production
+# access, for a different reason).
+on:
+  schedule:
+    # 03:17 UTC on the 1st of each month -- an off-the-hour minute so this
+    # doesn't land on the same instant every other repo's "0 0 1 * *" cron
+    # does.
+    - cron: "17 3 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  monthly-campaign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral Neon branch (copy-on-write snapshot of production)
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: monthly-campaign-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages/backtest-core + packages/db (kinetiq_db) + scikit-learn/numpy
+        run: pip install -e "packages/backtest-core[dev]" -e packages/db
+
+      - name: Run the 4-series x 2-config campaign against the ephemeral branch (real historical candles, read-only)
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: python apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/campaign.py
+
+      - name: Delete ephemeral Neon branch
+        if: always()
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: monthly-campaign-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Commit the report to docs/validation-results/ (not just an artifact)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/validation-results/campaign.json
+          if git diff --cached --quiet; then
+            echo "no change in campaign.json this run -- nothing to commit"
+            exit 0
+          fi
+          git commit -m "Monthly campaign report ($(date -u +%Y-%m-%d))"
+          # Rebase onto the current main tip before pushing -- this is a
+          # scheduled job, main may have moved since checkout (parallel PR
+          # merges are normal/expected in this repo, see CLAUDE.md).
+          git pull --rebase origin main
+          git push origin HEAD:main
