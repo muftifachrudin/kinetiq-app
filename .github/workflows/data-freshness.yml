@@ -1,0 +1,68 @@
+name: Data Freshness Monitor
+
+# F0e P5 (docs/sonnet5-implementation-roadmap.md): fails RED if ohlcv/
+# funding_rate/the signal loop's own heartbeat go stale beyond 3 hours --
+# once shadow trading is live, a silent data gap is a direct research/
+# trading-decision cost, not just an inconvenience. The roadmap's own
+# example of why this matters: a 7-row funding gap went undetected for a
+# while because nothing was watching for it.
+#
+# Deliberately queries production DIRECTLY via the Neon HTTP-SQL endpoint
+# (unlike run-validation.yml/monthly-campaign.yml, which both use an
+# EPHEMERAL copy-on-write branch) -- staleness is a property of the real,
+# live data; a branch snapshot frozen at creation time would never show as
+# stale no matter how broken the real pipeline actually is. Read-only (a
+# single SELECT), so this can safely use the least-privilege `kinetiq_app`
+# role's own connection string rather than the neondb_owner one.
+#
+# check_data_freshness.py (apps/products/trading/ingestion/) does the
+# actual staleness decision -- kept as a standalone, unit-tested script
+# rather than inline shell/Python here, and deliberately checks the SIGNAL
+# LOOP's data_source_health heartbeat (not max(signal.ts) directly) since
+# `signal` is a sparse table by design (see that script's own docstring).
+#
+# REQUIRES A NEW REPO SECRET this PR does not (cannot) add itself:
+# DATABASE_URL_MONITORING -- a plain postgresql:// Neon connection string
+# (the kinetiq_app role is enough, read-only access). Until that secret is
+# set, this workflow fails fast with a clear error rather than silently
+# reporting "all fresh".
+on:
+  schedule:
+    # every 30 minutes -- frequent enough to catch a >3h staleness event
+    # with room to notice/react before it compounds, per the roadmap's own
+    # "2-3 jam" bar.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  STALE_THRESHOLD_HOURS: 3
+
+jobs:
+  check-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Query max(ts) for ohlcv/funding_rate + the signal loop's own heartbeat
+        env:
+          DATABASE_URL_MONITORING: ${{ secrets.DATABASE_URL_MONITORING }}
+        run: |
+          if [ -z "$DATABASE_URL_MONITORING" ]; then
+            echo "::error::DATABASE_URL_MONITORING secret is not set -- see this workflow's own header comment"
+            exit 1
+          fi
+          HOST=$(echo "$DATABASE_URL_MONITORING" | sed -E 's#postgresql://[^@]+@([^/?]+).*#\1#')
+          QUERY='SELECT (SELECT max(ts) FROM ohlcv) AS ohlcv_max, (SELECT max(ts) FROM funding_rate) AS funding_max, (SELECT max(last_success_at) FROM data_source_health WHERE data_type = '"'"'signal'"'"') AS signal_heartbeat'
+          RESPONSE=$(python3 -c 'import json,sys; print(json.dumps({"query": sys.argv[1]}))' "$QUERY" | \
+            curl -sS -X POST "https://${HOST}/sql" \
+              -H "Content-Type: application/json" \
+              -H "Neon-Connection-String: ${DATABASE_URL_MONITORING}" \
+              --data-binary @-)
+          echo "$RESPONSE"
+          python3 apps/products/trading/ingestion/check_data_freshness.py "$RESPONSE" "$STALE_THRESHOLD_HOURS"

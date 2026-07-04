@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.join(_AGENT_ORCHESTRATOR, "skills", "strategy"))
 sys.path.insert(0, os.path.join(_AGENT_ORCHESTRATOR, "validation", "fib_gann_backtest"))
 
 import fib_gann_timing as fgt  # noqa: E402
+import ingest  # noqa: E402
 import position_sizing as ps  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
@@ -212,13 +213,25 @@ def run_signal_loop_once(db: Session, contexts: list, timeframe: str) -> None:
     Only ever called for timeframe == "1h" by worker.py -- signal_runner.py
     /fib_gann_timing.py's whole design (htf_bias 4h/1d resampling, ATR
     period, etc.) assumes a 1h entry timeframe, matching every backtest
-    module in this codebase."""
+    module in this codebase.
+
+    F0e P5 (docs/sonnet5-implementation-roadmap.md): records a "signal"
+    data_type heartbeat via ingest.record_health(), the same data_source_
+    health table poll_once() already writes "funding_rate"/"ohlcv"/
+    "open_interest" heartbeats to -- signal generation never had one before
+    this, so a stuck/crashing signal loop (unlike the OHLCV/funding/OI
+    polls) could go unnoticed indefinitely. Recorded per-venue (matching
+    that table's own (venue_id, data_type) primary key and poll_once()'s
+    existing per-instrument-overwrites-the-same-venue-row convention), not
+    per-instrument."""
     for ctx in contexts:
         for venue_symbol, instrument in ctx.instruments:
             try:
                 candles = load_candles(db, instrument.id, timeframe)
                 written = persist_new_signals(db, instrument, timeframe, candles)
+                ingest.record_health(db, ctx.venue, "signal", success=True)
                 print(f"[{ctx.venue_name}:{venue_symbol}] signals OK ({written} new, {len(candles)} candles considered)")
             except Exception as exc:
                 db.rollback()
+                ingest.record_health(db, ctx.venue, "signal", success=False)
                 print(f"[{ctx.venue_name}:{venue_symbol}] signals FAILED: {exc}")
