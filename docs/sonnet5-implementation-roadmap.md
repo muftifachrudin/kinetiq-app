@@ -46,10 +46,10 @@ konteks. Wajib dibaca berpasangan dengan:
 ## Gambaran fase & dependensi
 
 ```
-F0 Data plumbing ──┬── F1 Fee-aware sim ──┬── F3 Per-factor dump + fitting ── F6 Kampanye validasi OOS ── F7 Shadow trading ── F9 Live gate
-                   ├── F2 htf_bias.py ────┤                                        │            ├── F7a position_sizing.py + PreTradeCard
-                   ├── F4 derivatives_context.py (paralel, faktor utk F3)          │            │   (paralel, boleh kapan saja setelah F0)
-                   └── F5 R:R band + SL anti-hunt (paralel, eksperimen harness)    │            └── F7b cross-mode portfolio sim (SETELAH F7 jalan)
+F0 Data plumbing ──┬── F1 Fee-aware sim ──┬── F3 Per-factor dump + fitting ── F6 Kampanye OOS ── F6b pra-shadow I1-I5 ── F7 Shadow (2 tahap) ── F9 Live gate
+                   ├── F2 htf_bias.py ────┤                                        │            ├── F7 Tahap 1 (signal collection) — mulai SEKARANG, tanpa gerbang
+                   ├── F4 derivatives_context.py (paralel, faktor utk F3)          │            ├── F7a position_sizing.py + PreTradeCard (paralel, kapan saja)
+                   └── F5 R:R band + SL anti-hunt (paralel, eksperimen harness)    │            └── F7b cross-mode portfolio sim (SETELAH F7 Tahap 2 jalan)
                                                        F8 Ekspansi universe (multi-koin → tokenized equity) — setelah F6 lolos di BTC+ETH
 ```
 
@@ -620,17 +620,97 @@ ronde F3/F5 berikutnya, BUKAN keputusan adopsi/config baru yg diambil
 sepihak sekarang. `fib_gann_timing.py` defaults TIDAK diganti. Detail
 lengkap: `docs/fib-gann-validation-brief.md` Section 27.
 
-## Fase 7 — Shadow trading & jembatan paper-vs-real (gerbang skor 8→9)
+### F6b — Pra-shadow checklist I1–I5 (hasil ulasan Fable 5 atas F0–F6, 3 Juli 2026)
 
+Konteks yang menjelaskan kenapa BTC flat di F6 — **insight struktural,
+bukan misteri**: berdasarkan prinsip gate-vs-skor (bag. 10), semua faktor
+baru (htf_bias F2, fitted weights F3, derivatives F4) masuk sebagai
+kontributor skor — dan skor confidence itu **tidak punya konsumen** di
+backtest: bukan gate, bukan sizing, bukan threshold. Secara konstruksi
+F2+F3+F4 tidak mungkin mengubah PF sedikit pun; satu-satunya yang bisa
+menggerakkan PF di harness sekarang adalah gate & mekanika exit (rr band,
+SL) — persis yang F6 tunjukkan (yang bergerak hanya efek rr+SL, kuat di
+ETH, BTC flat). Bandingkan: kombinasi in-sample deep-dive yang mengangkat
+BTC ke PF 1.50 memakai SMA200-alignment sebagai KONDISI trade; di F6
+komponen alignment hanya angka skor yang tidak mengkondisikan apa-apa.
+
+Dua kejujuran statistik yang mengikat semua item di bawah:
+(a) **ini putaran ke-3 menambang tahun data yang sama** (deep-dive → F5 →
+F6) — ETH 4/10 semi-in-sample; satu-satunya obat adalah data forward
+(→ F7 Tahap 1); (b) **kriteria promosi under-powered**: dengan ~40-60
+trade/window, strategi ber-edge sejati PF 1.2 pun jarang menembus PF>1.3
+per window — menuntut ≥7/10 praktis hanya lolos untuk edge sangat besar.
+Kriteria promosi TIDAK diturunkan (tetap gerbang live/eksekusi otomatis),
+tapi metrik sekunder + kriteria masuk-shadow terpisah didefinisikan (I5 &
+F7 Tahap 2).
+
+- **I1 — Beri skor KONSUMEN + uji alignment sebagai pengkondisi trade
+  (lever BTC yang hilang).** Dua varian, diuji A/B gaya F5 (pre-registered,
+  reuse mesin `rr_sl_experiment.py`/`campaign.py`, lapor funnel):
+  (a) *sizing multiplier* — confidence/alignment menskalakan `risk_pct`
+  efektif di PreTradeCard dalam cap (bag. 10-compliant, tidak ada veto);
+  evaluasi pakai PF tertimbang-size; (b) *gate struktural*
+  direction-vs-bias-Daily — dibela sebagai struktural via teori v2 pasal
+  (b) (LONG melawan downtrend Daily = premis trade invalid), TAPI akan
+  memangkas ~50% sinyal → funnel diagnostic wajib, dan statusnya kandidat
+  yang diuji, bukan keputusan. Ekspektasi (hipotesis in-sample deep-dive):
+  ini yang menggerakkan BTC dari ~1.0.
+- **I2 — Bedah "bull terburuk universal"**: slice hasil campaign F6 per
+  arah × regime. Hipotesis: cermin F2 lama — di bull, SHORT counter-trend
+  yang membunuh (simetris LONG di bear). Kalau benar, I1 menyelesaikan
+  keduanya; kalau salah, ada masalah lain yang wajib diketahui SEBELUM
+  shadow.
+- **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
+  satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
+  OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
+  koefisien non-nol 10/10 window di F3). Catatan dari F6 temuan #4: refit
+  di config ketat makin noisy karena sampel kecil — laporkan juga fit
+  pooled-lintas-seri sebagai sensitivity check, bukan pengganti kriteria.
+- **I4 — Tutup F0c (backfill funding/OI native)** sebelum shadow Tahap 2:
+  di shadow, gap sim-vs-real yang tak terjelaskan jatuh ke `residual` —
+  semua komponen biaya harus hidup dulu supaya attribution bisa dipercaya.
+- **I5 — Bootstrap CI di report** `run_validation.py`/`campaign.py`:
+  PF net pooled + CI (resample per-trade) per seri, sebagai metrik
+  sekunder resmi di samping window-pass-count. Murah, memperbaiki kualitas
+  keputusan semua kampanye berikutnya, dan jadi dasar kriteria masuk-shadow
+  di F7 Tahap 2.
+
+## Fase 7 — Shadow trading & jembatan paper-vs-real (gerbang skor 8→9) — DUA TAHAP
+
+**Keputusan (ulasan Fable 5, 3 Juli 2026): "shadow" dipecah dua tahap
+dengan gerbang berbeda — koleksi sinyal TIDAK menunggu kriteria apa pun,
+uang real menunggu kriteria masuk-shadow.**
+
+**Tahap 1 — Shadow SIGNAL collection (mulai SEKARANG, zero risk, tanpa
+uang):**
 1. Live signal loop minimal: worker yang menjalankan `generate_signals` di
-   candle close 1h production, persist ke tabel `signal` (F0b). Belum
-   eksekusi order — sinyal saja.
-2. Founder trade real yang searah sinyal via `log_trade_annotation.py`
+   candle close 1h production (4 seri), persist ke tabel `signal` (F0b;
+   prasyarat: migration 0008 di-merge dulu — CODEOWNERS review founder).
+   Closed-candle only, idempotent (unique constraint instrument+timeframe+
+   ts sudah ada), konek sebagai role `kinetiq_app`.
+2. PreTradeCard (F7a, sudah ada) dihitung & dipersist per sinyal (simpan di
+   `factor_scores` JSONB atau serialisasi terpisah — jangan migration baru
+   hanya untuk ini).
+3. **Freeze konfigurasi sebagai `config-v1`** (label dicatat per sinyal):
+   parameter default produksi saat loop dinyalakan + catatan config
+   kandidat F5 yang dievaluasi paralel di harness. Evaluasi forward BULANAN
+   terhadap sinyal yang terkumpul — inilah OOS SEJATI yang memutus lingkaran
+   data-reuse (kejujuran (a) di F6b), dan datanya gratis mengalir sejak
+   hari loop nyala.
+4. Belum ada eksekusi order, belum ada keputusan trading — murni data.
+
+**Tahap 2 — Shadow TRADING uang real (founder entry searah sinyal), gerbang
+masuk-shadow:** pooled PF net-of-fees > 1.1 DENGAN bootstrap CI bawah > 1.0
+(I5) di ≥1 aset, pada kampanye yang sudah menyertakan hasil I1, PLUS I4
+selesai. (Kriteria promosi asli bag. 7 — PF>1.3 di ≥2/3 window — TIDAK
+diubah dan tetap jadi gerbang live/eksekusi otomatis F9, bukan gerbang
+tahap ini.) Isi tahap 2 = langkah lama:
+1. Founder trade real yang searah sinyal via `log_trade_annotation.py`
    (leverage, margin_mode, exit_reason_real WAJIB terisi).
-3. `shadow_pair` pipeline yang sudah ada (pairing + divergence attribution +
+2. `shadow_pair` pipeline yang sudah ada (pairing + divergence attribution +
    fidelity) jalan otomatis atas pasangan itu; rolling report (Telegram
    layer boleh menyusul, mulai dari report markdown).
-4. Cold-start rule tetap: ≥50 pasangan sebelum parameter ML risk envelope
+3. Cold-start rule tetap: ≥50 pasangan sebelum parameter ML risk envelope
    apapun diaktifkan (shadow-simulator-brief bag. 5 — hard cap leverage
    manual, kill-switch, floor buffer_k TIDAK PERNAH dipelajari ML).
 Acceptance skor 9: 3+ bulan, PF real net ≥ 0.7× backtest, fidelity rolling
