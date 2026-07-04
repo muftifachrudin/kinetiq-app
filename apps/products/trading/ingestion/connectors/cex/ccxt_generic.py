@@ -140,3 +140,99 @@ def fetch_ohlcv_range(
         cursor_ms = page[-1][0] + timeframe_ms
 
     return [c for c in all_candles if c["timestamp_ms"] <= until_ms]
+
+
+def fetch_funding_rate_history_range(
+    exchange: ccxt.Exchange,
+    venue_symbol: str,
+    since_ms: int,
+    until_ms: int | None = None,
+    page_limit: int = 1000,
+) -> list[dict]:
+    """F0e P2 (docs/sonnet5-implementation-roadmap.md): pages
+    fetchFundingRateHistory the same way fetch_ohlcv_range() pages
+    fetchOHLCV -- fetch_funding_rate() above only ever gets the CURRENT
+    rate, it can't backfill history at all. Unlike OHLCV, funding history
+    records aren't spaced by one fixed "timeframe" ccxt can parse up front
+    (Binance/Bybit both report per-symbol intervals, mostly-but-not-always
+    8h -- see DEFAULT_FUNDING_INTERVAL_HOURS's own comment), so the cursor
+    advances past the LAST record's own timestamp (+1ms) each page rather
+    than by a fixed duration -- a generic, interval-agnostic advance that's
+    still gap/overlap-safe regardless of what interval a venue reports."""
+    if until_ms is None:
+        until_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    all_records: list[dict] = []
+    cursor_ms = since_ms
+    while cursor_ms <= until_ms:
+        page = exchange.fetch_funding_rate_history(venue_symbol, since=cursor_ms, limit=page_limit)
+        if not page:
+            break
+        for record in page:
+            interval = record.get("interval")
+            funding_interval_hours = int(interval[:-1]) if interval else DEFAULT_FUNDING_INTERVAL_HOURS
+            all_records.append(
+                {
+                    "timestamp_ms": record["timestamp"],
+                    "funding_rate": record["fundingRate"],
+                    "predicted_next_rate": record.get("nextFundingRate"),
+                    "mark_price": record.get("markPrice"),
+                    "funding_interval_hours": funding_interval_hours,
+                }
+            )
+        cursor_ms = page[-1]["timestamp"] + 1
+
+    return [r for r in all_records if r["timestamp_ms"] <= until_ms]
+
+
+def fetch_open_interest(exchange: ccxt.Exchange, venue_symbol: str) -> dict:
+    """Latest open interest snapshot, for the continuous live-poll path
+    (mirrors fetch_funding_rate()'s own "current value only" contract).
+    ccxt's unified open-interest structure (both binanceusdm/bybit
+    confirmed): openInterestAmount is contracts, openInterestValue is USD
+    notional -- Bybit's linear (USDT-margined) markets only ever populate
+    openInterestAmount, never openInterestValue (that field is inverse-
+    contract-only on Bybit), which is why OpenInterest.oi_usd is nullable
+    but oi_contracts is not."""
+    data = exchange.fetch_open_interest(venue_symbol)
+    return {
+        "timestamp_ms": data.get("timestamp"),
+        "oi_contracts": data["openInterestAmount"],
+        "oi_usd": data.get("openInterestValue"),
+    }
+
+
+def fetch_open_interest_history_range(
+    exchange: ccxt.Exchange,
+    venue_symbol: str,
+    timeframe: str,
+    since_ms: int,
+    until_ms: int | None = None,
+    page_limit: int = 500,  # Binance's fetchOpenInterestHistory documents max=500/page; a safe default for other venues too
+) -> list[dict]:
+    """Pages fetchOpenInterestHistory -- unlike funding rate history, OI
+    history IS bucketed by a fixed `timeframe` ccxt can parse (same
+    "5m"/"1h"/... vocabulary as OHLCV), so this reuses fetch_ohlcv_range()'s
+    exact advance-by-timeframe-duration cursor logic rather than the
+    last-record+1ms approach fetch_funding_rate_history_range() needs."""
+    if until_ms is None:
+        until_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
+
+    all_records: list[dict] = []
+    cursor_ms = since_ms
+    while cursor_ms <= until_ms:
+        page = exchange.fetch_open_interest_history(venue_symbol, timeframe=timeframe, since=cursor_ms, limit=page_limit)
+        if not page:
+            break
+        for record in page:
+            all_records.append(
+                {
+                    "timestamp_ms": record["timestamp"],
+                    "oi_contracts": record["openInterestAmount"],
+                    "oi_usd": record.get("openInterestValue"),
+                }
+            )
+        cursor_ms = page[-1]["timestamp"] + timeframe_ms
+
+    return [r for r in all_records if r["timestamp_ms"] <= until_ms]
