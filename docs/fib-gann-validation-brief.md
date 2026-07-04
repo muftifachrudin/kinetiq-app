@@ -981,3 +981,103 @@ prinsip "never auto-applies keputusan sepihak" spt `evaluate_adoption()`
 Fase 3 — `fib_gann_timing.py`'s `DEFAULT_MIN_RR_THRESHOLD`/`DEFAULT_SL_
 ATR_BUFFER_MULTIPLIER` TIDAK diganti round ini sendiri. Detail penuh +
 tabel lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 5.
+
+## 27. Kampanye validasi OOS 4-seri (Fase 6 roadmap, gerbang skor 6→7) — DIIMPLEMENTASI 3 Juli 2026, hasil: GAGAL PROMOSI (temuan valid, bukan kegagalan implementasi)
+
+Kode baru `validation/fib_gann_backtest/campaign.py`: kampanye 4 seri
+(BTC/ETH × Binance/Bybit) × 2 config (default produksi vs kandidat Fase 5:
+`min_rr≥2.0`/`max_rr≤5.0`/`sl_atr_buffer=1.0`) side-by-side — TIDAK ada
+yg diasumsikan benar duluan, sama prinsip "let evidence decide" spt Fase
+3/5. REUSE mesin walk-forward/metrics `rr_sl_experiment.py` persis (angka
+bisa dibandingkan langsung). `derivatives_context` (Fase 4) di-wire nyata
+via `generate_signals()`'s `derivatives_records`. Refit per seri pakai
+`fit_weights.ALL_CANDIDATE_FEATURE_NAMES` (6 faktor Fase 3 + kandidat sma
++ 4 kandidat derivatives Fase 4) — murni informational, TIDAK jadi gate
+baru, sama disiplin `evaluate_adoption()` Fase 3. Regime classifier
+bear/range/bull dari drift bulanan realized (deskriptif/laporan doang,
+TIDAK masuk signal generation).
+
+**Bug nyata ketemu & di-fix SEBELUM commit ke run 4-seri yg mahal**:
+sanity-check 1-seri pertama makan 233 detik (harusnya ~117 detik) — bikin
+curiga & ketauan `run_fit_report()` versi pertama regenerasi sinyal
+internal via `generate_signals(candles)` polos TANPA `derivatives_records`
+ATAU parameter config apa pun, jadi (a) setiap fitur derivatives SELALU
+konstan/netral dlm refit — kontribusi NOL ke fit padahal itu justru tujuan
+utama "semua faktor"-nya Fase 6, dan (b) duplikat panggilan
+`generate_signals()` O(n²) yg mahal per (seri,config). Fix: `run_fit_
+report()` sekarang terima `signals` yg SUDAH dihasilkan `run_series_
+campaign()` sbg parameter, bukan regenerasi sendiri. Angka fit BERUBAH
+signifikan stlh fix (median AUC 0.594→0.559 utk kombinasi pertama yg
+dites) — konfirmasi ini bug nyata yg berpengaruh, bukan cuma kosmetik.
+Ketauan krn BENERAN dijalankan penuh dulu sblm commit ke run 4-seri
+mahal, bukan diasumsikan benar dari test sintetis doang. 13 test baru
+(termasuk regression test bug di atas), 399 test total lulus, ruff clean.
+
+**Hasil real 4 seri × 2 config (8 run, data & window walk-forward SAMA
+PERSIS dgn Fase 5 — 8770 candle/seri, 10 window/config)**:
+
+| Seri | Config | Sinyal | Window lolos PF>1.3 | Pooled PF net | Promoted? |
+|---|---|---|---|---|---|
+| BTC/Binance | default | 669 | 1/10 | 0.942 | Tidak |
+| BTC/Binance | kandidat F5 | 379 | 1/10 | 0.995 | Tidak |
+| BTC/Bybit | default | 655 | 2/10 | 0.985 | Tidak |
+| BTC/Bybit | kandidat F5 | 379 | 2/10 | 0.986 | Tidak |
+| ETH/Binance | default | 685 | 0/10 | 0.803 | Tidak |
+| **ETH/Binance** | **kandidat F5** | 364 | **4/10** | **1.126** | Tidak |
+| ETH/Bybit | default | 675 | 0/10 | 0.841 | Tidak |
+| **ETH/Bybit** | **kandidat F5** | 362 | **4/10** | **1.099** | Tidak |
+
+**GAGAL kriteria promosi bag. 7 (PF net >1.3 di ≥2/3 window = ≥7/10)** —
+window lolos TERTINGGI cuma 4/10, BTC (kedua venue, kedua config) mentok
+di 1-2/10. Acceptance minimal roadmap ("BTC lolos" utk skor 7) **TIDAK
+terpenuhi**. Sesuai instruksi eksplisit roadmap Fase 6: **kembali ke F3/F5
+dgn temuan baru, BUKAN menambah teori baru (bag. 10)**.
+
+**Temuan baru (bukan teori baru, murni observasi empiris round ini)**:
+1. **Kandidat F5 (gabungan rr≥2.0+cap≤5.0+SL 1.0×ATR SEKALIGUS, bukan
+   satu-satu) membaik di SEMUA 4 seri tanpa kecuali** — beda dari sweep F5
+   sendiri yg satu-satu (BTC/Binance isolated sempat turun tipis di F5).
+   Kombinasi 3 tweak sekaligus tampak py efek interaksi yg lebih kuat drpd
+   masing² diuji sendirian, TERUTAMA di ETH: +0.322 (Binance, 0.803→1.126)
+   & +0.258 (Bybit, 0.841→1.099) — PF net ETH tembus di ATAS 1.0 utk
+   PERTAMA KALI di SELURUH investigasi round ini (F1 deep-dive s/d F5).
+   BTC cuma naik tipis: +0.053 (Binance), +0.0007 alias nyaris flat
+   (Bybit).
+2. **Window-lolos cuma naik di ETH (0→4 kedua venue), BTC TETAP** (1/10→
+   1/10 Binance, 2/10→2/10 Bybit) — walau PF net pooled BTC ikut naik
+   dikit, distribusi PF net antar-window BTC tetap terlalu variatif
+   (sebagian window bagus, banyak yg jelek) utk lolos ambang konsistensi
+   ≥7/10. **Config R:R/SL TIDAK cukup utk BTC** — BTC butuh lever lain
+   (bukan sekadar tuning R:R/SL) utk capai promosi, sedangkan utk ETH
+   arahnya jelas menolong (meski belum cukup jauh).
+3. **Regime bull adalah TERBURUK di SEMUA 8 kombinasi tanpa kecuali**
+   (config × seri manapun yg dites) — temuan paling robust round ini:
+   sistem fib/gann ini secara struktural underperform di pasar bull tren
+   kuat, lebih baik di bear/range, KONSISTEN di setiap kombinasi. Di
+   kandidat F5, bull BTC malah tambah jelek (PF net 0.564 Binance/0.523
+   Bybit, turun dari baseline 0.729/0.700) sementara bear BTC membaik
+   banyak (1.220/1.195, naik dari 0.992/1.008) — pergeseran config
+   mengalihkan regime mana yg dominan menyumbang PF, bukan memperbaiki
+   semua regime serentak.
+4. **Refit-adoption (fitur diperluas + derivatives) hasilnya campuran,
+   tergantung config & seri** — adopted di 4 dari 8 kombinasi (BTC/Binance
+   kedua config, BTC/Bybit kandidat F5, ETH/Bybit default), TAPI TIDAK
+   PERNAH adopted utk ETH di KEDUA config (median AUC 0.534→0.467
+   Binance, 0.577→0.398 Bybit saat pindah ke kandidat F5 — korelasi malah
+   jadi NEGATIF -0.086/-0.138) — sampel makin sedikit (sinyal makin
+   ketat di kandidat F5) bikin fit makin noisy justru di seri (ETH) yg
+   PF-nya paling membaik. Ironis tapi masuk akal: perbaikan PF net dan
+   perbaikan fit-ability tidak selalu jalan bareng.
+5. Jumlah sinyal turun ~45% di kandidat F5 di semua seri (floor R:R lebih
+   tinggi + cap + SL lebih lebar = risk per unit lebih besar, menyaring
+   lebih banyak setup) — trade-off yg sudah diketahui dari F5 sendiri,
+   bukan temuan baru, dicatat lagi di sini cuma sbg konteks angka sinyal.
+
+**Tidak ada teori baru ditambahkan round ini, sesuai instruksi eksplisit
+roadmap.** Temuan di atas (regime bull terburuk universal, config R:R/SL
+menolong ETH tapi TIDAK BTC, interaksi 3-tweak sekaligus lebih kuat drpd
+isolated) dicatat sbg INPUT utk ronde F3/F5 berikutnya — BUKAN keputusan
+adopsi config baru yg diambil sepihak sekarang. `fib_gann_timing.py`'s
+`DEFAULT_MIN_RR_THRESHOLD`/`DEFAULT_SL_ATR_BUFFER_MULTIPLIER`/
+`ConfluenceWeights` semua TIDAK diganti round ini. Detail lengkap:
+`docs/sonnet5-implementation-roadmap.md` Fase 6.
