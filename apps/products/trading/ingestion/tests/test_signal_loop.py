@@ -82,6 +82,16 @@ def test_factor_scores_includes_every_declared_field():
         assert scores[field] == getattr(signal, field)
 
 
+def test_factor_scores_includes_daily_bias_alignment():
+    # Regression test: FACTOR_SCORE_FIELDS was missing this field because
+    # signal_loop.py (F0e P3, #85) merged before signal_runner.Signal grew
+    # daily_bias_alignment (F6b PR-1, #86) -- production signals persisted
+    # since then were silently missing this factor from factor_scores.
+    signal = mk_signal()
+    scores = signal_loop._factor_scores(signal, atr_value=2.0)  # noqa: SLF001
+    assert scores["daily_bias_alignment"] == signal.daily_bias_alignment
+
+
 def test_factor_scores_includes_config_label_and_pre_trade_card():
     signal = mk_signal()
     scores = signal_loop._factor_scores(signal, atr_value=2.0)  # noqa: SLF001
