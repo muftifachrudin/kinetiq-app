@@ -87,6 +87,13 @@ def run_forever(
     poll_once_fn=ingest.poll_once,
     generate_signals=True,
     generate_signals_fn=signal_loop.run_signal_loop_once,
+    backfill_15m_since_days: int | None = None,
+    backfill_funding_since_days: int | None = None,
+    backfill_oi_since_days: int | None = None,
+    oi_backfill_timeframe: str = "1h",
+    backfill_run_15m_fn=ingest.backfill_run,
+    backfill_run_funding_fn=ingest.backfill_run_funding_rate,
+    backfill_run_oi_fn=ingest.backfill_run_open_interest,
 ) -> None:
     """The *_fn params default to the real ingest.py functions -- tests
     inject fakes instead, so this function's own sequencing/looping logic
@@ -104,6 +111,17 @@ def run_forever(
     meaningless rather than genuinely supported. generate_signals=False
     (mirrors --no-backfill) is an escape hatch, not expected to be used in
     production.
+
+    backfill_15m_since_days/backfill_funding_since_days/backfill_oi_since_days
+    (F0e P1+P2): three SEPARATE one-time startup backfills, each opt-in
+    (None = skip, matching --no-backfill's existing "None means don't run
+    this step" convention) rather than defaulting to on -- unlike the main
+    OHLCV backfill above (already proven safe/idempotent/cheap-to-skip in
+    production), these are brand-new data paths the roadmap explicitly asks
+    to roll out staged/verified one at a time (real HTTP-SQL count+coverage
+    check after each), not silently enabled via a new default the moment
+    this ships. Each is cheap to re-run on every restart once enabled,
+    exactly like the main backfill (same needs_backfill()-based skip).
     """
     db = get_session_fn()
     contexts = setup_venues_fn(db, venue_names, symbols)
@@ -113,6 +131,24 @@ def run_forever(
         print(f"backfill starting: {backfill_since_days} days back ({since.isoformat()})")
         backfill_run_fn(db, contexts, timeframe, since)
         print("backfill done -- entering live poll loop")
+
+    if backfill_15m_since_days is not None:
+        since = now_fn() - timedelta(days=backfill_15m_since_days)
+        print(f"15m backfill starting: {backfill_15m_since_days} days back ({since.isoformat()})")
+        backfill_run_15m_fn(db, contexts, "15m", since)
+        print("15m backfill done")
+
+    if backfill_funding_since_days is not None:
+        since = now_fn() - timedelta(days=backfill_funding_since_days)
+        print(f"funding_rate backfill starting: {backfill_funding_since_days} days back ({since.isoformat()})")
+        backfill_run_funding_fn(db, contexts, since)
+        print("funding_rate backfill done")
+
+    if backfill_oi_since_days is not None:
+        since = now_fn() - timedelta(days=backfill_oi_since_days)
+        print(f"open_interest backfill starting: {backfill_oi_since_days} days back ({since.isoformat()})")
+        backfill_run_oi_fn(db, contexts, oi_backfill_timeframe, since)
+        print("open_interest backfill done")
 
     while not should_stop():
         poll_once_fn(db, contexts, timeframe, poll_limit)
@@ -143,13 +179,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--backfill-since-days",
         type=int,
-        default=365,
-        help="deep pull once at startup (and again on every restart, cheaply skipped once covered -- see ingest.needs_backfill). Pass 0 or a negative number's not valid; omit via --no-backfill instead",
+        default=1100,
+        help=(
+            "deep pull once at startup (and again on every restart, cheaply skipped once covered -- see "
+            "ingest.needs_backfill). F0e P1: 1100 days (~3 years, back to ~2023-07) covers a full bull regime, "
+            "not just the last year's dominant-bear/range data -- was 365. Pass 0 or a negative number's not "
+            "valid; omit via --no-backfill instead"
+        ),
     )
     parser.add_argument("--no-backfill", action="store_true", help="skip the startup backfill entirely, just poll")
     parser.add_argument(
         "--no-signals", action="store_true", help="skip Shadow Tahap 1 signal generation/persistence, just poll OHLCV/funding (see signal_loop.py)"
     )
+    parser.add_argument(
+        "--backfill-15m-since-days",
+        type=int,
+        default=None,
+        help="F0e P1: one-time 15m OHLCV backfill (same lookback period as --backfill-since-days) -- opt-in, omitted by default (see run_forever()'s own docstring on why these new backfills default off)",
+    )
+    parser.add_argument(
+        "--backfill-funding-since-days",
+        type=int,
+        default=None,
+        help="F0e P2: one-time funding rate HISTORY backfill (fetchFundingRateHistory) -- opt-in, omitted by default",
+    )
+    parser.add_argument(
+        "--backfill-oi-since-days",
+        type=int,
+        default=None,
+        help="F0e P2: one-time open interest HISTORY backfill (fetchOpenInterestHistory) -- opt-in, omitted by default",
+    )
+    parser.add_argument("--oi-backfill-timeframe", default="1h", help="bucket size for the open_interest history backfill (F0e P2)")
     args = parser.parse_args()
 
     run_forever(
@@ -159,4 +219,8 @@ if __name__ == "__main__":
         args.poll_limit,
         None if args.no_backfill else args.backfill_since_days,
         generate_signals=not args.no_signals,
+        backfill_15m_since_days=args.backfill_15m_since_days,
+        backfill_funding_since_days=args.backfill_funding_since_days,
+        backfill_oi_since_days=args.backfill_oi_since_days,
+        oi_backfill_timeframe=args.oi_backfill_timeframe,
     )

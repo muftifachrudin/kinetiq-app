@@ -193,3 +193,73 @@ def test_run_forever_calls_generate_signals_fn_with_db_contexts_timeframe():
     )
     assert captured["contexts"] == "the-contexts"
     assert captured["timeframe"] == "1h"
+
+
+# --- 15m/funding/OI backfill wiring (F0e P1+P2) ---
+
+
+def test_run_forever_skips_new_backfills_by_default():
+    calls = []
+    worker.run_forever(
+        ["binance"], ["BTC/USDT:USDT"], "1h", poll_limit=5, backfill_since_days=None,
+        should_stop=lambda: True, sleep_fn=lambda s: None, now_fn=lambda: datetime.datetime(2024, 1, 1, tzinfo=UTC),
+        get_session_fn=lambda: FakeDb(), setup_venues_fn=lambda db, v, s: "ctx",
+        backfill_run_15m_fn=lambda *a: calls.append("15m"),
+        backfill_run_funding_fn=lambda *a: calls.append("funding"),
+        backfill_run_oi_fn=lambda *a: calls.append("oi"),
+    )
+    assert calls == []  # all three default to None (opt-in only, see run_forever()'s own docstring)
+
+
+def test_run_forever_runs_15m_backfill_when_requested():
+    captured = {}
+    worker.run_forever(
+        ["binance"], ["BTC/USDT:USDT"], "1h", poll_limit=5, backfill_since_days=None,
+        should_stop=lambda: True, sleep_fn=lambda s: None, now_fn=lambda: datetime.datetime(2024, 1, 11, tzinfo=UTC),
+        get_session_fn=lambda: FakeDb(), setup_venues_fn=lambda db, v, s: "ctx",
+        backfill_15m_since_days=10,
+        backfill_run_15m_fn=lambda db, contexts, timeframe, since: captured.update(timeframe=timeframe, since=since),
+    )
+    assert captured["timeframe"] == "15m"
+    assert captured["since"] == datetime.datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def test_run_forever_runs_funding_backfill_when_requested():
+    captured = {}
+    worker.run_forever(
+        ["binance"], ["BTC/USDT:USDT"], "1h", poll_limit=5, backfill_since_days=None,
+        should_stop=lambda: True, sleep_fn=lambda s: None, now_fn=lambda: datetime.datetime(2024, 1, 11, tzinfo=UTC),
+        get_session_fn=lambda: FakeDb(), setup_venues_fn=lambda db, v, s: "ctx",
+        backfill_funding_since_days=10,
+        backfill_run_funding_fn=lambda db, contexts, since: captured.update(since=since),
+    )
+    assert captured["since"] == datetime.datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def test_run_forever_runs_oi_backfill_when_requested_with_configured_timeframe():
+    captured = {}
+    worker.run_forever(
+        ["binance"], ["BTC/USDT:USDT"], "1h", poll_limit=5, backfill_since_days=None,
+        should_stop=lambda: True, sleep_fn=lambda s: None, now_fn=lambda: datetime.datetime(2024, 1, 11, tzinfo=UTC),
+        get_session_fn=lambda: FakeDb(), setup_venues_fn=lambda db, v, s: "ctx",
+        backfill_oi_since_days=10, oi_backfill_timeframe="5m",
+        backfill_run_oi_fn=lambda db, contexts, timeframe, since: captured.update(timeframe=timeframe, since=since),
+    )
+    assert captured["timeframe"] == "5m"
+    assert captured["since"] == datetime.datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def test_run_forever_runs_all_backfills_before_the_poll_loop():
+    calls = []
+    worker.run_forever(
+        ["binance"], ["BTC/USDT:USDT"], "1h", poll_limit=5, backfill_since_days=30,
+        should_stop=_one_shot_should_stop(), sleep_fn=lambda s: None, now_fn=lambda: datetime.datetime(2024, 1, 1, tzinfo=UTC),
+        get_session_fn=lambda: FakeDb(), setup_venues_fn=lambda db, v, s: "ctx",
+        backfill_run_fn=lambda *a: calls.append("1h"),
+        backfill_15m_since_days=30, backfill_run_15m_fn=lambda *a: calls.append("15m"),
+        backfill_funding_since_days=30, backfill_run_funding_fn=lambda *a: calls.append("funding"),
+        backfill_oi_since_days=30, backfill_run_oi_fn=lambda *a: calls.append("oi"),
+        poll_once_fn=lambda *a: calls.append("poll"),
+        generate_signals_fn=lambda *a: None,
+    )
+    assert calls == ["1h", "15m", "funding", "oi", "poll"]

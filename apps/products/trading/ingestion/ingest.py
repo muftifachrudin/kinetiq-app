@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "connectors", "cex"))
 import ccxt_generic  # noqa: E402
 import native_fallback  # noqa: E402
 from kinetiq_db.engine import normalize_db_url  # noqa: E402
-from kinetiq_db.models import DataSourceHealth, FundingRate, Instrument, Ohlcv, Venue  # noqa: E402
+from kinetiq_db.models import DataSourceHealth, FundingRate, Instrument, Ohlcv, OpenInterest, Venue  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
@@ -157,6 +157,27 @@ def ingest_funding_rate(
     return source
 
 
+def ingest_open_interest(db: Session, exchange, instrument: Instrument, venue_symbol: str) -> str:
+    """F0e P2 (docs/sonnet5-implementation-roadmap.md): closes the "open_
+    interest is 0 rows" gap -- ccxt-only, no native_fallback path (unlike
+    ingest_funding_rate/ingest_ohlcv): native_fallback.py has no OI
+    implementation yet, there's no fallback to try. Always returns "ccxt"
+    (kept as a return value anyway for the same logging contract as the
+    other two ingest_* functions, and so a future fallback addition here
+    wouldn't need to change every caller's expectations)."""
+    data = ccxt_generic.fetch_open_interest(exchange, venue_symbol)
+    db.merge(
+        OpenInterest(
+            instrument_id=instrument.id,
+            ts=_ts(data["timestamp_ms"]),
+            oi_contracts=data["oi_contracts"],
+            oi_usd=data["oi_usd"],
+        )
+    )
+    db.commit()
+    return "ccxt"
+
+
 def ingest_ohlcv(
     db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, limit: int, fallback_fn=None
 ) -> str:
@@ -194,6 +215,16 @@ def earliest_ohlcv_ts(db: Session, instrument: Instrument, timeframe: str) -> da
         .order_by(Ohlcv.ts.asc())
         .first()
     )
+    return row.ts if row else None
+
+
+def earliest_funding_rate_ts(db: Session, instrument: Instrument) -> datetime | None:
+    row = db.query(FundingRate.ts).filter_by(instrument_id=instrument.id).order_by(FundingRate.ts.asc()).first()
+    return row.ts if row else None
+
+
+def earliest_open_interest_ts(db: Session, instrument: Instrument) -> datetime | None:
+    row = db.query(OpenInterest.ts).filter_by(instrument_id=instrument.id).order_by(OpenInterest.ts.asc()).first()
     return row.ts if row else None
 
 
@@ -272,6 +303,78 @@ def backfill_if_needed(
     return backfill_ohlcv(db, exchange, instrument, venue_symbol, timeframe, since_ms)
 
 
+def backfill_funding_rate(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, since_ms: int, until_ms: int | None = None
+) -> int:
+    """F0e P2: pages ccxt_generic.fetch_funding_rate_history_range() and
+    merges every record -- same idempotent db.merge()-per-row + single
+    commit pattern as backfill_ohlcv(). CCXT-only, same reasoning as
+    ingest_open_interest(): no native_fallback path exists for history
+    endpoints, and this is a one-time/occasional operation, not the live
+    polling path's resilience requirement."""
+    records = ccxt_generic.fetch_funding_rate_history_range(exchange, venue_symbol, since_ms, until_ms)
+    for record in records:
+        db.merge(
+            FundingRate(
+                instrument_id=instrument.id,
+                ts=_ts(record["timestamp_ms"]),
+                funding_rate=record["funding_rate"],
+                predicted_next_rate=record["predicted_next_rate"],
+                funding_interval_hours=record["funding_interval_hours"],
+                mark_price=record["mark_price"],
+            )
+        )
+    db.commit()
+    return len(records)
+
+
+def backfill_open_interest(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, since_ms: int, until_ms: int | None = None
+) -> int:
+    """F0e P2: pages ccxt_generic.fetch_open_interest_history_range() and
+    merges every record -- same pattern as backfill_funding_rate()/
+    backfill_ohlcv()."""
+    records = ccxt_generic.fetch_open_interest_history_range(exchange, venue_symbol, timeframe, since_ms, until_ms)
+    for record in records:
+        db.merge(
+            OpenInterest(
+                instrument_id=instrument.id,
+                ts=_ts(record["timestamp_ms"]),
+                oi_contracts=record["oi_contracts"],
+                oi_usd=record["oi_usd"],
+            )
+        )
+    db.commit()
+    return len(records)
+
+
+def backfill_funding_rate_if_needed(db: Session, exchange, instrument: Instrument, venue_symbol: str, since: datetime) -> int | None:
+    """Same skip-if-covered contract as backfill_if_needed(), tolerance is
+    one funding interval's duration (funding_rate has no fixed per-venue
+    timeframe to parse -- DEFAULT_FUNDING_INTERVAL_HOURS is ccxt_generic.py's
+    own "8h unless the venue says otherwise" fallback, reused here rather
+    than duplicated)."""
+    tolerance = timedelta(hours=ccxt_generic.DEFAULT_FUNDING_INTERVAL_HOURS)
+    if not needs_backfill(earliest_funding_rate_ts(db, instrument), since, tolerance):
+        return None
+    since_ms = int(since.timestamp() * 1000)
+    return backfill_funding_rate(db, exchange, instrument, venue_symbol, since_ms)
+
+
+def backfill_open_interest_if_needed(
+    db: Session, exchange, instrument: Instrument, venue_symbol: str, timeframe: str, since: datetime
+) -> int | None:
+    """Same skip-if-covered contract as backfill_if_needed(), tolerance is
+    one `timeframe` bucket's duration -- OI history IS timeframe-bucketed
+    (unlike funding rate history), same reasoning as backfill_if_needed()'s
+    own tolerance."""
+    tolerance = timedelta(seconds=exchange.parse_timeframe(timeframe))
+    if not needs_backfill(earliest_open_interest_ts(db, instrument), since, tolerance):
+        return None
+    since_ms = int(since.timestamp() * 1000)
+    return backfill_open_interest(db, exchange, instrument, venue_symbol, timeframe, since_ms)
+
+
 @dataclasses.dataclass
 class VenueContext:
     venue_name: str
@@ -334,6 +437,19 @@ def poll_once(db: Session, contexts: list[VenueContext], timeframe: str, limit: 
                 record_health(db, ctx.venue, "ohlcv", success=False)
                 print(f"[{ctx.venue_name}:{venue_symbol}] ohlcv FAILED: {exc}")
 
+            # F0e P2 (docs/sonnet5-implementation-roadmap.md): open_interest
+            # was 0 rows before this -- no native fallback exists yet (see
+            # ingest_open_interest()'s own docstring), so a failure here just
+            # gets tracked/logged like the other two, no fallback attempt.
+            try:
+                source = ingest_open_interest(db, ctx.exchange, instrument, venue_symbol)
+                record_health(db, ctx.venue, "open_interest", success=True)
+                print(f"[{ctx.venue_name}:{venue_symbol}] open_interest OK ({source})")
+            except Exception as exc:
+                db.rollback()
+                record_health(db, ctx.venue, "open_interest", success=False)
+                print(f"[{ctx.venue_name}:{venue_symbol}] open_interest FAILED: {exc}")
+
 
 def backfill_run(db: Session, contexts: list[VenueContext], timeframe: str, since: datetime) -> None:
     """CCXT-only (see backfill_ohlcv()) -- no fallback/health-tracking dance,
@@ -351,6 +467,37 @@ def backfill_run(db: Session, contexts: list[VenueContext], timeframe: str, sinc
             except Exception as exc:
                 db.rollback()
                 print(f"[{ctx.venue_name}:{venue_symbol}] backfill FAILED: {exc}")
+
+
+def backfill_run_funding_rate(db: Session, contexts: list[VenueContext], since: datetime) -> None:
+    """F0e P2: same shape as backfill_run(), for funding rate HISTORY (the
+    live-poll path in poll_once() only ever wrote the current rate)."""
+    for ctx in contexts:
+        for venue_symbol, instrument in ctx.instruments:
+            try:
+                written = backfill_funding_rate_if_needed(db, ctx.exchange, instrument, venue_symbol, since)
+                if written is None:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] funding_rate backfill SKIPPED (already covers {since.isoformat()})")
+                else:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] funding_rate backfill OK ({written} records since {since.isoformat()})")
+            except Exception as exc:
+                db.rollback()
+                print(f"[{ctx.venue_name}:{venue_symbol}] funding_rate backfill FAILED: {exc}")
+
+
+def backfill_run_open_interest(db: Session, contexts: list[VenueContext], timeframe: str, since: datetime) -> None:
+    """F0e P2: same shape as backfill_run(), for open interest history."""
+    for ctx in contexts:
+        for venue_symbol, instrument in ctx.instruments:
+            try:
+                written = backfill_open_interest_if_needed(db, ctx.exchange, instrument, venue_symbol, timeframe, since)
+                if written is None:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] open_interest backfill SKIPPED (already covers {since.isoformat()})")
+                else:
+                    print(f"[{ctx.venue_name}:{venue_symbol}] open_interest backfill OK ({written} records since {since.isoformat()})")
+            except Exception as exc:
+                db.rollback()
+                print(f"[{ctx.venue_name}:{venue_symbol}] open_interest backfill FAILED: {exc}")
 
 
 def run(venue_names: list[str], symbols: list[str], timeframe: str, limit: int) -> None:
