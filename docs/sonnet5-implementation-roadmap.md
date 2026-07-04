@@ -697,6 +697,44 @@ F7 Tahap 2).
   koefisien non-nol 10/10 window di F3). Catatan dari F6 temuan #4: refit
   di config ketat makin noisy karena sampel kecil — laporkan juga fit
   pooled-lintas-seri sebagai sensitivity check, bukan pengganti kriteria.
+
+  **SELESAI — ADOPTED (3 Juli 2026, hari yg sama).** Kriteria di-pre-
+  register PERSIS spt di atas SEBELUM dijalankan thd data real (bukan
+  post-hoc): (a) tes kanonik BTC/Binance, config produksi default,
+  `fit_weights.evaluate_sma_candidate_adoption()` (fungsi baru,
+  refactor `evaluate_adoption()` jadi `_evaluate_adoption_generic()` yg
+  bisa dipakai ulang utk skema mana pun); (b) tes korroborasi 3 seri lain
+  scr terpisah; (c) sensitivity check pooled lintas SEMUA 4 seri (window
+  results dari 4 seri sekadar di-concat, fungsi yg sama, tanpa fungsi
+  pooling terpisah). **Hasil real (bukan dari memori F3, dijalankan ulang
+  fresh)**: kriteria terpenuhi di **SEMUA 4 seri secara independen** —
+  BTC/Binance AUC 0.617 korelasi +0.125; BTC/Bybit AUC 0.562 korelasi
+  +0.083; ETH/Binance AUC 0.584 korelasi +0.117; ETH/Bybit AUC 0.598
+  korelasi +0.128 — dan pooled-lintas-4-seri (n=1496, jauh lebih besar
+  drpd F6 temuan #4's kekhawatiran sampel kecil) AUC 0.583 korelasi
+  +0.116. **Adopted=True bulat di semua level pengujian, tanpa
+  pengecualian.**
+
+  **Diimplementasi**: `fit_weights.FEATURE_NAMES` sekarang 7 faktor
+  (nambah `sma_trend_bias_alignment` resmi), `CANDIDATE_FEATURE_NAMES`
+  + `WindowFitResult.binary_with_sma_candidate` + `evaluate_sma_
+  candidate_adoption()` DIHAPUS (tujuannya sudah tercapai, tidak ada lagi
+  perbedaan "candidate vs primary" utk sma khusus). `DERIVATIVES_FEATURE_
+  NAMES`/`ALL_CANDIDATE_FEATURE_NAMES` otomatis ikut nyakup sma (11 faktor
+  total), TANPA perubahan behavior ke `campaign.py`/`gated_campaign.py`
+  yg sudah ada (tuple isinya identik persis, cuma jalur turunannya beda).
+  6 test lama yg jadi usang dihapus, 1 test baru (`test_evaluate_adoption_
+  pools_across_concatenated_series`) gantiin fungsinya. 425 test total
+  lulus, ruff clean.
+
+  **PENTING — batas keputusan ini**: adopsi ini HANYA memformalkan
+  `sma_trend_bias_alignment` sbg bagian skema FITTING resmi
+  (`fit_weights.py`, validation harness, offline analysis) — TIDAK
+  mengubah `fib_gann_timing.ConfluenceWeights`/`score_confluence()`
+  produksi sama sekali. Sesuai prinsip gate-vs-skor (konteks F6b di
+  atas): mengubah bobot confidence produksi TIDAK ADA EFEK ke PF tanpa
+  konsumen (gate/sizing) — itu keputusan TERPISAH, later (mis. lewat I1
+  atau `gated_campaign.py`), BUKAN bagian I3 ini.
 - **I4 — Tutup F0c (backfill funding/OI native)** sebelum shadow Tahap 2:
   di shadow, gap sim-vs-real yang tak terjelaskan jatuh ke `residual` —
   semua komponen biaya harus hidup dulu supaya attribution bisa dipercaya.

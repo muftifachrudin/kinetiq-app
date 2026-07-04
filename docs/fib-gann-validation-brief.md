@@ -1182,3 +1182,74 @@ TIDAK diubah — eksperimen ini murni modul terpisah
 (`gated_campaign.py`), tidak menyentuh kode produksi manapun. Detail
 lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 6 (subseksi
 "Tindak lanjut F6").
+
+## 29. `sma_trend_bias_alignment` — adopsi resmi ke skema fitting utama (Fase 6b I3) — DIIMPLEMENTASI 3 Juli 2026, hasil: ADOPTED bulat di semua 4 seri
+
+Keputusan adopsi resmi PRE-REGISTERED (kriteria ditulis SEBELUM dijalankan
+thd data, bukan post-hoc): apakah `sma_trend_bias_alignment` (proxy
+close-vs-SMA200, Fase 2's `htf_bias.sma_trend_bias()`, sengaja dibiarkan
+jadi kolom kandidat terpisah sejak Fase 2, dievaluasi via Fase 3's
+`CANDIDATE_FEATURE_NAMES`) layak lulus jadi bagian SKEMA FITTING RESMI
+(`fit_weights.FEATURE_NAMES`) — kriteria SAMA persis dgn `evaluate_
+adoption()`: median AUC OOS > 0.55 DAN korelasi(predicted P(TP),
+net_return_pct) OOS > 0.
+
+**Kode**: `fit_weights.evaluate_adoption()` di-refactor jadi delegasi ke
+`_evaluate_adoption_generic(window_results, get_scheme)` — logika sama
+persis, cuma bisa dipakai ulang utk skema `SchemeResult` mana pun.
+`evaluate_sma_candidate_adoption()` (baru, sementara) memanggilnya dgn
+`get_scheme=lambda wr: wr.binary_with_sma_candidate` — dipakai SATU KALI
+utk keputusan ini, lalu dihapus lagi setelah keputusan diambil (tujuannya
+sudah tercapai, tidak ada lagi state "candidate vs primary" yg perlu
+dibedakan utk sma khusus). "Sensitivity check pooled-lintas-seri" (F6
+temuan #4: refit di config ketat makin noisy krn sampel kecil) TERNYATA
+tidak butuh fungsi pooling terpisah sama sekali — cukup panggil fungsi
+evaluasi yg sama dgn window_results dari beberapa seri di-CONCAT jadi satu
+list, krn fungsinya sendiri tidak peduli window/seri mana asal tiap entry.
+
+**Hasil real (dijalankan fresh, bukan dari angka lama F3)**:
+
+| Seri | Median AUC OOS | Korelasi OOS | Adopted? |
+|---|---|---|---|
+| BTC/Binance (kanonik) | 0.617 | +0.125 | **Ya** |
+| BTC/Bybit | 0.562 | +0.083 | **Ya** |
+| ETH/Binance | 0.584 | +0.117 | **Ya** |
+| ETH/Bybit | 0.598 | +0.128 | **Ya** |
+| **Pooled 4 seri (n=1496)** | **0.583** | **+0.116** | **Ya** |
+
+**ADOPTED=True bulat di SEMUA 4 seri secara independen, DAN di sensitivity
+check pooled-lintas-seri** — hasil paling robust & tidak ambigu dari
+seluruh proses adopsi manapun di investigasi ini (F3's fit 6-faktor asli
+sendiri cuma AUC 0.522, GAGAL; kolom kandidat sma inilah yg justru selalu
+lulus, di setiap seri, tanpa pengecualian).
+
+**Implementasi hasil keputusan**: `fit_weights.FEATURE_NAMES` jadi 7
+faktor resmi (nambah `sma_trend_bias_alignment` di akhir tuple, urutan
+SAMA persis dgn `CANDIDATE_FEATURE_NAMES` lama supaya tidak ada perubahan
+tersembunyi). `CANDIDATE_FEATURE_NAMES`, `WindowFitResult.binary_with_
+sma_candidate`, dan `evaluate_sma_candidate_adoption()` DIHAPUS bersih
+(bukan dibiarkan mati) — sesuai prinsip "kalau yakin tidak dipakai lagi,
+hapus total, jangan tinggalkan kode mati". `DERIVATIVES_FEATURE_NAMES`
+(otomatis 11 faktor skrg, krn diturunkan dari `FEATURE_NAMES` yg baru)
+dan `ALL_CANDIDATE_FEATURE_NAMES` (sekarang cuma alias langsung ke
+`DERIVATIVES_FEATURE_NAMES`, isi tuple-nya PERSIS SAMA dgn sebelumnya)
+— TIDAK ADA perubahan behavior ke `campaign.py`/`gated_campaign.py` yg
+sudah exist & sudah di-PR, keduanya tetap jalan tanpa modifikasi. 6 test
+lama yg jadi usang (menguji keberadaan `CANDIDATE_FEATURE_NAMES`/
+`binary_with_sma_candidate`) dihapus, 1 test baru gantiin fungsinya utk
+`evaluate_adoption()`'s sendiri pooling behavior. 425 test total lulus,
+ruff clean.
+
+**PENTING — batas keputusan ini, jangan disalahpahami sbg lebih dari yg
+sebenarnya**: adopsi ini HANYA memformalkan `sma_trend_bias_alignment`
+sbg bagian skema FITTING resmi (validation harness, offline analysis) —
+**TIDAK mengubah `fib_gann_timing.ConfluenceWeights`/`score_confluence()`
+produksi sama sekali**, dan TIDAK PUNYA EFEK APA PUN ke PF backtest
+manapun (persis prinsip "gate-vs-skor" yg F6b review catat: confidence
+score tidak punya konsumen di harness sekarang, jadi mengubah cara
+DIHITUNGnya — sekalipun sekarang termasuk sma resmi — tidak menggerakkan
+PF sedikit pun tanpa mekanisme gate/sizing terpisah). Keputusan wiring ke
+`ConfluenceWeights` produksi, atau ke mekanisme gate spt `gated_
+campaign.py` (Section 28), tetap keputusan TERPISAH & LATER, bukan bagian
+I3 ini. Detail lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 6b
+I3.
