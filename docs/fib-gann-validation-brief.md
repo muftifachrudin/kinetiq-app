@@ -1253,3 +1253,146 @@ PF sedikit pun tanpa mekanisme gate/sizing terpisah). Keputusan wiring ke
 campaign.py` (Section 28), tetap keputusan TERPISAH & LATER, bukan bagian
 I3 ini. Detail lengkap: `docs/sonnet5-implementation-roadmap.md` Fase 6b
 I3.
+
+## 30. F6b I1(a)+I1(b)+I2+I5 — PR-1 lengkap: sizing multiplier, gate Daily-bias literal, breakdown arah×regime kedua config, bootstrap CI (4 Juli 2026)
+
+Satu PR (#86) menggabungkan 4 item checklist F6b yang tersisa (I3 sudah
+kelar terpisah, Section 29). Semua pre-registered SEBELUM dijalankan thd
+data real, semua harness-only (TIDAK ada perubahan default produksi
+`fib_gann_timing.py`/`ConfluenceWeights`), dan I1(a)/I1(b) dijalankan **di
+atas config kandidat F5** (bukan default produksi) sesuai instruksi.
+
+### I1(b) — gate struktural Daily-bias LITERAL, bukan proxy SMA
+
+Beda dgn `trend_alignment_only` yg sudah diuji sebelumnya (Section 28,
+pakai `sma_trend_bias_alignment` sbg proxy), varian ini pakai
+`signal_runner.Signal.daily_bias_alignment` — bacaan Daily-only
+swing-based ASLI via `htf_bias.compute_bias()`/`bias_alignment()`, bukan
+proxy. Field baru ini beda dari `htf_alignment` (blend 1d+4h) maupun
+`sma_trend_bias_alignment` (proxy SMA). `gated_campaign.GATE_CONFIGS`
+nambah `daily_bias_only`, dilaporkan BERDAMPINGAN dgn (bukan gantiin)
+`trend_alignment_only`.
+
+**Hasil real, 4 seri, config kandidat F5:**
+
+| Seri | `no_gate` PF net | `daily_bias_only` PF net (window) | funnel | `trend_alignment_only` (proxy SMA, window) | `both_gates` (confidence+SMA-proxy, window) |
+|---|---|---|---|---|---|
+| BTC/Binance | 0.995 | **1.246** (4/10) | 30.6% | 1.165 (6/10) | 1.263 (5/10) |
+| BTC/Bybit | 0.986 | 1.125 (5/10) | 33.5% | 1.228 (6/10) | **1.539** (6/10) |
+| ETH/Binance | 1.126 | **1.168** (5/10) | 27.5% | 0.995 (4/10) | 0.959 (4/10) |
+| ETH/Bybit | 1.099 | 1.052 (4/10) | 26.5% | 0.915 (4/10) | 0.694 (2/10) |
+
+**Tidak ada pemenang universal** antara literal vs proxy SMA: literal
+menang di BTC/Binance & ETH/Binance, proxy SMA (via `trend_alignment_
+only`/`both_gates`) menang di BTC/Bybit & (tipis) ETH/Bybit. `both_gates`
+(kombinasi confidence+SMA-proxy — sama persis dgn yg sudah diuji di
+Section 28, TIDAK melibatkan daily_bias literal) mencapai **1.539 PF
+net, 6/10 window** di BTC/Bybit — tertinggi di SELURUH investigasi F1-F6b
+— tapi jadi TERBURUK (0.694, 2/10) di ETH/Bybit. Funnel `daily_bias_only`
+konsisten ~27-34% sinyal tersisa di semua seri, dekat estimasi "~50%
+sinyal terpangkas" di teori awal. **Tidak ada varian yang lolos ≥7/10**
+(kriteria promosi resmi bag. 7) di seri manapun.
+
+### I1(a) — sizing multiplier
+
+`gated_campaign.size_multiplier()` memetakan confidence per-window model
+(sama yg dipakai `confidence_only` gate) linear ke `[0.5, 1.5]`, TIDAK
+PERNAH veto. `run_sizing_series()` hitung PF net tertimbang-size via
+`metrics.weighted_profit_factor()`.
+
+**Hasil real, 4 seri, config kandidat F5:**
+
+| Seri | PF net (unweighted, baseline) | PF net tertimbang (`confidence_sizing`) | Δ | avg multiplier (range) |
+|---|---|---|---|---|
+| BTC/Binance | 0.995 | **1.009** | +0.014 | 0.756 (0.586–1.093) |
+| BTC/Bybit | 0.986 | **1.005** | +0.019 | 0.748 (n/a) |
+| ETH/Binance | 1.126 | **1.070** | −0.056 | 0.693 (n/a) |
+| ETH/Bybit | 1.099 | **1.060** | −0.040 | 0.692 (0.571–0.936) |
+
+Sizing menaikkan PF net utk BTC (kedua venue, kenaikan sederhana +0.01-
+0.02) TAPI **menurunkan** utk ETH (kedua venue, −0.04 s/d −0.06) — efek
+tergantung aset, dilaporkan apa adanya termasuk hasil yang kalah/negatif,
+bukan cuma yang menang. Rata² multiplier ~0.69-0.76 di semua seri (model
+condong memprediksi confidence di bawah titik tengah 1.0 utk mayoritas
+sinyal dataset ini). **Sesuai hipotesis pre-registered**: sizing adalah
+lever jauh lebih lemah dari gate struktural (I1(b)), konsisten dgn intuisi
+"scaling posisi tidak bisa mengubah arah sinyal yang salah, cuma
+mengubah besarannya", tapi efeknya bukan nol/diabaikan — nyata, walau
+kecil dan kadang negatif.
+
+### I2 — breakdown arah×regime, formal, KEDUA config, SEMUA 4 seri
+
+`campaign.direction_of_trade()`/`direction_regime_breakdown()` baru,
+wired ke `SeriesCampaignResult.direction_regime_metrics` — dihitung
+otomatis utk KEDUA config (`current_defaults` & `f5_candidate`) krn
+`campaign.py` memang sudah jalanin keduanya per seri.
+
+**BTC (kedua venue, kedua config) — pola simetris konsisten:**
+
+| Seri | Config | long_bull | short_bull | long_bear | short_bear |
+|---|---|---|---|---|---|
+| BTC/Binance | default | 0.937 (n=53) | 0.591 (n=65) | 0.691 (n=105) | 1.550 (n=99) |
+| BTC/Binance | f5_candidate | 0.917 (n=29) | **0.337** (n=35) | 0.988 (n=67) | **1.553** (n=58) |
+| BTC/Bybit | default | 0.920 (n=49) | 0.552 (n=61) | 0.707 (n=106) | 1.584 (n=94) |
+| BTC/Bybit | f5_candidate | 0.802 (n=29) | **0.329** (n=35) | 0.931 (n=65) | **1.580** (n=58) |
+
+bull+short SELALU sel terburuk (0.33–0.59), bear+short SELALU sel
+terbaik (1.35–1.58), di KEDUA venue KEDUA config — config kandidat F5
+justru MEMPERTAJAM pemisahan ini (bull+short BTC turun ke 0.33-0.34 dari
+0.55-0.59 di default), bukan meratakannya.
+
+**ETH (kedua venue, kedua config) — pola JAUH lebih kabur:**
+
+| Seri | Config | long_bull | short_bull | long_bear | short_bear |
+|---|---|---|---|---|---|
+| ETH/Binance | default | 0.545 (n=68) | 0.709 (n=89) | 0.692 (n=180) | 1.087 (n=160) |
+| ETH/Binance | f5_candidate | 0.830 (n=40) | 0.764 (n=47) | 1.007 (n=97) | **1.600** (n=85) |
+| ETH/Bybit | default | 0.705 (n=67) | 0.764 (n=85) | 0.721 (n=177) | 1.098 (n=158) |
+| ETH/Bybit | f5_candidate | 1.112 (n=39) | 0.779 (n=44) | 1.075 (n=97) | 1.346 (n=83) |
+
+`short_bear` konsisten bagus (1.07-1.60) mirip BTC, TAPI `long_bull`
+TIDAK konsisten (0.55-1.11, kadang bagus kadang jelek tergantung venue/
+config) — pola trend-alignment bersih ala BTC GAGAL generalize ke ETH.
+Ini menjelaskan langsung kenapa gate I1(b) (baik literal maupun proxy
+SMA) jauh lebih lemah efeknya di ETH: gate itu didesain memanfaatkan
+pola simetris trend-alignment yang memang ada di BTC tapi tidak ada
+(atau jauh lebih lemah) di ETH.
+
+### I5 — bootstrap CI pada PF net pooled
+
+`metrics.bootstrap_pf_net_ci()` — resample per-trade (2000 iterasi, seed
+tetap `20260704` supaya reproducible), CI 90% (persentil 5/95), wired ke
+`campaign.SeriesCampaignResult.pooled_pf_net_ci90` DAN `rr_sl_experiment.
+VariantResult.pooled_pf_net_ci90` (kedua mesin walk-forward, bukan cuma
+satu).
+
+**Hasil real (config kandidat F5, 4 seri) + perbandingan config default:**
+
+| Seri | Config | PF net | CI 90% |
+|---|---|---|---|
+| BTC/Binance | default | 0.942 | [0.787, 1.118] |
+| BTC/Binance | f5_candidate | 0.995 | [0.788, 1.253] |
+| BTC/Bybit | default | 0.985 | [0.821, 1.175] |
+| BTC/Bybit | f5_candidate | 0.986 | [0.759, 1.247] |
+| ETH/Binance | default | **0.803** | **[0.669, 0.964]** |
+| ETH/Binance | f5_candidate | 1.126 | [0.873, 1.419] |
+| ETH/Bybit | default | 0.841 | [0.704, 1.006] |
+| ETH/Bybit | f5_candidate | 1.099 | [0.863, 1.397] |
+
+**7 dari 8 baris**, CI merentang lintas 1.0 (breakeven) — titik-estimasi
+PF net manapun di baris itu TIDAK bisa dibedakan scr statistik dari
+breakeven pada jumlah trade saat ini (~360-670/seri). **Satu pengecualian
+mencolok**: config default produksi ETH/Binance, CI **SELURUHNYA di
+bawah 1.0** — ini sinyal under-performance yang didukung statistik,
+bukan cuma titik-estimasi jelek yang mungkin cuma noise. Demonstrasi
+langsung kenapa I5 penting: kriteria window-pass-count saja (bag. 7,
+≥7/10) under-powered pada skala sampel ini (F6b's catatan kejujuran (b)),
+CI mengungkap mana temuan yang beneran didukung data vs mana yang cuma
+kebetulan sampel.
+
+**PENTING — batas hasil PR ini**: semua angka di atas TETAP di bawah
+kriteria promosi resmi bag. 7 (PF net > 1.3 di ≥7/10 window per seri) —
+tidak ada keputusan adopsi/config baru yang diambil di sini, sesuai
+disiplin F3/F5/F6/I3 yang sama ("let evidence decide, never auto-apply").
+Detail kode & test: lihat PR #86 & `docs/sonnet5-implementation-
+roadmap.md` bag. F6b I1/I2/I5.

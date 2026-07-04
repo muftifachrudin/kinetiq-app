@@ -738,6 +738,43 @@ F7 Tahap 2).
   manapun (individual tertinggi 4/10, butuh ≥7/10). Varian (a) *sizing
   multiplier* BELUM diuji. Detail penuh: `docs/fib-gann-validation-brief.md`
   Section 28.
+
+  **Kedua varian SEKARANG diuji lengkap (4 Juli 2026) — pre-registered,
+  di atas config kandidat F5 (bukan default produksi), 4 seri real,
+  kode `gated_campaign.py` diperluas (`daily_bias_only` di
+  `GATE_CONFIGS`; `SizingConfig`/`SIZING_CONFIGS`/`run_sizing_series()`
+  baru).** PR: #86.
+
+  **Varian (b) LITERAL** (`signal_runner.Signal.daily_bias_alignment`,
+  Daily-only swing-based via `htf_bias.compute_bias()` — BUKAN proxy SMA
+  yang sudah diuji sebelumnya): `daily_bias_only` — BTC/Binance PF net
+  **1.246** (4/10 window, funnel 30.6%), BTC/Bybit 1.125 (5/10, funnel
+  33.5%), ETH/Binance **1.168** (5/10, funnel 27.5% — TERBAIK utk seri
+  ini, ngalahin `trend_alignment_only` 0.995 dan `confidence_only`
+  0.921), ETH/Bybit 1.052 (4/10, funnel 26.5%). Dibanding proxy SMA yang
+  sudah diuji: **tidak ada pemenang universal** — literal menang di
+  BTC/Binance & ETH/Binance, proxy SMA menang di BTC/Bybit
+  (`trend_alignment_only` 1.228/6 vs literal 1.125/5) dan kira-kira
+  seri di ETH/Bybit. `both_gates` (confidence+SMA-proxy, KOMBINASI YANG
+  SAMA dari pengujian sebelumnya, bukan melibatkan daily_bias literal)
+  tetap yang tertinggi di BTC/Bybit (**1.539, 6/10** — PF net tertinggi
+  di SELURUH investigasi F1-F6b) tapi TERBURUK di ETH/Bybit (0.694,
+  2/10) — funnel/gate combo yang sama tidak generalize lintas seri.
+  **Tidak ada varian yang lolos ≥7/10 di seri manapun.**
+
+  **Varian (a) sizing multiplier**: `confidence_sizing` (multiplier dari
+  model confidence per-window yang sama, dipetakan linear ke [0.5, 1.5])
+  menaikkan PF net tertimbang-size utk BTC (Binance 0.995→**1.009**,
+  Bybit 0.986→**1.005**, kenaikan sederhana) TAPI **menurunkan** utk ETH
+  (Binance 1.126→**1.070**, Bybit 1.099→**1.060**) — efek tergantung
+  aset, dilaporkan apa adanya termasuk yang kalah. Rata² multiplier
+  ~0.69–0.76 di semua seri (model condong memprediksi confidence di
+  bawah titik tengah [0.5,1.5] utk mayoritas sinyal dataset ini).
+  **Sesuai hipotesis pre-registered**: sizing adalah lever JAUH lebih
+  lemah dari gate struktural, tapi bukan nol.
+
+  Detail penuh (tabel per seri lengkap): `docs/fib-gann-validation-
+  brief.md` Section 30.
 - **I2 — Bedah "bull terburuk universal"**: slice hasil campaign F6 per
   arah × regime. Hipotesis: cermin F2 lama — di bull, SHORT counter-trend
   yang membunuh (simetris LONG di bear). Kalau benar, I1 menyelesaikan
@@ -755,6 +792,19 @@ F7 Tahap 2).
   0.66, tidak bagus) — bukan simetri bersih spt BTC, konsisten dgn kenapa
   gate I1(b) juga jauh lebih lemah efeknya di ETH. Detail penuh:
   `docs/fib-gann-validation-brief.md` Section 28.
+
+  **Diperluas ke breakdown formal via `campaign.direction_regime_
+  breakdown()` baru (4 Juli 2026), KEDUA config, SEMUA 4 seri — bukan
+  lagi ad-hoc satu seri.** BTC (kedua venue, KEDUA config) konsisten
+  simetris: bull+short SELALU sel terburuk (0.33–0.59), bear+short
+  SELALU sel terbaik (1.35–1.58); kandidat F5 justru MEMPERTAJAM
+  pemisahan ini (bull+short BTC turun ke 0.33–0.34 dari 0.55–0.59 di
+  default). ETH (kedua venue, kedua config): short_bear konsisten bagus
+  (1.07–1.60) TAPI long_bull TIDAK konsisten (0.55–1.11, kadang bagus
+  kadang jelek) — pola trend-alignment bersih ala BTC gagal generalize
+  ke ETH, sesuai kenapa gate literal/proxy I1(b) juga jauh lebih lemah
+  di seri itu. Detail lengkap (tabel 6-sel × 4 seri × 2 config):
+  `docs/fib-gann-validation-brief.md` Section 30.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
@@ -807,6 +857,24 @@ F7 Tahap 2).
   sekunder resmi di samping window-pass-count. Murah, memperbaiki kualitas
   keputusan semua kampanye berikutnya, dan jadi dasar kriteria masuk-shadow
   di F7 Tahap 2.
+
+  **SELESAI (4 Juli 2026).** `metrics.bootstrap_pf_net_ci()` — resample
+  per-trade (2000 iterasi, seed tetap supaya reproducible), CI 90%,
+  wired ke `campaign.SeriesCampaignResult.pooled_pf_net_ci90` DAN
+  `rr_sl_experiment.VariantResult.pooled_pf_net_ci90` (kedua mesin,
+  bukan cuma satu). **Hasil real (F5-candidate config, 4 seri)**:
+  BTC/Binance PF net 0.995 [CI 0.79, 1.25]; BTC/Bybit 0.986 [0.76, 1.25];
+  ETH/Binance 1.126 [0.87, 1.42]; ETH/Bybit 1.099 [0.86, 1.40] — CI
+  SEMUANYA merentang lintas 1.0 (breakeven), artinya titik-estimasi PF
+  net manapun di atas TIDAK bisa dibedakan scr statistik dari breakeven
+  pada jumlah trade saat ini (~360-670/seri). **Satu pengecualian
+  mencolok**: config default produksi ETH/Binance PF net 0.803 [CI
+  **0.67, 0.96**] — CI-nya SELURUHNYA di bawah 1.0, sinyal under-
+  performance yang didukung statistik, bukan cuma titik-estimasi jelek.
+  Ini persis demonstrasi kenapa I5 penting — kriteria window-pass-count
+  saja under-powered (bag. F6b atas), CI mengungkap mana yang beneran
+  signifikan vs mana yang cuma noise sampel. Detail lengkap:
+  `docs/fib-gann-validation-brief.md` Section 30.
 
 ## Fase 7 — Shadow trading & jembatan paper-vs-real (gerbang skor 8→9) — DUA TAHAP
 
