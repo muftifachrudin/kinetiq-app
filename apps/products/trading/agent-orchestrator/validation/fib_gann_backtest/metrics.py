@@ -36,6 +36,7 @@ import dataclasses
 import datetime
 import math
 import os
+import random
 import statistics
 import sys
 from collections.abc import Callable
@@ -48,6 +49,17 @@ import trade_simulator as ts  # noqa: E402
 # duration, replacing the naive "252 trading days" assumption the brief
 # explicitly rejects for 24/7 crypto perps.
 YEAR_DURATION = datetime.timedelta(days=365.25)
+
+# F6b I5: bootstrap CI default resample count -- cheap enough (a few
+# hundred ms per series at typical trade counts) to run on every campaign
+# report, not just on request.
+DEFAULT_BOOTSTRAP_RESAMPLES = 2000
+DEFAULT_BOOTSTRAP_CI = 0.90
+# Fixed, not time-derived -- bootstrap_pf_net_ci() must be reproducible run
+# to run for the same trades (same "no hidden randomness" discipline as
+# every other constant in this harness; sklearn's own saga solver is the
+# sole exception, already noted as unseeded elsewhere in this codebase).
+DEFAULT_BOOTSTRAP_SEED = 20260704
 
 
 @dataclasses.dataclass(frozen=True)
@@ -72,6 +84,87 @@ def _profit_factor(returns: list[float]) -> float | None:
     if gross_loss <= 0.0:
         return None
     return gross_profit / gross_loss
+
+
+def weighted_profit_factor(weighted_returns: list[tuple[float, float]]) -> float | None:
+    """F6b I1(a) sizing-multiplier experiment: `weighted_returns` is a list
+    of (weight, net_return_pct) pairs, one per trade, where weight is that
+    trade's own position-size multiplier (see gated_campaign.py's
+    size_multiplier()). Scaling a trade's position size scales its dollar
+    PnL by the same factor, so weighting BOTH gross profit and gross loss
+    by each trade's own weight is the size-aware generalization of
+    _profit_factor() above (weight=1.0 for every trade reduces to exactly
+    the same number). None when there's no weighted loss to divide by, same
+    "undefined, not infinite" convention as _profit_factor()."""
+    gross_profit = sum(w * r for w, r in weighted_returns if r > 0)
+    gross_loss = -sum(w * r for w, r in weighted_returns if r < 0)
+    if gross_loss <= 0.0:
+        return None
+    return gross_profit / gross_loss
+
+
+def bootstrap_pf_net_ci(
+    trades: list[ts.SimulatedTrade],
+    n_resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES,
+    ci: float = DEFAULT_BOOTSTRAP_CI,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    """F6b I5: bootstrap confidence interval on pooled PF net, as a
+    secondary metric alongside window-pass-count -- a single-window-count
+    threshold is a coarse, under-powered signal at the ~40-60 trades/window
+    typical of this harness (F6b module docstring context); a CI on the
+    POOLED pf_net communicates how much sampling noise is in that number
+    without needing more real data.
+
+    Resamples per-trade (with replacement) from the non-censored trades'
+    net_return_pct, recomputes PF net each time, and returns the
+    (lower, upper) percentile bound of the `ci` central interval (e.g.
+    ci=0.90 -> 5th/95th percentile). None when fewer than 2 non-censored
+    trades exist (nothing meaningful to resample), or when every resample
+    happens to have no losing trade (PF net undefined in all of them --
+    vanishingly rare in practice, but reported as None rather than a
+    fabricated bound).
+
+    This resamples trades independently of their original chronological
+    order (a standard bootstrap assumption), which does NOT reintroduce any
+    lookahead: it is a purely descriptive uncertainty estimate over
+    already-realized, already-causally-computed trade outcomes, the same
+    "post-hoc, non-causal" freedom compute_metrics_by_regime()'s own
+    docstring already claims for its caller-supplied regime_of().
+    """
+    resolved = [t for t in trades if not t.label.censored]
+    if len(resolved) < 2:
+        return None
+    returns = [t.net_return_pct for t in resolved]
+    rng = random.Random(seed)
+    pf_samples = []
+    for _ in range(n_resamples):
+        resample = [rng.choice(returns) for _ in returns]
+        pf = _profit_factor(resample)
+        if pf is not None:
+            pf_samples.append(pf)
+    if not pf_samples:
+        return None
+    tail = (1.0 - ci) / 2.0
+    pf_samples.sort()
+    lower = _percentile(pf_samples, tail * 100.0)
+    upper = _percentile(pf_samples, (1.0 - tail) * 100.0)
+    return lower, upper
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile over an already-sorted list -- same
+    convention numpy.percentile's default uses, kept dependency-free since
+    this module has no numpy import elsewhere."""
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = (pct / 100.0) * (len(sorted_values) - 1)
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    if lo == hi:
+        return sorted_values[int(rank)]
+    frac = rank - lo
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac
 
 
 def _sharpe(returns: list[float], trades_per_year: float | None) -> float | None:

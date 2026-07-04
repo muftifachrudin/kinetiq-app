@@ -125,6 +125,7 @@ class VariantResult:
     windows_passing_pf: int
     total_windows: int
     pooled_pf_net: float | None  # PF net computed over every window's trades pooled together
+    pooled_pf_net_ci90: tuple[float, float] | None  # F6b I5: bootstrap 90% CI, see metrics.bootstrap_pf_net_ci()
     pooled_sl_hit_fraction: float | None
 
 
@@ -187,6 +188,7 @@ def run_variant(series_name: str, variant: Variant, candles: list[fgt.Candle]) -
         windows_passing_pf=windows_passing,
         total_windows=len(windows),
         pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
+        pooled_pf_net_ci90=metrics.bootstrap_pf_net_ci(pooled_trades) if pooled_non_censored else None,
         pooled_sl_hit_fraction=_sl_hit_fraction(pooled_trades),
     )
 
@@ -199,6 +201,7 @@ def _variant_result_to_dict(result: VariantResult) -> dict:
         "total_windows": result.total_windows,
         "windows_passing_pf": result.windows_passing_pf,
         "pooled_pf_net": result.pooled_pf_net,
+        "pooled_pf_net_ci90": list(result.pooled_pf_net_ci90) if result.pooled_pf_net_ci90 else None,
         "pooled_sl_hit_fraction": result.pooled_sl_hit_fraction,
         "windows": [
             {
@@ -233,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             result = run_variant(series_name, variant, candles)
             print(
                 f"  {variant.name}: signals={result.total_signals} windows_passing_pf={result.windows_passing_pf}/{result.total_windows} "
-                f"pooled_pf_net={result.pooled_pf_net} pooled_sl_hit_fraction={result.pooled_sl_hit_fraction}"
+                f"pooled_pf_net={result.pooled_pf_net} ci90={result.pooled_pf_net_ci90} pooled_sl_hit_fraction={result.pooled_sl_hit_fraction}"
             )
             all_results.append(result)
 

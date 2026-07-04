@@ -84,6 +84,47 @@ def test_regime_of_trade_unknown_when_month_not_covered():
     assert campaign.regime_of_trade(trade, {}) == "unknown"
 
 
+# --- direction_of_trade / direction_regime_breakdown (F6b I2) ---
+
+
+def mk_trade_dir(signal_ts: datetime.datetime, direction: fgt.TradeDirection, return_pct: float = 0.01, censored: bool = False) -> ts.SimulatedTrade:
+    label = fgt.TripleBarrierLabel(
+        outcome=fgt.BarrierOutcome.TAKE_PROFIT, exit_price=100.0, exit_ts=signal_ts + datetime.timedelta(hours=5), bars_held=5, return_pct=return_pct, censored=censored
+    )
+    return ts.SimulatedTrade(
+        signal_ts=signal_ts, signal_index=0, direction=direction, confidence=0.5, entry_price=100.0,
+        label=label, funding_cost_pct=0.0, funding_events_count=0, fee_cost_pct=0.0, net_return_pct=return_pct,
+    )
+
+
+def test_direction_of_trade_maps_long_short():
+    long_trade = mk_trade_dir(ts_at(0), fgt.TradeDirection.LONG)
+    short_trade = mk_trade_dir(ts_at(0), fgt.TradeDirection.SHORT)
+    assert campaign.direction_of_trade(long_trade) == "long"
+    assert campaign.direction_of_trade(short_trade) == "short"
+
+
+def test_direction_regime_breakdown_groups_by_direction_and_regime():
+    bull_month = datetime.datetime(2024, 3, 15, tzinfo=UTC)
+    bear_month = datetime.datetime(2024, 4, 15, tzinfo=UTC)
+    drift_by_month = {(2024, 3): 0.10, (2024, 4): -0.10}
+    trades = [
+        mk_trade_dir(bull_month, fgt.TradeDirection.LONG, 0.02),
+        mk_trade_dir(bull_month, fgt.TradeDirection.SHORT, -0.01),
+        mk_trade_dir(bear_month, fgt.TradeDirection.SHORT, 0.03),
+        mk_trade_dir(bear_month, fgt.TradeDirection.LONG, -0.02),
+    ]
+    breakdown = campaign.direction_regime_breakdown(trades, drift_by_month)
+    assert set(breakdown.keys()) == {("long", "bull"), ("short", "bull"), ("short", "bear"), ("long", "bear")}
+    assert breakdown[("long", "bull")].trade_count == 1
+
+
+def test_direction_regime_breakdown_excludes_all_censored_groups():
+    trades = [mk_trade_dir(ts_at(0), fgt.TradeDirection.LONG, 0.02, censored=True)]
+    breakdown = campaign.direction_regime_breakdown(trades, {})
+    assert breakdown == {}
+
+
 # --- CAMPAIGN_CONFIGS ---
 
 
@@ -119,6 +160,12 @@ def test_run_series_campaign_returns_well_formed_result():
     assert 0 <= result.windows_passing_pf <= result.total_windows
     assert isinstance(result.promoted, bool)
     assert isinstance(result.fit_report, campaign.FitReport)
+    if result.pooled_pf_net_ci90 is not None:
+        lower, upper = result.pooled_pf_net_ci90
+        assert lower <= upper
+    assert isinstance(result.direction_regime_metrics, dict)
+    for key in result.direction_regime_metrics:
+        assert key[0] in {"long", "short"}
 
 
 def test_run_series_campaign_promoted_matches_pass_fraction():

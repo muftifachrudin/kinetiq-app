@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "validation" / "fib_gann_backtest"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "strategy"))
+import campaign  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import fit_weights as fw  # noqa: E402
 import gated_campaign as gc  # noqa: E402
@@ -49,7 +50,7 @@ def noisy_zigzag(n: int = 1680, seed: int = 42) -> list[fgt.Candle]:
     return candles
 
 
-def mk_signal(index: int, swing_quality: float = 0.5, sma_trend_bias_alignment: float = 0.5) -> sr.Signal:
+def mk_signal(index: int, swing_quality: float = 0.5, sma_trend_bias_alignment: float = 0.5, daily_bias_alignment: float = 0.5) -> sr.Signal:
     exit_plan = fgt.ExitPlan(direction=LONG, entry_price=100.0, stop_loss=95.0, take_profits=(110.0,), risk_reward_ratio=2.0)
     pivot = fgt.SwingPoint(index=index, ts=ts_at(index), price=100.0, direction=fgt.SwingDirection.LOW, wick_rejection_score=0.5)
     return sr.Signal(
@@ -57,6 +58,7 @@ def mk_signal(index: int, swing_quality: float = 0.5, sma_trend_bias_alignment: 
         exit_plan=exit_plan, confidence=0.5, structure_event=None, swing_quality=swing_quality,
         fib_gann_confluence=0.5, volume_confirmation=0.5, wick_rejection=0.5, structure_alignment=0.5,
         htf_alignment=0.5, regime_alignment=0.5, sma_trend_bias_alignment=sma_trend_bias_alignment,
+        daily_bias_alignment=daily_bias_alignment,
     )
 
 
@@ -69,8 +71,15 @@ def mk_trade(signal: sr.Signal, outcome: fgt.BarrierOutcome, return_pct: float) 
     )
 
 
-def mk_labeled(index: int, swing_quality: float, outcome: fgt.BarrierOutcome, return_pct: float, sma_trend_bias_alignment: float = 0.5) -> fw.LabeledSignal:
-    signal = mk_signal(index, swing_quality=swing_quality, sma_trend_bias_alignment=sma_trend_bias_alignment)
+def mk_labeled(
+    index: int,
+    swing_quality: float,
+    outcome: fgt.BarrierOutcome,
+    return_pct: float,
+    sma_trend_bias_alignment: float = 0.5,
+    daily_bias_alignment: float = 0.5,
+) -> fw.LabeledSignal:
+    signal = mk_signal(index, swing_quality=swing_quality, sma_trend_bias_alignment=sma_trend_bias_alignment, daily_bias_alignment=daily_bias_alignment)
     trade = mk_trade(signal, outcome, return_pct)
     return fw.LabeledSignal(signal=signal, trade=trade)
 
@@ -78,9 +87,9 @@ def mk_labeled(index: int, swing_quality: float, outcome: fgt.BarrierOutcome, re
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_four_named_combinations():
+def test_gate_configs_covers_five_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
-    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "both_gates"}
+    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates"}
 
 
 def test_no_gate_config_has_both_gates_disabled():
@@ -121,6 +130,28 @@ def test_apply_gates_trend_alignment_respects_custom_threshold():
     test = [mk_labeled(i, 0.5, TP, 0.02, sma_trend_bias_alignment=0.6) for i in range(3)]
     config = gc.GateConfig(name="strict", use_trend_alignment_gate=True, trend_alignment_threshold=0.7)
     assert gc.apply_gates([], test, config) == []
+
+
+# --- apply_gates: daily_bias_only (F6b I1(b), literal) ---
+
+
+def test_apply_gates_daily_bias_keeps_only_above_threshold():
+    test = [
+        mk_labeled(0, 0.5, TP, 0.02, daily_bias_alignment=0.8),  # above default threshold 0.5
+        mk_labeled(1, 0.5, TP, 0.02, daily_bias_alignment=0.3),  # below threshold
+        mk_labeled(2, 0.5, TP, 0.02, daily_bias_alignment=0.5),  # equal to threshold -- strictly excluded
+    ]
+    kept = gc.apply_gates([], test, gc.GateConfig(name="daily_bias_only", use_daily_bias_gate=True))
+    assert [ls.signal.index for ls in kept] == [0]
+
+
+def test_apply_gates_daily_bias_independent_of_sma_trend_alignment():
+    # a signal aligned on the SMA proxy but NOT on the literal Daily bias
+    # must be rejected by daily_bias_only -- confirms the two gates read
+    # distinct Signal fields, not the same one under two names.
+    test = [mk_labeled(0, 0.5, TP, 0.02, sma_trend_bias_alignment=0.9, daily_bias_alignment=0.1)]
+    kept = gc.apply_gates([], test, gc.GateConfig(name="daily_bias_only", use_daily_bias_gate=True))
+    assert kept == []
 
 
 # --- _fit_confidence_model ---
@@ -242,3 +273,104 @@ def test_gated_series_result_is_frozen_dataclass():
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.series = "y"
+
+
+# --- F6b I1(a): size_multiplier ---
+
+
+def test_size_multiplier_clamps_into_min_max_band():
+    assert gc.size_multiplier(0.0) == pytest.approx(gc.MIN_SIZE_MULTIPLIER)
+    assert gc.size_multiplier(1.0) == pytest.approx(gc.MAX_SIZE_MULTIPLIER)
+    assert gc.size_multiplier(0.5) == pytest.approx((gc.MIN_SIZE_MULTIPLIER + gc.MAX_SIZE_MULTIPLIER) / 2)
+
+
+def test_size_multiplier_clamps_out_of_range_confidence():
+    assert gc.size_multiplier(-1.0) == pytest.approx(gc.MIN_SIZE_MULTIPLIER)
+    assert gc.size_multiplier(2.0) == pytest.approx(gc.MAX_SIZE_MULTIPLIER)
+
+
+# --- SIZING_CONFIGS / _size_multipliers ---
+
+
+def test_sizing_configs_covers_two_named_variants():
+    names = {c.name for c in gc.SIZING_CONFIGS}
+    assert names == {"no_sizing", "confidence_sizing"}
+
+
+def test_size_multipliers_no_sizing_always_returns_one():
+    test = [mk_labeled(i, 0.5, TP, 0.02) for i in range(3)]
+    multipliers = gc._size_multipliers([], test, gc.SizingConfig(name="no_sizing"))
+    assert multipliers == {0: 1.0, 1: 1.0, 2: 1.0}
+
+
+def test_size_multipliers_confidence_sizing_falls_back_to_one_when_train_cant_fit():
+    train = [mk_labeled(i, 0.9, TP, 0.02) for i in range(3)]  # too few samples
+    test = [mk_labeled(i, 0.5, TP, 0.02) for i in range(1000, 1003)]
+    multipliers = gc._size_multipliers(train, test, gc.SizingConfig(name="confidence_sizing", use_confidence_sizing=True))
+    assert multipliers == {1000: 1.0, 1001: 1.0, 1002: 1.0}
+
+
+def test_size_multipliers_confidence_sizing_scales_within_band_when_fit_succeeds():
+    rng = random.Random(11)
+    train = []
+    for i in range(60):
+        quality = 0.9 if i % 2 == 0 else 0.1
+        outcome = TP if rng.random() < (0.9 if quality > 0.5 else 0.1) else SL
+        train.append(mk_labeled(i, quality, outcome, 0.02 if outcome is TP else -0.01))
+    test = [mk_labeled(1000, 0.95, TP, 0.02), mk_labeled(1001, 0.05, TP, 0.02)]
+    multipliers = gc._size_multipliers(train, test, gc.SizingConfig(name="confidence_sizing", use_confidence_sizing=True))
+    assert set(multipliers.keys()) == {1000, 1001}
+    for m in multipliers.values():
+        assert gc.MIN_SIZE_MULTIPLIER <= m <= gc.MAX_SIZE_MULTIPLIER
+
+
+# --- run_sizing_series (end-to-end, synthetic data) ---
+
+
+def test_run_sizing_series_returns_well_formed_result_for_every_sizing_config():
+    candles = noisy_zigzag()
+    for config in gc.SIZING_CONFIGS:
+        result = gc.run_sizing_series("synthetic", candles, config)
+        assert result.series == "synthetic"
+        assert result.sizing_name == config.name
+        assert result.total_windows >= 1
+        if result.avg_multiplier is not None:
+            assert gc.MIN_SIZE_MULTIPLIER <= result.min_multiplier <= result.avg_multiplier <= result.max_multiplier <= gc.MAX_SIZE_MULTIPLIER
+
+
+def test_run_sizing_series_no_sizing_multipliers_always_one():
+    candles = noisy_zigzag()
+    result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"))
+    if result.avg_multiplier is not None:
+        assert result.min_multiplier == pytest.approx(1.0)
+        assert result.max_multiplier == pytest.approx(1.0)
+
+
+def test_run_sizing_series_no_sizing_weighted_pf_matches_unweighted_pf():
+    candles = noisy_zigzag()
+    result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"))
+    if result.pooled_pf_net is not None and result.pooled_weighted_pf_net is not None:
+        assert result.pooled_weighted_pf_net == pytest.approx(result.pooled_pf_net)
+
+
+# --- campaign_config wiring (F6b I1: "di atas config kandidat F5") ---
+
+
+def test_run_gated_series_campaign_config_changes_signal_generation():
+    candles = noisy_zigzag()
+    f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
+    default_result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    candidate_result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"), campaign_config=f5_candidate)
+    # F5's candidate (min_rr=2.0/max_rr=5.0/sl=1.0atr) is strictly tighter
+    # than production defaults -- must generate a different (in practice,
+    # smaller) signal count, confirming campaign_config actually reaches
+    # generate_signals() rather than being silently ignored.
+    assert candidate_result.total_signals != default_result.total_signals
+
+
+def test_run_sizing_series_campaign_config_changes_signal_generation():
+    candles = noisy_zigzag()
+    f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
+    default_result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"))
+    candidate_result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"), campaign_config=f5_candidate)
+    assert candidate_result.total_signals != default_result.total_signals

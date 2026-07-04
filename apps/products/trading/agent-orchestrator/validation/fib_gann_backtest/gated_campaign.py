@@ -35,6 +35,25 @@ with the higher-timeframe SMA trend. No per-window fitting needed (this
 factor is already computed at signal-generation time), so no lookahead
 concern at all.
 
+DAILY-BIAS GATE (F6b I1(b), the LITERAL variant -- docs/sonnet5-
+implementation-roadmap.md): keeps only signals whose daily_bias_alignment
+(signal_runner.py, single-timeframe swing-based Daily bias, distinct from
+the SMA proxy above) exceeds a threshold -- the founder's original theory
+v2 pasal (b) itself ("LONG melawan downtrend Daily = premis trade
+invalid"), not a stand-in for it. Same no-lookahead reasoning as the
+trend-alignment gate: this factor is already computed causally at
+signal-generation time, so filtering on it introduces nothing new.
+
+SIZING MULTIPLIER (F6b I1(a)): a fundamentally different mechanism from
+the three gates above -- instead of dropping signals, every kept signal is
+RESIZED by a continuous multiplier derived from the same per-window
+fitted confidence model the confidence gate uses (never a hard veto, per
+the gate-vs-score standing principle in the F6b module docstring this
+file's own header references). See size_multiplier()/run_sizing_series()
+below and metrics.weighted_profit_factor() for how "PF tertimbang-size"
+is computed net of fees/funding (SimulatedTrade.net_return_pct is already
+both).
+
 Reuses fit_weights.build_labeled_signals()/split_by_window() to fit the
 confidence gate (full-hindsight-resolved outcomes for TRAIN, the same
 convention fit_weights.py itself already uses for fitting purposes --
@@ -59,6 +78,7 @@ synthetic tests alone.
 
 import dataclasses
 import os
+import statistics
 import sys
 
 import numpy as np
@@ -81,14 +101,21 @@ class GateConfig:
     confidence_percentile: float = 50.0  # keep signals with predicted P(TP) >= this percentile of TRAIN's own predictions
     use_trend_alignment_gate: bool = False
     trend_alignment_threshold: float = 0.5  # keep signals with sma_trend_bias_alignment strictly above this
+    use_daily_bias_gate: bool = False
+    daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
 
 
-# Neither gate is assumed to help going in -- all four run through the
-# same campaign so the real numbers decide (module docstring).
+# Neither gate is assumed to help going in -- all run through the same
+# campaign so the real numbers decide (module docstring). daily_bias_only
+# is F6b I1(b)'s literal, pre-registered variant -- reported alongside
+# (not instead of) trend_alignment_only, which already answered the SMA
+# proxy question; both are kept so the comparison itself is visible in
+# the same report ("laporkan juga yang kalah").
 GATE_CONFIGS = (
     GateConfig(name="no_gate"),
     GateConfig(name="confidence_only", use_confidence_gate=True),
     GateConfig(name="trend_alignment_only", use_trend_alignment_gate=True),
+    GateConfig(name="daily_bias_only", use_daily_bias_gate=True),
     GateConfig(name="both_gates", use_confidence_gate=True, use_trend_alignment_gate=True),
 )
 
@@ -136,6 +163,9 @@ def apply_gates(train: list[fw.LabeledSignal], test: list[fw.LabeledSignal], gat
     if gate_config.use_trend_alignment_gate:
         candidates = [ls for ls in candidates if ls.signal.sma_trend_bias_alignment > gate_config.trend_alignment_threshold]
 
+    if gate_config.use_daily_bias_gate:
+        candidates = [ls for ls in candidates if ls.signal.daily_bias_alignment > gate_config.daily_bias_threshold]
+
     return candidates
 
 
@@ -155,11 +185,28 @@ def run_gated_series(
     series_name: str,
     candles,
     gate_config: GateConfig,
+    campaign_config: campaign.CampaignConfig = campaign.CAMPAIGN_CONFIGS[0],
     derivatives_records=None,
     funding_events=None,
     max_holding_bars: int = 20,
 ) -> GatedSeriesResult:
-    signals = sr.generate_signals(candles, derivatives_records=derivatives_records)
+    """campaign_config (F6b I1, docs/sonnet5-implementation-roadmap.md):
+    which R:R/SL config generates the underlying signals BEFORE any gate is
+    applied -- defaults to campaign.CAMPAIGN_CONFIGS[0] (current production
+    defaults, this module's original behavior, so every pre-existing call
+    site/test is unaffected), but I1's own pre-registered A/B runs this on
+    TOP of campaign.CAMPAIGN_CONFIGS[1] (F5's candidate) instead, per the
+    roadmap's explicit "di atas config kandidat F5" framing -- reusing
+    campaign.CampaignConfig rather than a parallel set of loose R:R/SL
+    params."""
+    signals = sr.generate_signals(
+        candles,
+        min_rr_threshold=campaign_config.min_rr_threshold,
+        max_rr_threshold=campaign_config.max_rr_threshold,
+        sl_atr_buffer_multiplier=campaign_config.sl_atr_buffer_multiplier,
+        sl_method=campaign_config.sl_method,
+        derivatives_records=derivatives_records,
+    )
     labeled = fw.build_labeled_signals(signals, candles, funding_events or [], max_holding_bars)
     windows = campaign.exp.generate_windows_by_calendar(
         start=candles[0].ts,
@@ -212,4 +259,139 @@ def run_gated_series(
         windows_passing_pf=windows_passing,
         promoted=promoted,
         pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
+    )
+
+
+# --- F6b I1(a): sizing multiplier (module docstring) ---
+
+# "dalam cap" -- confidence never vetoes a trade outright, only scales it
+# within a bounded range; MIN_SIZE_MULTIPLIER=0.5/MAX=1.5 is a symmetric,
+# undisputed starting band around the unscaled baseline of 1.0 (same
+# "initial numbers are free, the fit/evidence decides whether it helps"
+# convention as every other new constant in this harness -- not itself
+# something Fase 3 fits).
+MIN_SIZE_MULTIPLIER = 0.5
+MAX_SIZE_MULTIPLIER = 1.5
+
+
+def size_multiplier(confidence: float) -> float:
+    """Linear map of a 0-1 confidence score to [MIN_SIZE_MULTIPLIER,
+    MAX_SIZE_MULTIPLIER], clamped. confidence outside [0, 1] (shouldn't
+    happen for a predict_proba output, but this is a pure function with no
+    caller-trust assumption) is clamped first so the result never leaves
+    the cap either."""
+    clamped = max(0.0, min(1.0, confidence))
+    return MIN_SIZE_MULTIPLIER + clamped * (MAX_SIZE_MULTIPLIER - MIN_SIZE_MULTIPLIER)
+
+
+@dataclasses.dataclass(frozen=True)
+class SizingConfig:
+    name: str
+    use_confidence_sizing: bool = False
+
+
+# no_sizing (multiplier always 1.0) is the baseline every other variant is
+# measured against -- same "let the number decide" discipline as
+# GATE_CONFIGS' own no_gate entry.
+SIZING_CONFIGS = (
+    SizingConfig(name="no_sizing"),
+    SizingConfig(name="confidence_sizing", use_confidence_sizing=True),
+)
+
+
+def _size_multipliers(train: list[fw.LabeledSignal], test: list[fw.LabeledSignal], sizing_config: SizingConfig) -> dict[int, float]:
+    """signal.index -> multiplier for every signal in `test` -- keyed by
+    index (not list position) since simulate_trades() can drop a signal
+    entirely (the very last candle in the series has no forward data to
+    label), and SimulatedTrade.signal_index is the stable join key back to
+    whichever multiplier applies, regardless of any such drop."""
+    if not sizing_config.use_confidence_sizing:
+        return {ls.signal.index: 1.0 for ls in test}
+    fit = _fit_confidence_model(train)
+    if fit is None:
+        return {ls.signal.index: 1.0 for ls in test}  # can't fit this window -- no scaling, same fallback precedent as the gate
+    model, _ = fit
+    return {ls.signal.index: size_multiplier(_predict_proba(model, ls.signal)) for ls in test}
+
+
+@dataclasses.dataclass(frozen=True)
+class SizingSeriesResult:
+    series: str
+    sizing_name: str
+    total_signals: int
+    total_windows: int
+    pooled_pf_net: float | None  # unweighted (every trade at multiplier 1.0) -- directly comparable to campaign.py's own baseline
+    pooled_weighted_pf_net: float | None  # size-weighted PF net, net of fees/funding (metrics.weighted_profit_factor)
+    avg_multiplier: float | None  # funnel diagnostic: mean multiplier actually applied, across every non-censored trade
+    min_multiplier: float | None
+    max_multiplier: float | None
+
+
+def run_sizing_series(
+    series_name: str,
+    candles,
+    sizing_config: SizingConfig,
+    campaign_config: campaign.CampaignConfig = campaign.CAMPAIGN_CONFIGS[0],
+    derivatives_records=None,
+    funding_events=None,
+    max_holding_bars: int = 20,
+) -> SizingSeriesResult:
+    """campaign_config: see run_gated_series()'s own docstring -- same
+    reasoning, same default, same I1 "on top of F5 candidate" override."""
+    signals = sr.generate_signals(
+        candles,
+        min_rr_threshold=campaign_config.min_rr_threshold,
+        max_rr_threshold=campaign_config.max_rr_threshold,
+        sl_atr_buffer_multiplier=campaign_config.sl_atr_buffer_multiplier,
+        sl_method=campaign_config.sl_method,
+        derivatives_records=derivatives_records,
+    )
+    labeled = fw.build_labeled_signals(signals, candles, funding_events or [], max_holding_bars)
+    windows = campaign.exp.generate_windows_by_calendar(
+        start=candles[0].ts,
+        end=candles[-1].ts,
+        train_months=campaign.exp.TRAIN_MONTHS,
+        test_months=campaign.exp.TEST_MONTHS,
+        embargo_days=campaign.exp.EMBARGO_DAYS,
+        step_months=campaign.exp.STEP_MONTHS,
+        mode=campaign.exp.WINDOW_MODE,
+    )
+
+    pooled_trades: list[ts.SimulatedTrade] = []
+    weighted_returns: list[tuple[float, float]] = []
+    applied_multipliers: list[float] = []
+    for window in windows:
+        train, test = fw.split_by_window(labeled, window)
+        multiplier_by_index = _size_multipliers(train, test, sizing_config)
+
+        # Same walk-forward-strict re-simulation convention as apply_gates()
+        # above (module docstring): sizing does not change WHICH signals
+        # trade, only how much weight each gets, but PF is still measured
+        # against window-restricted candles for direct comparability with
+        # campaign.py/run_gated_series().
+        test_signals = [ls.signal for ls in test]
+        window_candles = [c for c in candles if c.ts < window.test_end]
+        trades = ts.simulate_trades(
+            test_signals, window_candles, funding_events or [], max_holding_bars, campaign.exp.FEE_ENTRY_FRACTION, campaign.exp.FEE_EXIT_FRACTION
+        )
+        for trade in trades:
+            if not trade.label.censored:
+                multiplier = multiplier_by_index[trade.signal_index]
+                weighted_returns.append((multiplier, trade.net_return_pct))
+                applied_multipliers.append(multiplier)
+        pooled_trades.extend(trades)
+
+    pooled_non_censored = [t for t in pooled_trades if not t.label.censored]
+    pooled_metrics = metrics.compute_metrics(pooled_trades) if pooled_non_censored else None
+
+    return SizingSeriesResult(
+        series=series_name,
+        sizing_name=sizing_config.name,
+        total_signals=len(signals),
+        total_windows=len(windows),
+        pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
+        pooled_weighted_pf_net=metrics.weighted_profit_factor(weighted_returns) if weighted_returns else None,
+        avg_multiplier=statistics.mean(applied_multipliers) if applied_multipliers else None,
+        min_multiplier=min(applied_multipliers) if applied_multipliers else None,
+        max_multiplier=max(applied_multipliers) if applied_multipliers else None,
     )

@@ -121,6 +121,30 @@ def regime_of_trade(trade: ts.SimulatedTrade, drift_by_month: dict[tuple[int, in
     return classify_regime(drift)
 
 
+def direction_of_trade(trade: ts.SimulatedTrade) -> str:
+    return "long" if trade.direction is fgt.TradeDirection.LONG else "short"
+
+
+def direction_regime_breakdown(
+    trades: list[ts.SimulatedTrade], drift_by_month: dict[tuple[int, int], float]
+) -> dict[tuple[str, str], metrics.MetricsResult]:
+    """F6b I2: slice pooled trades by (direction, regime) instead of regime
+    alone -- the investigation that found BTC's "bull regime is worst"
+    (compute_metrics_by_regime()'s own breakdown) is largely an artifact of
+    mixing trend-aligned trades (bull+long, bear+short) with counter-trend
+    trades (bull+short, bear+long) into one regime bucket. Each of the 6
+    (direction, regime) combinations is computed independently via
+    compute_metrics(), so a combination with zero non-censored trades is
+    simply absent from the result rather than raising -- unlike compute_
+    metrics_by_regime(), which assumes every regime key the caller passes
+    in already has at least one non-censored trade."""
+    groups: dict[tuple[str, str], list[ts.SimulatedTrade]] = {}
+    for trade in trades:
+        key = (direction_of_trade(trade), regime_of_trade(trade, drift_by_month))
+        groups.setdefault(key, []).append(trade)
+    return {key: metrics.compute_metrics(group) for key, group in groups.items() if any(not t.label.censored for t in group)}
+
+
 @dataclasses.dataclass(frozen=True)
 class FitReport:
     median_auc: float | None
@@ -178,7 +202,9 @@ class SeriesCampaignResult:
     windows_passing_pf: int
     promoted: bool  # windows_passing_pf / total_windows >= PF_PASS_FRACTION
     pooled_pf_net: float | None
+    pooled_pf_net_ci90: tuple[float, float] | None  # F6b I5: bootstrap 90% CI on pooled_pf_net, see bootstrap_pf_net_ci()
     regime_metrics: dict[str, metrics.MetricsResult]
+    direction_regime_metrics: dict[tuple[str, str], metrics.MetricsResult]  # F6b I2
     fit_report: FitReport
 
 
@@ -221,11 +247,14 @@ def run_series_campaign(
 
     pooled_non_censored = [t for t in pooled_trades if not t.label.censored]
     pooled_metrics = metrics.compute_metrics(pooled_trades) if pooled_non_censored else None
+    pooled_pf_net_ci90 = metrics.bootstrap_pf_net_ci(pooled_trades) if pooled_non_censored else None
 
     drift_by_month = monthly_drift(candles)
     regime_metrics = {}
+    direction_regime_metrics = {}
     if pooled_non_censored:
         regime_metrics = metrics.compute_metrics_by_regime(pooled_trades, lambda t: regime_of_trade(t, drift_by_month))
+        direction_regime_metrics = direction_regime_breakdown(pooled_trades, drift_by_month)
 
     fit_report = run_fit_report(signals, candles, windows, [], exp.MAX_HOLDING_BARS)
 
@@ -240,7 +269,9 @@ def run_series_campaign(
         windows_passing_pf=windows_passing,
         promoted=promoted,
         pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
+        pooled_pf_net_ci90=pooled_pf_net_ci90,
         regime_metrics=regime_metrics,
+        direction_regime_metrics=direction_regime_metrics,
         fit_report=fit_report,
     )
 
@@ -254,8 +285,13 @@ def _result_to_dict(result: SeriesCampaignResult) -> dict:
         "windows_passing_pf": result.windows_passing_pf,
         "promoted": result.promoted,
         "pooled_pf_net": result.pooled_pf_net,
+        "pooled_pf_net_ci90": list(result.pooled_pf_net_ci90) if result.pooled_pf_net_ci90 else None,
         "regime_metrics": {
             regime: {"trade_count": m.trade_count, "profit_factor_net": m.profit_factor_net} for regime, m in result.regime_metrics.items()
+        },
+        "direction_regime_metrics": {
+            f"{direction}_{regime}": {"trade_count": m.trade_count, "profit_factor_net": m.profit_factor_net}
+            for (direction, regime), m in result.direction_regime_metrics.items()
         },
         "fit_report": {
             "median_auc": result.fit_report.median_auc,
@@ -288,7 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             result = run_series_campaign(series_name, candles, config)
             print(
                 f"  {config.name}: signals={result.total_signals} promoted={result.promoted} "
-                f"windows_passing_pf={result.windows_passing_pf}/{result.total_windows} pooled_pf_net={result.pooled_pf_net}"
+                f"windows_passing_pf={result.windows_passing_pf}/{result.total_windows} pooled_pf_net={result.pooled_pf_net} "
+                f"ci90={result.pooled_pf_net_ci90}"
             )
             all_results.append(result)
 

@@ -156,3 +156,59 @@ def test_compute_metrics_by_regime_empty_group_raises_via_compute_metrics():
 
     with pytest.raises(ValueError, match="no non-censored trades"):
         metrics.compute_metrics_by_regime(trades, regime_of)
+
+
+# --- weighted_profit_factor (F6b I1(a)) ---
+
+
+def test_weighted_profit_factor_matches_unweighted_at_multiplier_one():
+    returns = [0.05, -0.02, 0.03, -0.01]
+    weighted = [(1.0, r) for r in returns]
+    assert metrics.weighted_profit_factor(weighted) == pytest.approx(metrics._profit_factor(returns))  # noqa: SLF001
+
+
+def test_weighted_profit_factor_scales_contribution_by_weight():
+    # a 2x-sized winner should count twice as much toward gross profit
+    weighted = [(2.0, 0.05), (1.0, -0.02)]
+    # gross_profit = 2.0*0.05=0.10, gross_loss = 1.0*0.02=0.02 -> PF=5.0
+    assert metrics.weighted_profit_factor(weighted) == pytest.approx(5.0)
+
+
+def test_weighted_profit_factor_none_when_no_weighted_loss():
+    weighted = [(1.5, 0.05), (0.5, 0.02)]
+    assert metrics.weighted_profit_factor(weighted) is None
+
+
+# --- bootstrap_pf_net_ci (F6b I5) ---
+
+
+def test_bootstrap_pf_net_ci_none_with_fewer_than_two_trades():
+    trades = [mk_trade(0, 5, 0.02)]
+    assert metrics.bootstrap_pf_net_ci(trades) is None
+
+
+def test_bootstrap_pf_net_ci_excludes_censored_trades():
+    trades = [mk_trade(0, 5, 0.02, censored=True)]
+    assert metrics.bootstrap_pf_net_ci(trades) is None
+
+
+def test_bootstrap_pf_net_ci_returns_ordered_positive_bounds():
+    trades = [mk_trade(i * 10, i * 10 + 5, r) for i, r in enumerate([0.03, -0.01, 0.02, -0.015, 0.025, -0.01, 0.04, -0.02])]
+    ci = metrics.bootstrap_pf_net_ci(trades, n_resamples=500)
+    assert ci is not None
+    lower, upper = ci
+    assert 0.0 <= lower <= upper
+
+
+def test_bootstrap_pf_net_ci_is_deterministic_for_same_seed():
+    trades = [mk_trade(i * 10, i * 10 + 5, r) for i, r in enumerate([0.03, -0.01, 0.02, -0.015, 0.025, -0.01])]
+    first = metrics.bootstrap_pf_net_ci(trades, n_resamples=300, seed=7)
+    second = metrics.bootstrap_pf_net_ci(trades, n_resamples=300, seed=7)
+    assert first == second
+
+
+def test_bootstrap_pf_net_ci_differs_for_different_seeds_generally():
+    trades = [mk_trade(i * 10, i * 10 + 5, r) for i, r in enumerate([0.03, -0.01, 0.02, -0.015, 0.025, -0.01])]
+    a = metrics.bootstrap_pf_net_ci(trades, n_resamples=50, seed=1)
+    b = metrics.bootstrap_pf_net_ci(trades, n_resamples=50, seed=2)
+    assert a is not None and b is not None  # just confirms both seeds produce a usable result

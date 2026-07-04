@@ -108,6 +108,19 @@ class Signal:
     # remains a separate, later decision (see fit_weights.py's module
     # docstring).
     sma_trend_bias_alignment: float = 0.5
+    # Single-timeframe Daily-only swing-based bias alignment (htf_bias.
+    # compute_bias(candles, "1d")/bias_alignment()) -- distinct from
+    # htf_alignment above, which is a 1d+4h WEIGHTED BLEND. F6b I1(b)'s
+    # "gate struktural direction-vs-bias-Daily" (docs/sonnet5-
+    # implementation-roadmap.md) is defined against the real literal Daily
+    # bias specifically (the founder's original theory v2 pasal (b) --
+    # "LONG melawan downtrend Daily = premis trade invalid"), NOT the
+    # sma_trend_bias_alignment proxy gated_campaign.py's trend_alignment_
+    # only variant already tested -- that was an earlier stand-in for this
+    # exact factor, per that module's own docstring. Purely a faktor-skor
+    # dump here too (NOT wired into confidence/ConfluenceWeights), same
+    # additive default-0.5 discipline as every other candidate column.
+    daily_bias_alignment: float = 0.5
     # Fase 4 (docs/sonnet5-implementation-roadmap.md) derivatives_context.py
     # candidate columns -- same additive discipline as every field above:
     # default to neutral (0.5) / no-event (0.0) so existing Signal(...)
@@ -219,6 +232,10 @@ def generate_signals(
         daily_bias = hb.compute_bias(signal_candles, "1d", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
         h4_bias = hb.compute_bias(signal_candles, "4h", atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
         htf_score = hb.htf_alignment_score(direction, {"1d": daily_bias, "4h": h4_bias})
+        # F6b I1(b) candidate column -- single-timeframe Daily-only reading
+        # of the SAME daily_bias already computed above (no extra
+        # resampling cost), see Signal.daily_bias_alignment's own comment.
+        daily_bias_alignment_score = hb.bias_alignment(direction, daily_bias)
 
         # sma_trend_bias() candidate column (Fase 3) -- NOT wired into
         # confidence at all, purely dumped onto Signal below for
@@ -290,6 +307,7 @@ def generate_signals(
                 htf_alignment=htf_score,
                 regime_alignment=structure_score,
                 sma_trend_bias_alignment=sma_alignment_score,
+                daily_bias_alignment=daily_bias_alignment_score,
                 funding_contrarian_alignment=funding_align,
                 global_ls_contrarian_alignment=global_ls_align,
                 top_vs_global_alignment=top_vs_global_align,
