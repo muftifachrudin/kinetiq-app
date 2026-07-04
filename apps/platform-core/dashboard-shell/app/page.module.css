@@ -1,0 +1,36 @@
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 32px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.planTier {
+  color: #666;
+  margin-top: -12px;
+}
+
+.signalsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.signalsTable th,
+.signalsTable td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.long {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.short {
+  color: #dc2626;
+  font-weight: 600;
+}

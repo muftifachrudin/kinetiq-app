@@ -58,6 +58,52 @@ jobs:
       - name: Run tests
         run: pytest apps/products/trading/ingestion/tests
 
+  # api-gateway isn't a package (flat main.py/deps.py, see railway.toml's
+  # header comment for why), so it needs packages/db installed for
+  # kinetiq_db plus its own root requirements.txt for fastapi/sqlalchemy/etc,
+  # same shape as ingestion-test above. httpx is test-only (fastapi's
+  # TestClient needs it, production main.py doesn't import it directly).
+  api-gateway-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages/db + api-gateway deps + pytest
+        run: pip install -e packages/db -r requirements.txt pytest httpx
+      - name: Run tests
+        run: pytest apps/platform-core/api-gateway/tests
+
+  # First JS/TS app in the repo (Slice 2, docs/post-research-vertical-slices.md).
+  # Lint + production build only -- no real Clerk project exists to run
+  # against in CI, so this just proves the app compiles/typechecks, same
+  # boundary as api-gateway-test not covering a real DATABASE_URL.
+  dashboard-shell-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/platform-core/dashboard-shell
+    env:
+      # Not real credentials -- a well-formed-enough placeholder so
+      # ClerkProvider/clerkMiddleware don't reject the key shape at build
+      # time. Real keys are set as Railway/Vercel env vars at deploy time.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZHVtbXkuY2xlcmsuYWNjb3VudHMuZGV2JA
+      CLERK_SECRET_KEY: sk_test_dummy_dummy_dummy_dummy_dummy_dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/platform-core/dashboard-shell/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+
   # Requires the Neon GitHub integration (Neon Console -> project -> Settings
   # -> Integrations -> connect this repo), which auto-sets the NEON_API_KEY
   # secret and NEON_PROJECT_ID variable used below. See docs/prd.md Section

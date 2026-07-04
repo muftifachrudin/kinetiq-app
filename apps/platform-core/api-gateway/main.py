@@ -2,7 +2,7 @@ from billing import sync_tenant_plan
 from deps import get_current_user, get_db, require_plan
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from kinetiq_db.models import PlatformUser, Tenant
+from kinetiq_db.models import Instrument, PlatformUser, Signal, Tenant
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -67,3 +67,38 @@ def auto_execute_status(tenant: Tenant | None = Depends(require_plan("auto_execu
     """Placeholder proving plan-gating works end-to-end; real auto-execute
     business logic lives in apps/products/trading once that vertical is built."""
     return {"status": "not_implemented", "plan_tier": tenant.plan_tier if tenant else "superadmin"}
+
+
+@app.get("/trading/signals")
+def list_signals(
+    limit: int = 20,
+    tenant: Tenant | None = Depends(require_plan("signal_only", "auto_execute")),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Slice 2 (docs/post-research-vertical-slices.md): first read endpoint for
+    dashboard-shell. `signal` has no tenant_id/RLS of its own -- it's shared
+    strategy-engine output (see its docstring in kinetiq_db.models), so the
+    plan-gate above is what's actually being proven end-to-end here, not a
+    per-tenant data filter."""
+    limit = max(1, min(limit, 100))
+    rows = (
+        db.query(Signal, Instrument.symbol)
+        .join(Instrument, Signal.instrument_id == Instrument.id)
+        .order_by(Signal.ts.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": signal.id,
+            "instrument": symbol,
+            "timeframe": signal.timeframe,
+            "ts": signal.ts.isoformat(),
+            "direction": signal.direction,
+            "entry_price": str(signal.entry_price),
+            "stop_loss": str(signal.stop_loss),
+            "take_profit_1": str(signal.take_profit_1) if signal.take_profit_1 is not None else None,
+            "confidence": str(signal.confidence),
+        }
+        for signal, symbol in rows
+    ]
