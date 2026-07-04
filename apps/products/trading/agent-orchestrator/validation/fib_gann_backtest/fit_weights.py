@@ -407,14 +407,22 @@ class AdoptionDecision:
     adopted: bool
 
 
-def evaluate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
-    """3c: reports whether ConfluenceWeights' hand-tuned defaults should
-    be replaced by a fitted result -- never applies that decision itself.
-    See module docstring for exactly which two conditions must BOTH hold."""
-    binary_aucs = [wr.binary.auc for wr in window_results if wr.binary.auc is not None]
-    median_auc = statistics.median(binary_aucs) if binary_aucs else None
+def _evaluate_adoption_generic(window_results: list[WindowFitResult], get_scheme) -> AdoptionDecision:
+    """Shared logic behind evaluate_adoption()/evaluate_sma_candidate_
+    adoption() -- get_scheme(wr) picks which SchemeResult on a
+    WindowFitResult to evaluate (wr.binary for the primary FEATURE_NAMES
+    fit, wr.binary_with_sma_candidate for the I3 formal check below).
+    window_results is a flat list with no special handling for which
+    series/window each entry came from -- passing in the CONCATENATION of
+    multiple series' own window_results lists is exactly how a pooled-
+    across-series sensitivity check is computed (docs/sonnet5-
+    implementation-roadmap.md Fase 6b I3's "sensitivity check" note), no
+    separate pooling function needed."""
+    schemes = [get_scheme(wr) for wr in window_results]
+    aucs = [s.auc for s in schemes if s.auc is not None]
+    median_auc = statistics.median(aucs) if aucs else None
 
-    pooled = [pair for wr in window_results for pair in wr.binary.oos_predictions]
+    pooled = [pair for s in schemes for pair in s.oos_predictions]
     correlation = None
     if len(pooled) >= 2:
         confidences = [p[0] for p in pooled]
@@ -425,10 +433,31 @@ def evaluate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision
     adopted = median_auc is not None and median_auc > ADOPTION_MIN_MEDIAN_AUC and correlation is not None and correlation > ADOPTION_MIN_CORRELATION
 
     return AdoptionDecision(
-        windows_with_valid_binary_fit=len(binary_aucs),
+        windows_with_valid_binary_fit=len(aucs),
         total_windows=len(window_results),
         median_binary_auc=median_auc,
         pooled_oos_correlation=correlation,
         pooled_oos_sample_count=len(pooled),
         adopted=adopted,
     )
+
+
+def evaluate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
+    """3c: reports whether ConfluenceWeights' hand-tuned defaults should
+    be replaced by a fitted result -- never applies that decision itself.
+    See module docstring for exactly which two conditions must BOTH hold."""
+    return _evaluate_adoption_generic(window_results, lambda wr: wr.binary)
+
+
+def evaluate_sma_candidate_adoption(window_results: list[WindowFitResult]) -> AdoptionDecision:
+    """Fase 6b I3 (docs/sonnet5-implementation-roadmap.md): a formal,
+    pre-registered decision on whether sma_trend_bias_alignment (Fase 2's
+    htf_bias.sma_trend_bias() candidate column, kept unblended since Fase
+    2 pending exactly this check) should graduate from CANDIDATE_FEATURE_
+    NAMES into the primary FEATURE_NAMES fitting scheme -- SAME two
+    criteria as evaluate_adoption() (median AUC > 0.55 AND correlation >
+    0), applied to binary_with_sma_candidate instead of binary. Never
+    applies the promotion itself, same "report, don't force" discipline;
+    see the roadmap doc for the actual decision once real data is run
+    through this."""
+    return _evaluate_adoption_generic(window_results, lambda wr: wr.binary_with_sma_candidate)

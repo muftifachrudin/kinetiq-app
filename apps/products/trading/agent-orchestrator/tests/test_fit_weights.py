@@ -379,7 +379,12 @@ def test_fit_binary_with_derivatives_candidate_reports_four_more_coefficients():
 # --- evaluate_adoption ---
 
 
-def _mk_window_fit_result(window_id: int, auc: float | None, oos_predictions: list[tuple[float, float]]) -> fw.WindowFitResult:
+def _mk_window_fit_result(
+    window_id: int,
+    auc: float | None,
+    oos_predictions: list[tuple[float, float]],
+    sma_candidate: fw.SchemeResult | None = None,
+) -> fw.WindowFitResult:
     w = WalkForwardWindow(window_id=window_id, train_start=ts_at(0), train_end=ts_at(10), test_start=ts_at(10), test_end=ts_at(20))
     binary = fw.SchemeResult(auc=auc, brier=0.2 if auc is not None else None, coefficients={} if auc is not None else None, skip_reason=None if auc is not None else "skipped", oos_predictions=oos_predictions)
     empty = fw.SchemeResult(None, None, None, "not exercised in this test", [])
@@ -389,7 +394,7 @@ def _mk_window_fit_result(window_id: int, auc: float | None, oos_predictions: li
         test_count=len(oos_predictions),
         binary=binary,
         three_class=empty,
-        binary_with_sma_candidate=empty,
+        binary_with_sma_candidate=sma_candidate if sma_candidate is not None else empty,
         binary_with_derivatives_candidate=empty,
     )
 
@@ -432,3 +437,36 @@ def test_evaluate_adoption_not_adopted_when_correlation_passes_but_auc_does_not(
     decision = fw.evaluate_adoption(results)
     assert decision.pooled_oos_correlation > 0
     assert decision.adopted is False
+
+
+# --- evaluate_sma_candidate_adoption (Fase 6b I3) ---
+
+
+def test_evaluate_sma_candidate_adoption_reads_binary_with_sma_candidate_not_binary():
+    predictions = [(0.9, 0.05), (0.8, 0.03), (0.2, -0.03), (0.1, -0.05), (0.6, 0.01), (0.4, -0.01)]
+    sma_scheme = fw.SchemeResult(auc=0.7, brier=0.2, coefficients={}, skip_reason=None, oos_predictions=predictions)
+    # binary (primary) itself is a bad fit -- if evaluate_sma_candidate_adoption() were
+    # accidentally reading .binary instead of .binary_with_sma_candidate, this would fail.
+    results = [_mk_window_fit_result(0, auc=0.3, oos_predictions=[], sma_candidate=sma_scheme), _mk_window_fit_result(1, auc=0.3, oos_predictions=[], sma_candidate=sma_scheme)]
+    decision = fw.evaluate_sma_candidate_adoption(results)
+    assert decision.median_binary_auc == pytest.approx(0.7)
+    assert decision.adopted is True
+
+
+def test_evaluate_sma_candidate_adoption_not_adopted_when_no_valid_windows():
+    decision = fw.evaluate_sma_candidate_adoption([_mk_window_fit_result(0, None, [])])
+    assert decision.adopted is False
+    assert decision.median_binary_auc is None
+
+
+def test_evaluate_sma_candidate_adoption_pools_across_concatenated_series():
+    # Fase 6b I3's "sensitivity check pooled across series" is just this
+    # same function called on the CONCATENATION of multiple series' own
+    # window_results lists -- no separate pooling function needed.
+    predictions = [(0.9, 0.05), (0.8, 0.03), (0.2, -0.03), (0.1, -0.05), (0.6, 0.01), (0.4, -0.01)]
+    sma_scheme = fw.SchemeResult(auc=0.7, brier=0.2, coefficients={}, skip_reason=None, oos_predictions=predictions)
+    series_a = [_mk_window_fit_result(0, auc=0.6, oos_predictions=[], sma_candidate=sma_scheme)]
+    series_b = [_mk_window_fit_result(0, auc=0.8, oos_predictions=[], sma_candidate=sma_scheme)]
+    pooled_decision = fw.evaluate_sma_candidate_adoption(series_a + series_b)
+    assert pooled_decision.total_windows == 2
+    assert pooled_decision.pooled_oos_sample_count == len(predictions) * 2
