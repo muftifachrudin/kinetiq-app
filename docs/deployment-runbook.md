@@ -256,6 +256,43 @@ mechanics only.
    + separately-named-toml + explicit-Config-as-code-path pattern this gotcha
    describes is sound, not just theoretically reasoned.
 
+## Railway status & logs via GraphQL — `tools/railway_logs.py` (no dashboard, no screenshots)
+
+Every "get BOTH Build Logs and Deploy Logs" step above used to mean the
+founder opening the Railway dashboard and screenshotting. Both are now one
+command away from any environment with `RAILWAY_TOKEN` set (verified
+against the real project, 2026-07-04):
+
+```
+python tools/railway_logs.py                              # latest deployment per service
+python tools/railway_logs.py --service api-gateway --logs both
+python tools/railway_logs.py --deployment-id <uuid> --logs deploy --limit 300
+```
+
+API facts learned by probing (encoded in the script, repeated here so
+nobody re-discovers them the hard way):
+
+- Endpoint: `POST https://backboard.railway.com/graphql/v2`. For a
+  **Project Token** the auth header is **`Project-Access-Token: <token>`**
+  -- `Authorization: Bearer` is for personal/team tokens and does NOT work
+  with a project token.
+- **Cloudflare rejects Python's default urllib User-Agent** with
+  HTTP 403 body `error code: 1010`. Any explicit `User-Agent` header
+  passes. This is not an auth failure -- don't rotate the token over it
+  (curl works out of the box because its default UA passes).
+- A Project Token is scoped to one project+environment and **cannot read
+  `project(id: ...)`** (plain 403). What it CAN read is enough:
+  `projectToken` (returns its own projectId/environmentId -- no need to
+  hardcode them), `deployments(input: {projectId, environmentId})`,
+  `buildLogs(deploymentId, limit)`, `deploymentLogs(deploymentId, limit)`.
+  Service names are discovered via the deployments list.
+- **`deploymentLogs` severity reflects the stream, not the meaning**:
+  anything the container writes to stderr comes back `severity: "error"`
+  -- uvicorn and alembic write their normal INFO lines to stderr, so a
+  wall of severity=error INFO lines is a HEALTHY deploy. Read the message
+  text. Build logs embed ANSI color codes (the script strips them by
+  default; `--raw` keeps them).
+
 ## Row-Level Security (RLS) gotchas (`packages/db/migrations/versions/0002_add_rls_policies.py`)
 
 1. **`FORCE ROW LEVEL SECURITY` is required, not optional, given today's
