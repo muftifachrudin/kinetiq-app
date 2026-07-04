@@ -216,6 +216,70 @@ sekarang BENERAN aktif utk trafik aplikasi sehari-hari. Ini menutup temuan
 keamanan yg tercatat di `docs/prd.md`/`CLAUDE.md` sejak investigasi awal
 Juli 2026.
 
+**0e. Infra pra-shadow — 7 item, urut dampak ke skor (ulasan Fable 5,
+4 Juli 2026).** Kondisi saat ditulis (diverifikasi langsung ke
+production): tabel `signal` SUDAH ada (migration 0008 merged),
+`funding_rate` 166 baris (live-poll jalan, backfill BELUM),
+`open_interest` 0 baris, ohlcv segar (worker sehat),
+`tools/railway_logs.py` tersedia.
+
+- **P1 — Perdalam histori candle ke 2-3 tahun (1h) + tambah 15m.** Dampak
+  terbesar ke skor: semua pengujian terkurung 1 tahun dominan-bear,
+  padahal temuan paling robust F6 adalah "regime bull terburuk universal"
+  — perbaikan bull-regime TIDAK BISA diuji tanpa data bull (2023-2024),
+  dan rubric 10/10 eksplisit minta lintas rezim. Caranya: perluas
+  parameter backfill worker yang sudah ada (~26k candle/seri utk 3 tahun,
+  sepele utk Neon). 15m utk periode yang sama menyelesaikan urutan
+  intrabar TP-vs-SL — aturan konservatif "same-candle = SL" bikin semua
+  PF sistematis pesimistis; 15m menaikkan fidelity semua angka.
+- **P2 — Tutup F0c: backfill funding 8h (ccxt `fetchFundingRateHistory`,
+  1 tahun+) + mulai isi `open_interest` (masih 0).** Blocker resmi Shadow
+  Tahap 2 (I4). Ini juga satu-satunya jalur granularity jam utk faktor
+  derivatives — **JANGAN upgrade tier CoinGlass** (catatan budget di
+  bawah).
+- **P3 — Nyalakan signal loop (Shadow Tahap 1) DI `ingestion-worker` yang
+  sudah ada** — bukan servis Railway baru. Worker sudah bangun tepat di
+  candle close dgn data segar; prasyarat (tabel `signal`) sudah terpasang.
+  Setiap hari loop belum nyala = satu hari data OOS sejati hilang.
+  (Kerjakan PALING DULU dari 7 item ini.)
+- **P4 — Kampanye validasi terjadwal**: GitHub Actions `schedule:` bulanan
+  yang menjalankan campaign 4 seri × 2 config dan commit report ke
+  `docs/validation-results/` — evaluasi forward bulanan F7 Tahap 1 jangan
+  bergantung ingatan manusia, dan artifact GH Actions expire (sudah
+  kejadian: report run #2 expire Okt 2026).
+- **P5 — Monitor kesegaran data**: worker menulis heartbeat ke
+  `data_source_health` (skema sudah ada, belum dipakai) + cron workflow
+  kecil yang query `max(ts)` ohlcv/funding/signal via HTTP-SQL dan gagal
+  MERAH kalau basi >2-3 jam. Gap funding 7-baris dulu ketahuan terlambat
+  krn tidak ada yang berteriak; begitu shadow nyala, kebasian data =
+  kerugian riset langsung.
+- **P6 — Optimasi walk O(n²) `detect_swings`/`generate_signals` SEBELUM
+  data 3-tahun dipakai kampanye**: 26k candle ≈ 9× lebih lambat dari
+  sekarang (~30+ menit/seri × 4 seri × 2 config di Actions). Catatan lama
+  "fine for hundreds of candles" tidak berlaku lagi — varian
+  incremental/windowed naik status dari premature-optimization jadi
+  prasyarat P1. Wajib regression test: output sinyal identik dgn versi
+  lama di data real.
+- **P7 — Cek retensi/PITR Neon + dump bulanan tabel `signal`**: mulai
+  Tahap 1, `signal` adalah catatan bukti OOS yang TIDAK bisa dibuat ulang
+  (candle bisa di-backfill ulang; sinyal forward yang hilang, hilang
+  selamanya).
+
+Urutan eksekusi: **P3 dulu** (nyalakan jam OOS), lalu P1+P2 satu paket
+backfill, P4+P5 satu paket workflow, P6 sebelum kampanye 3-tahun pertama,
+P7 kapan saja. Yang TIDAK perlu: upgrade CoinGlass, servis Railway baru,
+MCP server, simbol/venue baru (itu F8, setelah F6 lolos).
+
+**Catatan budget CoinGlass (keputusan founder+Fable 5, 4 Juli 2026):
+Hobbyist DIPERTAHANKAN, JANGAN upgrade.** Nilai eksklusifnya dua dan
+dua-duanya dipakai: L/S ratio histori panjang (endpoint native Binance
+gratis hanya simpan ~30 hari — tidak cukup utk fitting) dan liquidation
+aggregated lintas bursa (sumber temuan 20/20 liq-cascade). Setelah F0c
+hidup, JANGAN ada skrip yang masih menarik funding/OI/price dari
+CoinGlass (redundan dgn data native). Keputusan akhir nilai langganan
+milik FITTING, bukan opini: kalau koefisien faktor L/S & liq-cascade
+konsisten di-nol-kan L1 secara OOS pasca-I1, baru berhenti langganan.
+
 ## Fase 1 — Simulator fee-aware (F5 deep-dive)
 
 Tambah parameter fee ke `trade_simulator.py` (ADITIF, jangan ubah perilaku
