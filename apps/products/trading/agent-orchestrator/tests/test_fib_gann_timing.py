@@ -130,6 +130,90 @@ def test_detect_swings_no_lookahead():
     assert fgt.detect_swings(candles, as_of=candles[19].ts) == []
 
 
+# --- IncrementalSwingWalk (F0e P6): mandatory regression vs the old
+# "call detect_swings() fresh on a growing prefix every bar" pattern ---
+
+
+def noisy_zigzag(n: int = 1500, seed: int = 42) -> list[fgt.Candle]:
+    """Same shape/rationale as every backtest module's own fixture (e.g.
+    test_campaign.py/test_rr_sl_experiment.py) -- a wandering series with
+    frequent reversals, rich enough to confirm many real swings, unlike
+    flat_noise()/monotonic_leg()'s hand-built shapes above."""
+    rng = random.Random(seed)
+    candles = []
+    price = 100.0
+    direction = -1
+    for i in range(n):
+        if i % 15 == 0:
+            direction *= -1
+        price += direction * rng.uniform(0.5, 2.0)
+        o = price
+        c = o + rng.uniform(-0.3, 0.3)
+        h = max(o, c) + rng.uniform(0, 0.3)
+        low = min(o, c) - rng.uniform(0, 0.3)
+        candles.append(mk(i, o, h, low, c, v=100 + rng.uniform(-10, 10)))
+        price = c
+    return candles
+
+
+def test_incremental_swing_walk_matches_naive_per_bar_recompute():
+    """F0e P6's mandatory regression test (docs/sonnet5-implementation-
+    roadmap.md): the incremental walk that replaced signal_runner.
+    generate_signals()'s old "call detect_swings() fresh on a growing
+    prefix every bar" pattern must produce BIT-IDENTICAL swings at EVERY
+    single bar, not just at the end -- a divergence that self-corrects by
+    the final bar would still have fed wrong intermediate swings into
+    every Signal generated along the way. Compares against the OLD
+    approach using nothing but the public, unmodified detect_swings() API
+    (as generate_signals() itself used to call it), so this test doesn't
+    share any implementation with IncrementalSwingWalk itself -- it's an
+    independent oracle, not a tautology.
+
+    (Real 1-year data for all 4 production series was ALSO verified this
+    way, end-to-end through signal_runner.generate_signals() itself, not
+    just this synthetic series -- see docs/fib-gann-validation-brief.md's
+    F0e P6 section for that record; this synthetic case is the permanent
+    CI regression guard.)
+    """
+    candles = noisy_zigzag(n=1500, seed=7)
+    atr_period = fgt.DEFAULT_ATR_PERIOD
+    atr_multiplier = fgt.DEFAULT_ZIGZAG_ATR_MULTIPLIER
+    atr_series = fgt.compute_atr(candles, atr_period)
+    walk = fgt.IncrementalSwingWalk(candles, atr_series, atr_period, atr_multiplier)
+
+    saw_at_least_one_swing = False
+    for i in range(len(candles)):
+        walk.advance_to(i)
+        naive = fgt.detect_swings(candles, as_of=candles[i].ts, atr_period=atr_period, atr_multiplier=atr_multiplier)
+        assert walk.swings == naive, f"mismatch at bar {i}: incremental={walk.swings} naive={naive}"
+        if naive:
+            saw_at_least_one_swing = True
+
+    assert saw_at_least_one_swing  # sanity: the fixture actually exercises real pivot confirmations
+
+
+def test_incremental_swing_walk_advance_to_tolerates_skipped_indices():
+    # advance_to() is documented to accept any non-decreasing i (skipping
+    # ahead is fine) -- confirms jumping straight to the final index
+    # produces the exact same result as detect_swings() on the full series.
+    candles = noisy_zigzag(n=500, seed=3)
+    atr_period = fgt.DEFAULT_ATR_PERIOD
+    atr_multiplier = fgt.DEFAULT_ZIGZAG_ATR_MULTIPLIER
+    atr_series = fgt.compute_atr(candles, atr_period)
+    walk = fgt.IncrementalSwingWalk(candles, atr_series, atr_period, atr_multiplier)
+    walk.advance_to(len(candles) - 1)
+    assert walk.swings == fgt.detect_swings(candles, atr_period=atr_period, atr_multiplier=atr_multiplier)
+
+
+def test_incremental_swing_walk_no_op_before_enough_data():
+    candles = noisy_zigzag(n=5, seed=1)
+    atr_series = fgt.compute_atr(candles, fgt.DEFAULT_ATR_PERIOD)
+    walk = fgt.IncrementalSwingWalk(candles, atr_series, fgt.DEFAULT_ATR_PERIOD, fgt.DEFAULT_ZIGZAG_ATR_MULTIPLIER)
+    for i in range(len(candles)):
+        walk.advance_to(i)
+    assert walk.swings == []
+
+
 # --- wick_rejection_score ---
 
 

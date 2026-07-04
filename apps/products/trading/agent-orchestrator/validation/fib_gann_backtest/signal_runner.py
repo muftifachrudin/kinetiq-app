@@ -189,14 +189,26 @@ def generate_signals(
     roadmap.md): both default to the pre-Fase-5 behavior (no upper R:R
     cap, ATR-buffer SL) -- purely additive options for the F5 A/B harness
     (validation/) to sweep, not a change to any existing caller.
+
+    F0e P6 (docs/sonnet5-implementation-roadmap.md): swings are tracked
+    via ONE fgt.IncrementalSwingWalk instance advanced by exactly one bar
+    per loop iteration below, instead of calling fgt.detect_swings() fresh
+    on candles[:i+1] every iteration (that pattern is what made this
+    function O(n^2) overall -- detect_swings() itself is O(n), but was
+    being re-run from scratch on a growing prefix n times). Bit-identical
+    to the old per-bar fgt.detect_swings(candles, as_of=candle.ts, ...)
+    calls by construction -- see IncrementalSwingWalk's own docstring and
+    tests/test_fib_gann_timing.py's dedicated regression test.
     """
     signals: list[Signal] = []
     signaled_pivot_indices: set[int] = set()
     atr_series = fgt.compute_atr(candles, atr_period)
+    swing_walk = fgt.IncrementalSwingWalk(candles, atr_series, atr_period, zigzag_atr_multiplier)
 
     for i, candle in enumerate(candles):
         as_of = candle.ts
-        swings = fgt.detect_swings(candles, as_of=as_of, atr_period=atr_period, atr_multiplier=zigzag_atr_multiplier)
+        swing_walk.advance_to(i)
+        swings = swing_walk.swings
         if len(swings) < 2:
             continue
 

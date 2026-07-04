@@ -1396,3 +1396,69 @@ tidak ada keputusan adopsi/config baru yang diambil di sini, sesuai
 disiplin F3/F5/F6/I3 yang sama ("let evidence decide, never auto-apply").
 Detail kode & test: lihat PR #86 & `docs/sonnet5-implementation-
 roadmap.md` bag. F6b I1/I2/I5.
+
+## 31. F0e P6 — walk incremental `detect_swings`/`generate_signals`, O(n²) → O(n), diverifikasi bit-identik thd data real (4 Juli 2026)
+
+Prasyarat wajib SEBELUM kampanye 3-tahun pertama jalan (F0e P6, PR #84):
+`signal_runner.generate_signals()` memanggil `fib_gann_timing.detect_
+swings()` FRESH di setiap bar (candles[:i+1] yang terus membesar) —
+`detect_swings()` sendiri sebenarnya sudah O(n) (satu forward-pass), tapi
+dipanggil ulang dari nol n kali membuat totalnya O(n²). Pada 26k candle
+(3 tahun) ini diproyeksikan ~9× lebih lambat dari skala setahun sekarang
+(roadmap P6's catatan) — cukup buruk utk bikin kampanye 4 seri × 2 config
+di GitHub Actions makan >30 menit/seri.
+
+**Analisis korektnes SEBELUM menulis kode** (bukan asumsi): `detect_
+swings()`'s forward-walk terbukti purely causal — tiap keputusan di
+index j cuma bergantung pada state dari index < j plus candle j sendiri,
+TIDAK PERNAH merevisi swing yang sudah confirmed. `compute_atr()` juga
+purely causal (rekursi Wilder: atr[j] cuma bergantung candles[:j+1]).
+Dua fakta ini bersama membuktikan: sebuah walk incremental yang
+menyimpan state (extreme_high/low, direction, swings-so-far) lintas
+banyak pemanggilan, dimajukan SATU bar per pemanggilan, akan
+menghasilkan output BIT-IDENTIK dgn memanggil `detect_swings()` fresh di
+setiap bar — bukan aproksimasi, sebuah kesetaraan matematis yg bisa
+dibuktikan sebelum implementasi.
+
+**Kode**: `fib_gann_timing.IncrementalSwingWalk` — class baru yg
+memfaktorkan walk `detect_swings()` sendiri jadi `advance_to(i)` yg bisa
+dipanggil berulang dgn i yg terus naik (boleh loncat, semua index di
+antaranya tetap diproses). `detect_swings()` sendiri jadi wrapper tipis
+di atas class ini (operasi PERSIS sama, cuma difaktorkan — setiap test
+`detect_swings()` lama LULUS TANPA PERUBAHAN). `signal_runner.generate_
+signals()` sekarang pegang SATU instance `IncrementalSwingWalk` lintas
+loop bar-nya sendiri, panggil `advance_to(i)` sekali per iterasi,
+gantikan pemanggilan `fgt.detect_swings(candles, as_of=candle.ts, ...)`
+yang lama.
+
+**Regression test wajib (2 lapis, sesuai instruksi eksplisit)**:
+1. **CI permanen** (`tests/test_fib_gann_timing.py`): drive
+   `IncrementalSwingWalk` bar-demi-bar thd seri sintetis 1500-candle,
+   assert swings IDENTIK di SETIAP bar (bukan cuma hasil akhir) vs
+   `detect_swings()` publik yg tidak diubah — oracle independen, bukan
+   tautologi. Plus test toleransi index-loncat & test no-op data kurang.
+2. **Verifikasi data real 1 tahun** (manual, tidak di-commit sbg fixture
+   besar — sesuai konvensi test suite ini yg selalu pakai data sintetis,
+   bukan fixture JSON multi-MB): capture output PENUH `generate_signals()`
+   (setiap field tiap Signal) di data real 1h setahun utk SEMUA 4 seri
+   produksi SEBELUM optimasi ditulis, lalu re-run data yg SAMA PERSIS
+   setelah optimasi, diff setiap field:
+
+   | Seri | Jumlah sinyal | Hasil |
+   |---|---|---|
+   | BTC/Binance | 669 | **MATCH, bit-identik** |
+   | BTC/Bybit | 655 | **MATCH, bit-identik** |
+   | ETH/Binance | 685 | **MATCH, bit-identik** |
+   | ETH/Bybit | 675 | **MATCH, bit-identik** |
+
+   **ALL MATCH** — nol perbedaan di field manapun, sinyal manapun, seri
+   manapun.
+
+**Speedup nyata, bukan cuma klaim korektnes**: waktu wall-clock test
+suite `agent-orchestrator` turun dari ~27-45 detik (dua suite paling
+lambat) ke ~14 detik masing-masing, konsisten dgn eliminasi biaya O(n²)
+— bukan cuma teori.
+
+3 test baru, 428 test total lulus, ruff clean. **Kampanye 3-tahun
+pertama (setelah PR-B/#87's backfill 1100-hari live) sekarang aman
+dijalankan thd kode ini** — prasyarat P6 terpenuhi.

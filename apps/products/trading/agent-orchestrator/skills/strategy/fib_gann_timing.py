@@ -189,6 +189,111 @@ def wick_rejection_score(candle: Candle, direction: SwingDirection) -> float:
     return max(0.0, min(1.0, wick / full_range))
 
 
+class IncrementalSwingWalk:
+    """F0e P6 (docs/sonnet5-implementation-roadmap.md): the ZigZag/ATR walk
+    detect_swings() performs, factored so a caller can advance it ONE bar
+    at a time across many calls instead of re-running the whole walk from
+    scratch on a growing prefix every time (which is what made generate_
+    signals() O(n^2) overall -- detect_swings() itself was already a
+    single O(n) forward pass, but signal_runner.py called it fresh on
+    candles[:i+1] for every i, redoing the entire O(i) walk each time).
+
+    Bit-identical to the old "call detect_swings() fresh every bar"
+    pattern by construction, not by coincidence: every decision this walk
+    makes at index j depends ONLY on state carried forward from indices
+    < j plus candle j itself (never revises an already-confirmed swing),
+    and compute_atr() is itself a purely causal Wilder recursion (atr[j]
+    depends only on candles[:j+1]) -- so advancing this walk one bar at a
+    time, fed the SAME full-length atr array detect_swings() would compute
+    internally, produces the exact same swings list at every index as
+    re-running detect_swings() fresh on candles[:j+1]. detect_swings()
+    itself is now a thin wrapper around this class (below) -- same
+    operations, just factored, so its own output is provably unchanged.
+    See tests/test_fib_gann_timing.py's dedicated regression test (and the
+    real-1-year-data verification recorded in docs/fib-gann-validation-
+    brief.md) for the actual proof, not just this docstring's claim.
+
+    advance_to(i) accepts any non-decreasing sequence of i (skipping
+    ahead is fine -- every index in between is still processed
+    internally), so callers can advance by exactly one new bar per
+    iteration of their own outer loop, as signal_runner.generate_signals()
+    does.
+    """
+
+    def __init__(self, candles: list[Candle], atr: list[float | None], atr_period: int, atr_multiplier: float) -> None:
+        self._candles = candles
+        self._atr = atr
+        self._atr_period = atr_period
+        self._atr_multiplier = atr_multiplier
+        self.swings: list[SwingPoint] = []
+        self._direction: SwingDirection | None = None
+        self._extreme_high_idx = 0
+        self._extreme_high_price = 0.0
+        self._extreme_low_idx = 0
+        self._extreme_low_price = 0.0
+        self._last_advanced = -1  # -1 == walk not started yet (not enough data so far)
+
+    def advance_to(self, i: int) -> None:
+        # Matches detect_swings()'s own early-return guard (len(candles[:i+1])
+        # < atr_period + 2), re-checked every call so this is a no-op until
+        # there's enough history, exactly like the old fresh-recompute did.
+        if i + 1 < self._atr_period + 2:
+            return
+        if self._last_advanced == -1:
+            # First qualifying call: seed extremes at the FIXED absolute
+            # index atr_period (matching detect_swings()'s own start_idx),
+            # then walk forward -- the old code's very first successful
+            # call always processed TWO bars at once (start_idx and
+            # start_idx+1, since that's the smallest i clearing the len
+            # guard above); _last_advanced starting at start_idx - 1
+            # reproduces that exactly via the loop below, not a special case.
+            start_idx = self._atr_period
+            self._extreme_high_idx = self._extreme_low_idx = start_idx
+            self._extreme_high_price = self._candles[start_idx].high
+            self._extreme_low_price = self._candles[start_idx].low
+            self._last_advanced = start_idx - 1
+        for j in range(self._last_advanced + 1, i + 1):
+            self._advance_one(j)
+        self._last_advanced = i
+
+    def _advance_one(self, j: int) -> None:
+        c = self._candles[j]
+        current_atr = self._atr[j]
+        if current_atr is None:
+            return
+        threshold = self._atr_multiplier * current_atr
+
+        # Same "check against the extreme as it stood BEFORE this candle"
+        # reasoning as the original loop's own comment: checking against an
+        # extreme already-updated-by-this-candle degenerates into comparing
+        # a single candle's own high-low range to the threshold.
+        if self._direction is None:
+            if self._extreme_high_price - c.low >= threshold:
+                self._direction = _confirm_pivot(self.swings, self._candles, self._extreme_high_idx, SwingDirection.HIGH)
+                self._extreme_low_price, self._extreme_low_idx = c.low, j
+                return
+            if c.high - self._extreme_low_price >= threshold:
+                self._direction = _confirm_pivot(self.swings, self._candles, self._extreme_low_idx, SwingDirection.LOW)
+                self._extreme_high_price, self._extreme_high_idx = c.high, j
+                return
+            if c.high > self._extreme_high_price:
+                self._extreme_high_price, self._extreme_high_idx = c.high, j
+            if c.low < self._extreme_low_price:
+                self._extreme_low_price, self._extreme_low_idx = c.low, j
+        elif self._direction is SwingDirection.HIGH:
+            if self._extreme_high_price - c.low >= threshold:
+                self._direction = _confirm_pivot(self.swings, self._candles, self._extreme_high_idx, SwingDirection.HIGH)
+                self._extreme_low_price, self._extreme_low_idx = c.low, j
+            elif c.high > self._extreme_high_price:
+                self._extreme_high_price, self._extreme_high_idx = c.high, j
+        elif self._direction is SwingDirection.LOW:
+            if c.high - self._extreme_low_price >= threshold:
+                self._direction = _confirm_pivot(self.swings, self._candles, self._extreme_low_idx, SwingDirection.LOW)
+                self._extreme_high_price, self._extreme_high_idx = c.high, j
+            elif c.low < self._extreme_low_price:
+                self._extreme_low_price, self._extreme_low_idx = c.low, j
+
+
 def detect_swings(
     candles: list[Candle],
     as_of: datetime.datetime | None = None,
@@ -206,70 +311,22 @@ def detect_swings(
     including its own index, filtered first by as_of. The threshold ATR
     value used at each step is the ATR at the *current* candle being
     evaluated, never a future one.
+
+    A thin wrapper around IncrementalSwingWalk (F0e P6) -- advances a
+    fresh walk through every bar in one shot, same as the walk's own
+    original inline form, just factored so a caller needing repeated,
+    growing-prefix calls (signal_runner.generate_signals()) can instead
+    keep ONE walk instance alive across its own outer loop and advance it
+    one bar at a time, without redoing already-processed bars.
     """
     candles = _filter_as_of(candles, as_of)
     if len(candles) < atr_period + 2:
         return []
 
     atr = compute_atr(candles, atr_period)
-    swings: list[SwingPoint] = []
-
-    # Direction is undetermined until the first confirmed reversal -- track
-    # both a running highest-high and lowest-low candidate from the start
-    # of the series until whichever one triggers a threshold-crossing
-    # reversal first; that becomes the first confirmed swing.
-    start_idx = atr_period  # first index with a real ATR value
-    extreme_high_idx = extreme_low_idx = start_idx
-    extreme_high_price = candles[start_idx].high
-    extreme_low_price = candles[start_idx].low
-    direction: SwingDirection | None = None
-
-    for i in range(start_idx, len(candles)):
-        c = candles[i]
-        current_atr = atr[i]
-        if current_atr is None:
-            continue
-        threshold = atr_multiplier * current_atr
-
-        # Reversal is checked against the extreme as it stood *before* this
-        # candle, then (only if no reversal fired) extended by this candle.
-        # Checking against an extreme already-updated-by-this-candle
-        # degenerates into comparing a single candle's own high-low range
-        # to the threshold -- which trivially trips on every candle of a
-        # sustained, purely monotonic move and produces a spurious pivot
-        # each time, not a genuine multi-candle reversal. Caught by testing
-        # against a synthetic strictly-monotonic decline, which should
-        # yield exactly one HIGH and one LOW, not eight alternating pivots.
-        if direction is None:
-            # undetermined: whichever side trips its threshold first becomes
-            # the first confirmed pivot; check HIGH first as a deterministic
-            # tie-break on the (rare) candle where both would trip at once.
-            if extreme_high_price - c.low >= threshold:
-                direction = _confirm_pivot(swings, candles, extreme_high_idx, SwingDirection.HIGH)
-                extreme_low_price, extreme_low_idx = c.low, i
-                continue
-            if c.high - extreme_low_price >= threshold:
-                direction = _confirm_pivot(swings, candles, extreme_low_idx, SwingDirection.LOW)
-                extreme_high_price, extreme_high_idx = c.high, i
-                continue
-            if c.high > extreme_high_price:
-                extreme_high_price, extreme_high_idx = c.high, i
-            if c.low < extreme_low_price:
-                extreme_low_price, extreme_low_idx = c.low, i
-        elif direction is SwingDirection.HIGH:
-            if extreme_high_price - c.low >= threshold:
-                direction = _confirm_pivot(swings, candles, extreme_high_idx, SwingDirection.HIGH)
-                extreme_low_price, extreme_low_idx = c.low, i
-            elif c.high > extreme_high_price:
-                extreme_high_price, extreme_high_idx = c.high, i
-        elif direction is SwingDirection.LOW:
-            if c.high - extreme_low_price >= threshold:
-                direction = _confirm_pivot(swings, candles, extreme_low_idx, SwingDirection.LOW)
-                extreme_high_price, extreme_high_idx = c.high, i
-            elif c.low < extreme_low_price:
-                extreme_low_price, extreme_low_idx = c.low, i
-
-    return swings
+    walk = IncrementalSwingWalk(candles, atr, atr_period, atr_multiplier)
+    walk.advance_to(len(candles) - 1)
+    return walk.swings
 
 
 def _confirm_pivot(

@@ -260,6 +260,23 @@ production): tabel `signal` SUDAH ada (migration 0008 merged),
   incremental/windowed naik status dari premature-optimization jadi
   prasyarat P1. Wajib regression test: output sinyal identik dgn versi
   lama di data real.
+
+  **SELESAI (4 Juli 2026).** `fib_gann_timing.IncrementalSwingWalk` —
+  class baru yg memfaktorkan `detect_swings()`'s forward-walk jadi
+  `advance_to(i)` yg dipanggil sekali per bar (bukan fresh recompute
+  dari nol tiap bar) — `detect_swings()` sendiri jadi wrapper tipis di
+  atasnya (operasi PERSIS sama, semua test lama lulus tanpa perubahan).
+  `signal_runner.generate_signals()` pegang SATU instance lintas loop
+  bar-nya. **Diverifikasi bit-identik thd data real 1 tahun, SEMUA 4
+  seri produksi** (669/655/685/675 sinyal — ALL MATCH, nol perbedaan di
+  field manapun) — bukan cuma test sintetis. 3 test regresi baru
+  (drive incremental vs `detect_swings()` publik per-bar di seri
+  sintetis, oracle independen), 428 test total lulus, ruff clean.
+  Speedup nyata: waktu wall-clock 2 test suite tersibuk turun dari
+  ~27-45 detik ke ~14 detik. **Prasyarat P6 terpenuhi — kampanye
+  3-tahun pertama (setelah PR-B/#87's backfill 1100-hari live) aman
+  dijalankan.** Detail lengkap: `docs/fib-gann-validation-brief.md`
+  Section 31.
 - **P7 — Cek retensi/PITR Neon + dump bulanan tabel `signal`**: mulai
   Tahap 1, `signal` adalah catatan bukti OOS yang TIDAK bisa dibuat ulang
   (candle bisa di-backfill ulang; sinyal forward yang hilang, hilang
