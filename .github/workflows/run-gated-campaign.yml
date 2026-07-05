@@ -4,7 +4,8 @@ name: Run Gated Campaign (manual, F6b I2 follow-up)
 # run-validation.yml (ephemeral Neon branch, NOT the real production
 # DATABASE_URL, reuses the same NEON_API_KEY/NEON_PROJECT_ID secrets).
 # Runs gated_campaign.py's own CLI entrypoint: every GATE_CONFIGS entry
-# (including the new veto_short_bull, F6b I2 follow-up -- docs/sonnet5-
+# (including veto_short_bull and its symmetric follow-up
+# veto_both_counter_trend, F6b I2 follow-ups -- docs/sonnet5-
 # implementation-roadmap.md) against all 4 production series, on top of
 # campaign.CAMPAIGN_CONFIGS[1] (F5's candidate), matching I1's own
 # established "di atas config kandidat F5" convention.
@@ -12,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       gates:
-        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull' for the full comparison, much slower)"
+        description: "comma-separated GATE_CONFIGS names to run (default: the 4 non-refit gates -- fast, thanks to PR #104's shared-signal-generation batching; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull,veto_both_counter_trend' for the full comparison, much slower)"
         required: false
-        default: "no_gate,trend_alignment_only,veto_short_bull"
+        default: "no_gate,trend_alignment_only,veto_short_bull,veto_both_counter_trend"
 
 permissions:
   contents: read
