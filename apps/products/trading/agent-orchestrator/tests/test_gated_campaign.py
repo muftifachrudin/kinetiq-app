@@ -87,9 +87,17 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_six_named_combinations():
+def test_gate_configs_covers_seven_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
-    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates", "veto_short_bull"}
+    assert names == {
+        "no_gate",
+        "confidence_only",
+        "trend_alignment_only",
+        "daily_bias_only",
+        "both_gates",
+        "veto_short_bull",
+        "veto_both_counter_trend",
+    }
 
 
 def test_no_gate_config_has_both_gates_disabled():
@@ -497,6 +505,58 @@ def test_run_gated_series_veto_short_bull_well_formed_result():
     candles = noisy_zigzag()
     result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True))
     assert result.gate_name == "veto_short_bull"
+    assert result.total_windows >= 1
+    assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+# --- apply_gates: veto_both_counter_trend (symmetric follow-up) ---
+
+
+def test_apply_gates_veto_both_counter_trend_drops_short_bull_and_long_bear():
+    test = [mk_labeled_dir(0, SHORT), mk_labeled_dir(1, LONG), mk_labeled_dir(2, LONG), mk_labeled_dir(3, SHORT)]
+    config = gc.GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull", 1: "bull", 2: "bear", 3: "bear"})
+    # index 0 (SHORT, bull) and index 2 (LONG, bear) are counter-trend -- vetoed.
+    # index 1 (LONG, bull) and index 3 (SHORT, bear) are trend-aligned -- kept.
+    assert {ls.signal.index for ls in kept} == {1, 3}
+
+
+def test_apply_gates_veto_both_counter_trend_keeps_both_directions_in_range():
+    test = [mk_labeled_dir(0, LONG), mk_labeled_dir(1, SHORT)]
+    config = gc.GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "range", 1: "range"})
+    assert {ls.signal.index for ls in kept} == {0, 1}
+
+
+def test_apply_gates_veto_both_counter_trend_vetoes_strictly_more_than_short_bull_alone():
+    # Same input/regimes for both configs -- the symmetric gate must never
+    # keep a signal the asymmetric veto_short_bull gate would also keep,
+    # and must drop at least the additional long_bear case.
+    test = [mk_labeled_dir(0, SHORT), mk_labeled_dir(1, LONG), mk_labeled_dir(2, LONG), mk_labeled_dir(3, SHORT)]
+    regimes = {0: "bull", 1: "bull", 2: "bear", 3: "bear"}
+    asymmetric = gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True)
+    symmetric = gc.GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True)
+    kept_asymmetric = {ls.signal.index for ls in gc.apply_gates([], test, asymmetric, regime_by_index=regimes)}
+    kept_symmetric = {ls.signal.index for ls in gc.apply_gates([], test, symmetric, regime_by_index=regimes)}
+    assert kept_symmetric.issubset(kept_asymmetric)
+    assert kept_symmetric == kept_asymmetric - {2}  # index 2 (LONG, bear) only dropped by the symmetric version
+
+
+def test_run_gated_series_veto_both_counter_trend_never_exceeds_veto_short_bull_kept_count():
+    candles = noisy_zigzag()
+    asymmetric = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True))
+    symmetric = gc.run_gated_series(
+        "synthetic", candles, gc.GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True)
+    )
+    assert symmetric.total_kept <= asymmetric.total_kept
+
+
+def test_run_gated_series_veto_both_counter_trend_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_gated_series(
+        "synthetic", candles, gc.GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True)
+    )
+    assert result.gate_name == "veto_both_counter_trend"
     assert result.total_windows >= 1
     assert 0 <= result.windows_passing_pf <= result.total_windows
 

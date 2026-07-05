@@ -59,6 +59,24 @@ result so far: PF net 1.228, 6/10 windows) fell short of >=7/10 -- but
 this is a hypothesis to test, not an assumed win; report the real number
 either way, same discipline as every other gate here.
 
+SYMMETRIC COUNTER-TREND VETO (veto_both_counter_trend, pre-registered
+2026-07-05, follow-up to veto_short_bull): veto_short_bull only vetoes
+ONE side (SHORT-during-bull) because at the time it was pre-registered
+only that cell had strong cross-series evidence. The 3-year, regime-
+balanced direction_regime_metrics breakdown (docs/fib-gann-validation-
+brief.md Section 33) now shows long_bear is ALSO consistently the worst
+or near-worst cell in all 4 series (PF 0.62-0.89) -- symmetric grounds to
+also veto LONG-during-bear. GateConfig.veto_both_counter_trend_directions
+(only meaningful alongside use_regime_direction_gate=True) extends the
+SAME causal trailing_drift()/regime_by_signal_index() classification to
+ALSO drop LONG signals fired during a classified bear regime, leaving
+only long_bull/short_bear/anything-in-range. Expectation, stated before
+running (same pre-registration discipline): likely a modest improvement
+over veto_short_bull's asymmetric version (strictly more counter-trend
+signals removed), but no reason a priori to expect it clears the >=66.66%
+window promotion bar that every prior gate variant in this module has
+missed -- report the real number either way.
+
 Critically, regime classification for THIS gate can NOT reuse campaign.
 monthly_drift()/classify_regime() as-is -- that classifier deliberately
 uses each FULL calendar month's REALIZED drift for a post-hoc breakdown
@@ -141,6 +159,7 @@ class GateConfig:
     use_daily_bias_gate: bool = False
     daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
     use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
+    veto_both_counter_trend_directions: bool = False  # only meaningful with use_regime_direction_gate=True: ALSO veto LONG signals fired during a causally-classified bear regime (symmetric follow-up, module docstring)
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -151,6 +170,9 @@ class GateConfig:
 # the same report ("laporkan juga yang kalah"). veto_short_bull is the I2
 # follow-up (module docstring) -- reported alongside, not instead of, the
 # indirect trend_alignment_only proxy it's compared against.
+# veto_both_counter_trend is veto_short_bull's symmetric follow-up (module
+# docstring) -- ALSO vetoes LONG-during-bear, reported alongside (not
+# replacing) the asymmetric version it extends.
 GATE_CONFIGS = (
     GateConfig(name="no_gate"),
     GateConfig(name="confidence_only", use_confidence_gate=True),
@@ -158,6 +180,7 @@ GATE_CONFIGS = (
     GateConfig(name="daily_bias_only", use_daily_bias_gate=True),
     GateConfig(name="both_gates", use_confidence_gate=True, use_trend_alignment_gate=True),
     GateConfig(name="veto_short_bull", use_regime_direction_gate=True),
+    GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True),
 )
 
 
@@ -263,6 +286,10 @@ def apply_gates(
         candidates = [
             ls for ls in candidates if not (ls.signal.direction is fgt.TradeDirection.SHORT and regimes.get(ls.signal.index) == "bull")
         ]
+        if gate_config.veto_both_counter_trend_directions:
+            candidates = [
+                ls for ls in candidates if not (ls.signal.direction is fgt.TradeDirection.LONG and regimes.get(ls.signal.index) == "bear")
+            ]
 
     return candidates
 
