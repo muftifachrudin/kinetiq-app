@@ -77,8 +77,19 @@
 # history backfill (ccxt fetchFundingRateHistory paging), independent of
 # the OHLCV backfills above -- funding_rate already has live-poll rows
 # (poll_once() writes them every cycle), this just fills in the missing
-# history behind them. 365 days per PR #87's own test plan ("or more");
-# open_interest (stage 4) deliberately NOT added yet -- staged one at a
-# time, verified via HTTP-SQL count+coverage before the next stage.
-startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100 --backfill-funding-since-days 365"
+# history behind them. Verified live via Deploy Logs (zero errors) and
+# HTTP-SQL: binance covers the full 365 days requested (1155 rows/series,
+# back to 2025-07-05); bybit's ccxt fetchFundingRateHistory only ever
+# returns ~98 days regardless of the days requested (354 rows/series,
+# back to 2026-03-29) -- a real exchange/ccxt API depth limit, not a bug
+# in this backfill's own paging logic.
+#
+# --backfill-oi-since-days 365: stage 4 (final stage). One-time
+# open_interest history backfill (ccxt fetchOpenInterestHistory paging,
+# same timeframe-bucketed cursor as OHLCV) -- open_interest had 0 rows
+# before this; ingest_open_interest() already writes live-poll rows every
+# cycle (confirmed via Deploy Logs' "open_interest OK" lines since P2
+# merged), this just fills the history behind them. Last of the 4 staged
+# rollout steps from PR #87's own test plan.
+startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100 --backfill-funding-since-days 365 --backfill-oi-since-days 365"
 restartPolicyType = "always"
