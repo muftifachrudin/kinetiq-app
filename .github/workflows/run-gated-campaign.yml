@@ -9,7 +9,12 @@ name: Run Gated Campaign (manual, F6b I2 follow-up)
 # campaign.CAMPAIGN_CONFIGS[1] (F5's candidate), matching I1's own
 # established "di atas config kandidat F5" convention.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      gates:
+        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull' for the full comparison, much slower)"
+        required: false
+        default: "no_gate,trend_alignment_only,veto_short_bull"
 
 permissions:
   contents: read
@@ -17,6 +22,7 @@ permissions:
 jobs:
   run-gated-campaign:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +44,7 @@ jobs:
       - name: Run gated_campaign.py against the ephemeral branch (real historical candles, read-only)
         env:
           DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
-        run: python apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py | tee "$GITHUB_STEP_SUMMARY"
+        run: python -u apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py --gates "${{ inputs.gates }}" | tee "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report artifact
         if: always()
