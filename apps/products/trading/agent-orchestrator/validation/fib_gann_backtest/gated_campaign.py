@@ -524,9 +524,19 @@ if __name__ == "__main__":
         "--output",
         default=os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "docs", "validation-results", "gated_campaign.json"),
     )
+    parser.add_argument(
+        "--gates",
+        default=None,
+        help="comma-separated GATE_CONFIGS names to run (default: all) -- e.g. 'no_gate,trend_alignment_only,veto_short_bull' to skip the expensive per-window-refit gates (confidence_only/both_gates) when only comparing against the non-refit gates",
+    )
     args = parser.parse_args()
 
     import data_loader  # deferred: see rr_sl_experiment.py's own comment for why
+
+    gate_configs = GATE_CONFIGS
+    if args.gates:
+        wanted = set(args.gates.split(","))
+        gate_configs = tuple(c for c in GATE_CONFIGS if c.name in wanted)
 
     f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
     all_results = []
@@ -536,16 +546,20 @@ if __name__ == "__main__":
             print(f"no candles for {venue}/{symbol} -- skipping")
             continue
         series_name = f"{venue}_{coin}"
-        print(f"{series_name}: {len(candles)} candles, {candles[0].ts} .. {candles[-1].ts}")
-        for gate_config in GATE_CONFIGS:
+        print(f"{series_name}: {len(candles)} candles, {candles[0].ts} .. {candles[-1].ts}", flush=True)
+        for gate_config in gate_configs:
             result = run_gated_series(series_name, candles, gate_config, campaign_config=f5_candidate)
             print(
                 f"  {gate_config.name}: signals={result.total_signals} kept={result.total_kept} "
                 f"promoted={result.promoted} windows_passing_pf={result.windows_passing_pf}/{result.total_windows} "
-                f"pooled_pf_net={result.pooled_pf_net}"
+                f"pooled_pf_net={result.pooled_pf_net}",
+                flush=True,
             )
             all_results.append(dataclasses.asdict(result))
+            # Written after every (series, gate) combo, not just at the end --
+            # a cancelled/timed-out run still leaves partial real results in
+            # the uploaded artifact instead of nothing at all.
+            with open(args.output, "w") as f:
+                json.dump(all_results, f, indent=2)
 
-    with open(args.output, "w") as f:
-        json.dump(all_results, f, indent=2)
     print(f"wrote {args.output}")
