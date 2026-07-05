@@ -206,3 +206,97 @@ review founder.
 - **ML apapun di sizing**: tetap tunduk cold-start rule shadow-brief bag. 5
   (≥50 pasangan; hard cap/kill-switch/floor buffer_k TIDAK PERNAH
   dipelajari ML).
+
+## 7. Margin envelope: formula 3-faktor + ambang min/max (riset empiris Fable 5, 5 Juli 2026)
+
+Menjawab pengalaman founder dengan uang nyata: "PF net sangat bergantung
+pada margin ratio, initial margin, dan leverage — semakin kecil semakin
+baik." **Pengalaman itu BENAR, dan sekarang terukur persis DI MANA
+benarnya** — direplay terhadap 622 trade stack (aligned & rr[2,5), exit
+terbaik per aset F13, fee maker) dengan mekanika liquidation-before-SL
+(isolated, MMR flat 0.4%): script `validation/deep_dive_2026_07/
+lev_curve.py`.
+
+**Temuan kunci — kurva PF-margin vs leverage:**
+
+| Leverage | PF margin | % trade ter-liquidasi |
+|---|---|---|
+| 2× – 20× | **1.309 (FLAT sempurna)** | 0.0% |
+| 25× | 1.282 | 0.5% (liquidation pertama muncul) |
+| 40× | 1.215 | 6.1% |
+| 50× | 1.123 | 14.6% |
+
+Distribusi `max_safe_leverage` per-trade (buffer 1×ATR): p05 = 22×,
+p50 = 42×, p95 = 82×. Interpretasi yang mendamaikan pengalaman founder
+dengan matematika sizing risk-first:
+
+1. Dalam sizing kita (notional ditentukan risk_pct & jarak SL DULUAN),
+   leverage TIDAK menyentuh PF sama sekali selama liq price di luar
+   SL+buffer — dia hanya dial "berapa equity terkunci sbg IM".
+2. PF baru runtuh saat leverage menembus `max_safe` per-trade — dan
+   onset empirisnya ~22-25× di data kita. "Semakin kecil semakin baik"
+   = benar sebagai aturan aman; presisinya: **tidak ada MANFAAT PF
+   apa pun di atas ~20×, hanya tail-risk** — dan mean return per margin
+   yang terus naik s/d 40× adalah jebakan psikologis yang menjelaskan
+   kenapa akun real dgn leverage tinggi terasa "makin untung" sampai
+   tiba-tiba mati.
+3. Kanal ketiga pengaruh 3 faktor ini ke PF real adalah PERILAKU
+   (margin ratio akun tinggi → panik/deleverage paksa/manual override)
+   — tidak terlihat di backtest mana pun, diukurnya lewat shadow-pair
+   `size_leverage_effect`/`manual_override` (F7 Tahap 2).
+
+**Formula envelope (perluasan rantai F7a `position_sizing.py`):**
+
+```
+R_pct      = |entry − SL| / entry                 # dari struktur (F5: SL 1.0×ATR)
+notional   = equity × risk_pct / R_pct            # risk-first, BUKAN margin-first
+L_safe     = max_safe_leverage(entry, SL, ATR)    # sudah ada di trade_simulator
+L_used     = clamp(L_request, 1, min(cap_aset, η·L_safe, L_onset))
+             # η = 0.5 (safety utk gap/wick); L_onset = 20 (empiris, kurva di atas)
+IM         = notional / L_used
+MR_posisi  = MMR × L_used                         # aproksimasi isolated saat entry
+MR_akun    = Σ IM_posisi_terbuka / equity
+```
+
+**Ambang min/max (mandate defaults, era shadow):**
+
+| Faktor | Min | Max (soft) | Max (hard) | Dasar |
+|---|---|---|---|---|
+| `risk_pct_per_trade` | 0.25% (di bawah ini min-notional venue & pembulatan qty mendistorsi) | 1% | 2% | shadow-brief bag. 5 |
+| `leverage` | 1× | 3× (default mandate) | min(cap kelas aset 5-10×, 0.5×`L_safe`, **20× ceiling empiris**) | kurva di atas + `assert_liquidation_safe` fail-fast |
+| `initial_margin` per posisi | — | 5% equity | 10% equity | kalau IM > cap → turunkan risk_pct, BUKAN naikkan leverage |
+| `MR_posisi` saat entry | — | ≤2% | ≤8% (≈ MMR×20) | konsekuensi L_onset |
+| `MR_akun` (Σ IM/equity) | — | 30% | 40% (blokir entry baru) | shadow-brief band 20-60%, ambil sisi konservatif |
+
+**Keterkaitan F0-F6 ke formula ini** (kenapa tiap fase menyumbang):
+F1 (fee-aware) menentukan biaya per unit notional yang dikalikan L di
+skala margin; F5 (SL 1.0×ATR) melebarkan R_pct → menurunkan L_safe per
+trade → ceiling makin mengikat (SL lebar = wajib leverage lebih rendah,
+BUKAN pilihan); F2/#82 (gate alignment) & F3 (fitting) menentukan trade
+mana yang ADA di kurva; F4 (derivatives) memodulasi SATU ARAH konservatif
+(hari liq-cascade/fuel → η turun atau risk_pct turun); F0c (funding
+native) melengkapi erosi cushion utk holding panjang; F6 (kampanye)
+adalah tempat semua konstanta di tabel diuji OOS sebelum jadi default
+mandate.
+
+## 8. S/R per timeframe → berapa lama trade boleh hidup (klaim founder, spec uji I7)
+
+Klaim founder: 3 faktor margin tidak berguna tanpa tahu area support/
+resistance per timeframe — dan **timeframe tempat S/R itu terbentuk
+menentukan berapa lama trade dibiarkan berjalan**. Ini konsisten dengan
+dua hal yang sudah ada: `level_strength.py` (bobot kekuatan level per
+timeframe — teori founder yang sudah diimplementasi Part #1) dan temuan
+exit-lab (timeout 20-bar flat @1h adalah aturan buta-timeframe satu-
+satunya yang tersisa di exit path).
+
+**Hipotesis I7 (pre-registered untuk harness):** `max_holding_bars`
+proporsional terhadap timeframe ANCHOR level yang memicu sinyal, bukan
+konstanta: level dari struktur Daily diberi napas lebih panjang (mis.
+timeout = k × durasi-bar swing basis, k di-A/B {1.0, 1.5, 2.0}), level
+intraday 1h tetap pendek. Prasyarat: multi-TF anchor belum ada di
+signal_runner (masih single-TF 1h) — versi proxy yang bisa diuji
+SEKARANG: skala timeout dgn durasi swing basis (`pivot.index −
+basis_leg_start.index`), data yang sudah dicatat di setiap Signal.
+Aturan disiplin tetap: faktor skor/parameter exit, BUKAN gate baru;
+uji walk-forward net-of-fees; lapor juga kalau hasilnya nol (timeout
+flat ternyata cukup — itu juga temuan).
