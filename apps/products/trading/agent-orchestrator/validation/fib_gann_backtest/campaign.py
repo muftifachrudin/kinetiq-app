@@ -105,10 +105,15 @@ def monthly_drift(candles: list[fgt.Candle]) -> dict[tuple[int, int], float]:
     return {key: (bucket[-1].close - bucket[0].open) / bucket[0].open for key, bucket in buckets.items()}
 
 
-def classify_regime(drift: float) -> str:
-    if drift > BULL_DRIFT_THRESHOLD:
+def classify_regime(drift: float, bull_threshold: float = BULL_DRIFT_THRESHOLD, bear_threshold: float = BEAR_DRIFT_THRESHOLD) -> str:
+    """bull_threshold/bear_threshold default to this module's own constants
+    (every existing call site's behavior is unchanged) -- overridable so
+    gated_campaign.py's regime-direction gates can run a sensitivity grid
+    over these thresholds (F6b I2 follow-up) without a second copy of this
+    same three-line classifier living in that module too."""
+    if drift > bull_threshold:
         return "bull"
-    if drift < BEAR_DRIFT_THRESHOLD:
+    if drift < bear_threshold:
         return "bear"
     return "range"
 

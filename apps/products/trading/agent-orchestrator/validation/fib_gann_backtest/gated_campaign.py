@@ -138,6 +138,20 @@ follow-up, same discipline as veto_short_bull's own unresolved threshold/
 window follow-up. Whether a same-direction BOS (not just CHoCH) should
 also count is left open rather than guessed.
 
+SENSITIVITY GRID (pre-registered, NOT yet run against real data): the
+regime classifier's own 30-day lookback / +-5% threshold were borrowed
+from campaign.classify_regime() purely for comparability with its
+existing post-hoc breakdown -- REGIME-DIRECTION GATE above already flags
+these were never independently validated as a live-gate classifier's own
+parameters. GateConfig.regime_lookback_days/regime_threshold (new,
+default to the borrowed 30-day/5% so every existing GATE_CONFIGS entry's
+behavior is unchanged) + build_sensitivity_gate_configs() below run the
+grid this follow-up asks for: lookback in {14, 30, 60} days x symmetric
+threshold in {3%, 5%, 7%}, 9 combinations, for either mechanism
+("veto_short_bull" or "veto_long_bear"). Kept out of GATE_CONFIGS itself
+(see build_sensitivity_gate_configs()'s own docstring) -- generated on
+demand instead, same apply_gates()/run_gated_series_batch() machinery.
+
 SIZING MULTIPLIER (F6b I1(a)): a fundamentally different mechanism from
 the three gates above -- instead of dropping signals, every kept signal is
 RESIZED by a continuous multiplier derived from the same per-window
@@ -217,6 +231,8 @@ class GateConfig:
     use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
     use_long_bear_veto: bool = False  # F6b I2 follow-up v3: veto LONG signals fired during a causally-classified bear regime -- symmetric mechanism, WEAKER evidence than short_bull (module docstring, "VETO_LONG_BEAR"), tested anyway
     use_ltf_fakeout_override: bool = False  # F6b I2 follow-up v2: let a fresh, direction-agreeing 15m CHoCH un-veto a signal that use_regime_direction_gate/use_long_bear_veto would otherwise drop -- only meaningful together with at least one of those
+    regime_lookback_days: int = REGIME_LOOKBACK_DAYS  # F6b I2 sensitivity follow-up ("SENSITIVITY GRID" below): trailing_drift()'s own window, only meaningful together with use_regime_direction_gate/use_long_bear_veto
+    regime_threshold: float = campaign.BULL_DRIFT_THRESHOLD  # symmetric +/- drift threshold -- bull regime is drift > this, bear is drift < -this; defaults to campaign's own 5% for comparability, overridable by the sensitivity grid
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -248,6 +264,64 @@ GATE_CONFIGS = (
 )
 
 
+# --- SENSITIVITY GRID (F6b I2 follow-up, pre-registered, NOT yet run
+# against real data): veto_short_bull/veto_long_bear both borrow
+# trailing_drift()'s 30-day lookback and campaign's own +/-5% threshold
+# purely for comparability with campaign.py's post-hoc breakdown -- module
+# docstring's "REGIME-DIRECTION GATE" section already flags these were
+# NEVER independently validated/tuned as a live-gate classifier in their
+# own right. This grid tests that directly: does the gate's real PF/
+# window-pass-rate actually depend on these two borrowed numbers, or are
+# they incidental? Kept OUT of GATE_CONFIGS itself (a 3x3 grid per
+# mechanism would blow up that tuple's "one row per named, reported
+# variant" contract, and every existing test asserting GATE_CONFIGS'
+# exact name set would need updating for numbers nobody has evidence for
+# yet) -- build_sensitivity_gate_configs() generates them on demand,
+# reusing the exact same GateConfig/apply_gates/run_gated_series_batch
+# machinery, so a grid run is just as walk-forward-strict and just as
+# comparable as every other gate here. ---
+
+# Both grids are the exact combination named in docs/sonnet5-
+# implementation-roadmap.md's own unresolved F6b I2 follow-up: lookback in
+# {14, 30, 60} days x symmetric threshold in {3%, 5%, 7%} -- 9 combinations
+# per mechanism, none of them assumed better than the borrowed 30-day/5%
+# default going in.
+SENSITIVITY_LOOKBACK_DAYS_GRID = (14, 30, 60)
+SENSITIVITY_THRESHOLD_GRID = (0.03, 0.05, 0.07)
+
+
+def build_sensitivity_gate_configs(
+    mechanism: str = "veto_short_bull",
+    lookback_days_grid=SENSITIVITY_LOOKBACK_DAYS_GRID,
+    threshold_grid=SENSITIVITY_THRESHOLD_GRID,
+) -> tuple[GateConfig, ...]:
+    """One GateConfig per (lookback_days, threshold) combination for the
+    given mechanism ("veto_short_bull" or "veto_long_bear") -- name encodes
+    both parameters (e.g. "veto_short_bull_lb14_th3") so a grid run's
+    output table is self-describing without a separate lookup. Every
+    combination uses the SAME mechanism flag (use_regime_direction_gate for
+    "veto_short_bull", use_long_bear_veto for "veto_long_bear") -- this
+    grid is about the regime CLASSIFIER'S OWN parameters, not about
+    comparing the two mechanisms against each other (GATE_CONFIGS already
+    reports both mechanisms at the borrowed default)."""
+    if mechanism not in ("veto_short_bull", "veto_long_bear"):
+        raise ValueError(f"mechanism must be 'veto_short_bull' or 'veto_long_bear', got {mechanism!r}")
+    mechanism_kwargs = {"use_regime_direction_gate": True} if mechanism == "veto_short_bull" else {"use_long_bear_veto": True}
+    configs = []
+    for lookback_days in lookback_days_grid:
+        for threshold in threshold_grid:
+            threshold_pct = round(threshold * 100)
+            configs.append(
+                GateConfig(
+                    name=f"{mechanism}_lb{lookback_days}_th{threshold_pct}",
+                    regime_lookback_days=lookback_days,
+                    regime_threshold=threshold,
+                    **mechanism_kwargs,
+                )
+            )
+    return tuple(configs)
+
+
 def trailing_drift(candle_ts: list[datetime.datetime], candles: list[fgt.Candle], as_of_ts: datetime.datetime, lookback_days: int = REGIME_LOOKBACK_DAYS) -> float | None:
     """Causal regime proxy for GATING -- see module docstring ("REGIME-
     DIRECTION GATE") for why this can't just reuse campaign.monthly_drift().
@@ -273,19 +347,28 @@ def trailing_drift(candle_ts: list[datetime.datetime], candles: list[fgt.Candle]
     return (end_candle.close - start_candle.open) / start_candle.open
 
 
-def regime_by_signal_index(signals: list[sr.Signal], candles: list[fgt.Candle], lookback_days: int = REGIME_LOOKBACK_DAYS) -> dict[int, str]:
-    """signal.index -> "bull"/"bear"/"range" (campaign.classify_regime()'s
-    own thresholds, reused for comparability with campaign.py's post-hoc
-    breakdown), computed causally per trailing_drift() above. Signals too
-    early in the series to have `lookback_days` of trailing history are
-    simply absent from the result (caller/gate treats a missing key as
-    "unknown", never vetoed)."""
+def regime_by_signal_index(
+    signals: list[sr.Signal],
+    candles: list[fgt.Candle],
+    lookback_days: int = REGIME_LOOKBACK_DAYS,
+    bull_threshold: float = campaign.BULL_DRIFT_THRESHOLD,
+    bear_threshold: float = campaign.BEAR_DRIFT_THRESHOLD,
+) -> dict[int, str]:
+    """signal.index -> "bull"/"bear"/"range" (campaign.classify_regime(),
+    defaulting to ITS OWN thresholds for comparability with campaign.py's
+    post-hoc breakdown, but overridable -- F6b I2's own unresolved
+    "sensitivity test threshold ±5%/window 30-hari itu sendiri belum
+    divalidasi independen" follow-up, GateConfig.regime_lookback_days/
+    regime_threshold below wire these through), computed causally per
+    trailing_drift() above. Signals too early in the series to have
+    `lookback_days` of trailing history are simply absent from the result
+    (caller/gate treats a missing key as "unknown", never vetoed)."""
     candle_ts = [c.ts for c in candles]
     result = {}
     for signal in signals:
         drift = trailing_drift(candle_ts, candles, signal.ts, lookback_days)
         if drift is not None:
-            result[signal.index] = campaign.classify_regime(drift)
+            result[signal.index] = campaign.classify_regime(drift, bull_threshold, bear_threshold)
     return result
 
 
@@ -502,7 +585,17 @@ def _run_gated_series_prepared(
     # against the full 15m candle list can't leak a later window's data
     # into an earlier signal's classification either.
     needs_regime = gate_config.use_regime_direction_gate or gate_config.use_long_bear_veto
-    regime_by_index = regime_by_signal_index(signals, candles) if needs_regime else {}
+    regime_by_index = (
+        regime_by_signal_index(
+            signals,
+            candles,
+            lookback_days=gate_config.regime_lookback_days,
+            bull_threshold=gate_config.regime_threshold,
+            bear_threshold=-gate_config.regime_threshold,
+        )
+        if needs_regime
+        else {}
+    )
     ltf_events_by_index = micro_structure_event_by_signal_index(signals, candles_15m) if gate_config.use_ltf_fakeout_override else {}
 
     pooled_trades = []
@@ -784,16 +877,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gates",
         default=None,
-        help="comma-separated GATE_CONFIGS names to run (default: all) -- e.g. 'no_gate,trend_alignment_only,veto_short_bull' to skip the expensive per-window-refit gates (confidence_only/both_gates) when only comparing against the non-refit gates",
+        help="comma-separated GATE_CONFIGS names to run (default: all) -- e.g. 'no_gate,trend_alignment_only,veto_short_bull' to skip the expensive per-window-refit gates (confidence_only/both_gates) when only comparing against the non-refit gates. Ignored if --sensitivity-grid is given.",
+    )
+    parser.add_argument(
+        "--sensitivity-grid",
+        default=None,
+        choices=["veto_short_bull", "veto_long_bear"],
+        help="run build_sensitivity_gate_configs() for this mechanism instead of --gates -- 9 (lookback_days x threshold) combinations, module docstring's 'SENSITIVITY GRID'. no_gate is always included alongside as the unaffected baseline.",
     )
     args = parser.parse_args()
 
     import data_loader  # deferred: see rr_sl_experiment.py's own comment for why
 
-    gate_configs = GATE_CONFIGS
-    if args.gates:
+    if args.sensitivity_grid:
+        gate_configs = (GateConfig(name="no_gate"),) + build_sensitivity_gate_configs(args.sensitivity_grid)
+    elif args.gates:
         wanted = set(args.gates.split(","))
         gate_configs = tuple(c for c in GATE_CONFIGS if c.name in wanted)
+    else:
+        gate_configs = GATE_CONFIGS
     needs_ltf = any(c.use_ltf_fakeout_override for c in gate_configs)
 
     f5_candidate = campaign.CAMPAIGN_CONFIGS[1]

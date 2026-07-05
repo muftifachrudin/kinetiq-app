@@ -12,9 +12,18 @@ on:
   workflow_dispatch:
     inputs:
       gates:
-        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull,veto_short_bull_ltf_override,veto_long_bear,veto_long_bear_ltf_override' for the full comparison, much slower -- the *_ltf_override gates also load a 15m candle series per instrument, F6b I2 follow-up v2/v3)"
+        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull,veto_short_bull_ltf_override,veto_long_bear,veto_long_bear_ltf_override' for the full comparison, much slower -- the *_ltf_override gates also load a 15m candle series per instrument, F6b I2 follow-up v2/v3). Ignored if sensitivity_grid is not 'none'."
         required: false
         default: "no_gate,trend_alignment_only,veto_short_bull"
+      sensitivity_grid:
+        description: "F6b I2 sensitivity follow-up: run build_sensitivity_gate_configs() (9 lookback_days x threshold combinations, plus a no_gate baseline) for this mechanism instead of --gates. Leave as 'none' to use --gates as normal."
+        required: false
+        type: choice
+        options:
+          - none
+          - veto_short_bull
+          - veto_long_bear
+        default: none
 
 permissions:
   contents: read
@@ -44,7 +53,14 @@ jobs:
       - name: Run gated_campaign.py against the ephemeral branch (real historical candles, read-only)
         env:
           DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
-        run: python -u apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py --gates "${{ inputs.gates }}" | tee "$GITHUB_STEP_SUMMARY"
+          SENSITIVITY_GRID: ${{ inputs.sensitivity_grid }}
+          GATES: ${{ inputs.gates }}
+        run: |
+          if [ "$SENSITIVITY_GRID" != "none" ]; then
+            python -u apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py --sensitivity-grid "$SENSITIVITY_GRID" | tee "$GITHUB_STEP_SUMMARY"
+          else
+            python -u apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py --gates "$GATES" | tee "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload report artifact
         if: always()

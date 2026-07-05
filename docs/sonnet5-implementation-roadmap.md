@@ -933,6 +933,34 @@ F7 Tahap 2).
   override satu sisi tidak pernah menyentuh veto sisi lain), 493 test
   total lulus, ruff clean. **BELUM dijalankan thd data real** — sama
   spt v2 di atas.
+
+  **Follow-up A — sensitivity grid threshold/window (5 Juli 2026,
+  pre-registered, BELUM dijalankan thd data real)**: mengerjakan
+  follow-up yg tercatat dari awal Section 32 — window 30-hari &
+  threshold ±5% `veto_short_bull`/`veto_long_bear` dipinjam dari
+  `campaign.classify_regime()` demi komparabilitas dgn laporan post-hoc
+  lama, BELUM pernah divalidasi/di-tuning independen sbg parameter gate
+  LIVE. `campaign.classify_regime()` digeneralisasi (bukan diduplikasi)
+  jadi terima `bull_threshold`/`bear_threshold` opsional (default ke
+  konstanta modul yg sama persis — SETIAP call site lama, termasuk tiap
+  baris di `GATE_CONFIGS`, perilakunya TIDAK berubah). `GateConfig`
+  dapat 2 field baru `regime_lookback_days`/`regime_threshold`,
+  `gated_campaign.build_sensitivity_gate_configs(mechanism)` generate 9
+  kombinasi (lookback 14/30/60 hari × threshold simetris 3%/5%/7%) utk
+  `veto_short_bull` ATAU `veto_long_bear` — sengaja DILUAR `GATE_CONFIGS`
+  itu sendiri (biar tidak mengubah kontrak "satu baris = satu varian yg
+  sudah dilaporkan" yg dites exact-match di test suite). CLI baru
+  `--sensitivity-grid {veto_short_bull,veto_long_bear}` (gantiin
+  `--gates` kalau dipakai, `no_gate` tetap disertakan sbg baseline),
+  workflow `run-gated-campaign.yml` dapat input `sensitivity_grid`
+  (dropdown, default `none`) — sekalian pindahkan interpolasi
+  `${{ inputs.* }}` ke env var dulu sebelum masuk `run:` (praktik lebih
+  aman thd shell injection utk input workflow_dispatch yg user-
+  controlled, bukan cuma soal fitur baru). 8 test baru (termasuk uji
+  `classify_regime` custom threshold TIDAK mengubah konstanta modul, dan
+  `run_gated_series` end-to-end dgn `regime_threshold` custom), 500 test
+  total lulus, ruff clean. **BELUM dijalankan thd data real** — sama
+  spt v2/v3 di atas.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,

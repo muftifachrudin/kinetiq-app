@@ -472,6 +472,66 @@ def test_regime_by_signal_index_classifies_bull_and_omits_too_early_signals():
     assert regimes[late_signal.index] == "bull"
 
 
+# --- regime_by_signal_index: custom lookback_days/thresholds (F6b I2
+# sensitivity follow-up) ---
+
+
+def test_regime_by_signal_index_custom_lookback_days_changes_which_signals_classify():
+    candles = rising_candles(24 * 40)
+    signal_15d = mk_signal(24 * 15)  # 15 days of history -- too early for the default 30-day lookback
+    default_regimes = gc.regime_by_signal_index([signal_15d], candles)
+    assert signal_15d.index not in default_regimes
+
+    tight_regimes = gc.regime_by_signal_index([signal_15d], candles, lookback_days=10)
+    assert tight_regimes[signal_15d.index] == "bull"  # 15 days is enough history at a 10-day lookback
+
+
+def test_regime_by_signal_index_custom_threshold_changes_classification():
+    candles = rising_candles(24 * 40)
+    signal = mk_signal(24 * 35)
+    default_regimes = gc.regime_by_signal_index([signal], candles)
+    assert default_regimes[signal.index] == "bull"  # default 5% threshold
+
+    strict_regimes = gc.regime_by_signal_index([signal], candles, bull_threshold=5.0)
+    assert strict_regimes[signal.index] == "range"  # far below a 500% threshold
+
+
+# --- build_sensitivity_gate_configs (F6b I2 sensitivity follow-up) ---
+
+
+def test_build_sensitivity_gate_configs_short_bull_has_nine_combinations():
+    configs = gc.build_sensitivity_gate_configs("veto_short_bull")
+    assert len(configs) == 9
+    assert all(c.use_regime_direction_gate and not c.use_long_bear_veto for c in configs)
+    assert {(c.regime_lookback_days, c.regime_threshold) for c in configs} == {
+        (lb, th) for lb in gc.SENSITIVITY_LOOKBACK_DAYS_GRID for th in gc.SENSITIVITY_THRESHOLD_GRID
+    }
+    assert len({c.name for c in configs}) == 9  # names are unique, self-describing
+
+
+def test_build_sensitivity_gate_configs_long_bear_uses_long_bear_flag():
+    configs = gc.build_sensitivity_gate_configs("veto_long_bear")
+    assert len(configs) == 9
+    assert all(c.use_long_bear_veto and not c.use_regime_direction_gate for c in configs)
+
+
+def test_build_sensitivity_gate_configs_rejects_unknown_mechanism():
+    with pytest.raises(ValueError, match="mechanism"):
+        gc.build_sensitivity_gate_configs("veto_something_else")
+
+
+def test_run_gated_series_respects_custom_regime_threshold():
+    candles = noisy_zigzag()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    strict = gc.run_gated_series(
+        "synthetic", candles, gc.GateConfig(name="veto_short_bull_strict", use_regime_direction_gate=True, regime_threshold=0.99)
+    )
+    # threshold=0.99 is essentially unreachable on this fixture's bounded
+    # price swings -- "bull" never classifies, so nothing gets vetoed and
+    # kept count matches the unfiltered baseline exactly.
+    assert strict.total_kept == baseline.total_kept
+
+
 # --- apply_gates: veto_short_bull ---
 
 

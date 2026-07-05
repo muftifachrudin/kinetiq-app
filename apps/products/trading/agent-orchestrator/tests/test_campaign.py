@@ -73,6 +73,18 @@ def test_classify_regime_bull_bear_range():
     assert campaign.classify_regime(campaign.BULL_DRIFT_THRESHOLD + 0.001) == "bull"
 
 
+def test_classify_regime_custom_thresholds_override_module_defaults():
+    # gated_campaign.py's sensitivity grid (F6b I2 follow-up) overrides
+    # these -- a drift that's "range" at the default 5% must reclassify as
+    # "bull"/"bear" at a tighter 3% threshold, without touching the module
+    # constants themselves.
+    assert campaign.classify_regime(0.04) == "range"
+    assert campaign.classify_regime(0.04, bull_threshold=0.03) == "bull"
+    assert campaign.classify_regime(-0.04, bear_threshold=-0.03) == "bear"
+    assert campaign.BULL_DRIFT_THRESHOLD == 0.05  # module constants unaffected by the override call above
+    assert campaign.BEAR_DRIFT_THRESHOLD == -0.05
+
+
 def test_regime_of_trade_looks_up_signal_month():
     trade = mk_trade(datetime.datetime(2024, 3, 15, tzinfo=UTC))
     drift_by_month = {(2024, 3): 0.10, (2024, 4): -0.10}
