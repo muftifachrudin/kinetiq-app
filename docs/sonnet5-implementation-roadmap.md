@@ -914,17 +914,29 @@ F7 Tahap 2).
   benar. Detail lengkap + kandidat penyebab: `docs/fib-gann-validation-
   brief.md` Section 33.
 
-  **Desain ulang v2 (5 Juli 2026, pre-registered, BELUM dijalankan thd
-  data real)**: `GateConfig.require_major_regime_conflict` (baru) —
-  override CHoCH cuma dipercaya kalau bacaan regime KEDUA yg lebih
-  panjang (90 hari, mesin sama, threshold sama) TIDAK SETUJU dgn bacaan
-  lokal 30-hari yg memicu veto — membedakan koreksi biasa dlm tren
-  mayor genuine (v1's failure mode) dari fakeout beneran dlm tren mayor
-  yg konflik. Entri `GATE_CONFIGS` baru `veto_short_bull_ltf_override_
-  major_conflict`/`veto_long_bear_ltf_override_major_conflict`. 8 test
-  baru, 507 test total lulus, ruff clean. Detail lengkap: `docs/
-  fib-gann-validation-brief.md` Section 33 ("Desain ulang..."). **BELUM
-  dijalankan thd data real.**
+  **Desain ulang v2**: `GateConfig.require_major_regime_conflict`
+  (baru) — override CHoCH cuma dipercaya kalau bacaan regime KEDUA yg
+  lebih panjang (90 hari, mesin sama, threshold sama) TIDAK SETUJU dgn
+  bacaan lokal 30-hari yg memicu veto — membedakan koreksi biasa dlm
+  tren mayor genuine (v1's failure mode) dari fakeout beneran dlm tren
+  mayor yg konflik. Entri `GATE_CONFIGS` baru `veto_short_bull_ltf_
+  override_major_conflict`/`veto_long_bear_ltf_override_major_conflict`.
+  8 test baru, 507 test total lulus, ruff clean.
+
+  **SUDAH dijalankan thd data real (5 Juli 2026, workflow run
+  #28740339486, ~89 menit) — hasil: SEDIKIT LEBIH BAIK dari v1, TETAP
+  KALAH dari `veto_short_bull` polos.** Sisi SHORT: v2 menang tipis
+  drpd v1 di 3/4 seri (funnel lebih ketat, sesuai desain), tapi TETAP
+  kalah dari `veto_short_bull` TANPA override sama sekali di SEMUA 4
+  seri. Sisi LONG: v2 menang KONSISTEN di SEMUA 4 seri drpd v1 maupun
+  drpd `veto_long_bear` polos — syarat konflik regime mayor/lokal
+  genuinely membantu di sisi ini — tapi perbaikannya kecil, tidak
+  cukup membawa `veto_long_bear` naik di atas `no_gate`. Kesimpulan:
+  `veto_short_bull` POLOS tetap satu-satunya gate di SELURUH eksplorasi
+  F6b I2 yg menang konsisten 4/4 seri dibanding tanpa gate; baik LTF
+  override (v1/v2) maupun veto_long_bear TIDAK direkomendasikan sbg
+  tambahan. Detail lengkap: `docs/fib-gann-validation-brief.md`
+  Section 34.
 
   **Follow-up v3 — veto_long_bear (5 Juli 2026, pre-registered, BELUM
   dijalankan thd data real)**: mekanisme simetris `veto_short_bull` —

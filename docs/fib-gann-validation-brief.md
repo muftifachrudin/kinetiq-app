@@ -1652,5 +1652,57 @@ yg hilang di v1 (v1 cuma pakai SATU timeframe utk regime).
 (bukan cuma "bear" ketat) adalah bacaan "konflik" yg SENGAJA longgar —
 apakah harus "bear" ketat malah masih terbuka, follow-up sensitivity
 tersendiri setelah ini diukur dulu. 8 test baru, 507 test total lulus,
-ruff clean. **BELUM dijalankan thd data real** — sama disiplin
-pre-registrasi yg sama dgn setiap follow-up lain di dokumen ini.
+ruff clean.
+
+## 34. F6b I2 v2 REDESIGN — hasil REAL 4-seri `require_major_regime_conflict` — DIJALANKAN 5 Juli 2026, hasil: SEDIKIT LEBIH BAIK dari v1, TETAP KALAH dari `veto_short_bull` polos
+
+Dijalankan thd data real 4-seri (config kandidat F5, 35 window/seri,
+workflow run
+[#28740339486](https://github.com/muftifachrudin/kinetiq-app/actions/runs/28740339486),
+~89 menit).
+
+**Tabel lengkap, `pooled_pf_net` (window lolos /35):**
+
+| Seri | `no_gate` | `veto_short_bull` | v1 `..._ltf_override` | v2 `..._ltf_override_major_conflict` | `veto_long_bear` | v1 long_bear override | v2 long_bear override |
+|---|---|---|---|---|---|---|---|
+| BTC/Binance | 0.920 (6) | 0.959 (9) | 0.963 (8) | 0.952 (8) | 0.882 (9) | 0.881 (9) | 0.889 (9) |
+| BTC/Bybit | 0.938 (8) | 0.982 (12) | 0.976 (10) | 0.978 (11) | 0.901 (10) | 0.896 (9) | 0.903 (10) |
+| ETH/Binance | 1.039 (10) | 1.124 (12) | 1.106 (11) | 1.114 (11) | 0.979 (9) | 0.985 (9) | 0.993 (9) |
+| ETH/Bybit | 1.046 (10) | 1.106 (11) | 1.082 (10) | 1.090 (10) | 1.015 (10) | 1.033 (9) | 1.022 (9) |
+
+Semua baris tetap `promoted: false`; window lolos tertinggi tetap
+12/35 (`veto_short_bull` polos, BTC/Bybit), TIDAK ada satu pun baris di
+tabel ini yg menyamai/melewati itu.
+
+**Sisi SHORT (`veto_short_bull_ltf_override_major_conflict` vs v1 vs
+polos)**: dibanding v1, v2 MENANG tipis di 3/4 seri (BTC/Bybit
+0.976→0.978, ETH/Binance 1.106→1.114, ETH/Bybit 1.082→1.090) tapi KALAH
+di BTC/Binance (0.963→0.952) — funnel v2 selalu lebih ketat drpd v1
+(881<899, 874<890, 890<907, 899<915 — masuk akal, v2 mensyaratkan DUA
+kondisi sekaligus jadi populasi yg di-un-veto adalah subset dari punya
+v1). **TAPI dibanding `veto_short_bull` POLOS (tanpa override sama
+sekali), v2 tetap KALAH di SEMUA 4 seri** (0.959→0.952, 0.982→0.978,
+1.124→1.114, 1.106→1.090) — bahkan versi override yg sudah dipersempit
+dgn syarat konflik regime mayor/lokal MASIH menambahkan populasi
+sinyal yg net lebih jelek drpd yg tetap divetokan.
+
+**Sisi LONG (`veto_long_bear_ltf_override_major_conflict`)**: pola
+lebih konsisten — v2 MENANG di SEMUA 4 seri dibanding v1 (0.881→0.889,
+0.896→0.903, 0.985→0.993, kecuali ETH/Bybit tipis kalah 1.033→1.022)
+dan MENANG di SEMUA 4 seri dibanding `veto_long_bear` polos
+(0.882→0.889, 0.901→0.903, 0.979→0.993, 1.015→1.022). Syarat konflik
+regime mayor/lokal genuinely membantu memperbaiki (bukan memperburuk)
+sisi long_bear — tapi perbaikannya kecil, TIDAK cukup membawa
+`veto_long_bear` naik di atas baseline `no_gate` (masih net negatif
+thd tanpa gate sama sekali di semua 4 seri).
+
+**Kesimpulan jujur**: hipotesis "konflik regime mayor/lokal" punya
+dukungan arah yg nyata (terutama sisi long_bear, konsisten 4/4 seri),
+tapi TIDAK cukup besar utk mengubah kesimpulan operasional. `veto_short_
+bull` POLOS (tanpa override apa pun) tetap satu-satunya gate/varian di
+SELURUH eksplorasi F6b I2 (v1, v2, long_bear, kombinasi apa pun) yg
+benar-benar menang dibanding tanpa gate sama sekali secara konsisten
+4/4 seri. Baik LTF fakeout override (v1 maupun v2) maupun veto_long_bear
+(polos maupun dgn override) TIDAK direkomendasikan sbg penambahan thd
+`veto_short_bull` yg sudah ada — dilaporkan lengkap sbg temuan negatif/
+inkonklusif, bukan diadopsi.
