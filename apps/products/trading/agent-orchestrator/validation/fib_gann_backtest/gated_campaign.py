@@ -279,24 +279,20 @@ class GatedSeriesResult:
     pooled_pf_net: float | None
 
 
-def run_gated_series(
-    series_name: str,
+def _prepare_series_data(
     candles,
-    gate_config: GateConfig,
-    campaign_config: campaign.CampaignConfig = campaign.CAMPAIGN_CONFIGS[0],
-    derivatives_records=None,
-    funding_events=None,
-    max_holding_bars: int = 20,
-) -> GatedSeriesResult:
-    """campaign_config (F6b I1, docs/sonnet5-implementation-roadmap.md):
-    which R:R/SL config generates the underlying signals BEFORE any gate is
-    applied -- defaults to campaign.CAMPAIGN_CONFIGS[0] (current production
-    defaults, this module's original behavior, so every pre-existing call
-    site/test is unaffected), but I1's own pre-registered A/B runs this on
-    TOP of campaign.CAMPAIGN_CONFIGS[1] (F5's candidate) instead, per the
-    roadmap's explicit "di atas config kandidat F5" framing -- reusing
-    campaign.CampaignConfig rather than a parallel set of loose R:R/SL
-    params."""
+    campaign_config: campaign.CampaignConfig,
+    derivatives_records,
+    funding_events,
+    max_holding_bars: int,
+):
+    """signals/labeled/windows depend only on (candles, campaign_config,
+    derivatives_records, funding_events, max_holding_bars) -- NOT on which
+    gate is being measured. Extracted so run_gated_series_batch() below can
+    compute this ONCE per series and reuse it across every gate, instead of
+    re-running generate_signals()'s O(n) walk (still a real cost at actual
+    production series size, ~26k candles/3 years) once per gate for
+    identical output every time."""
     signals = sr.generate_signals(
         candles,
         min_rr_threshold=campaign_config.min_rr_threshold,
@@ -315,6 +311,21 @@ def run_gated_series(
         step_months=campaign.exp.STEP_MONTHS,
         mode=campaign.exp.WINDOW_MODE,
     )
+    return signals, labeled, windows
+
+
+def _run_gated_series_prepared(
+    series_name: str,
+    candles,
+    gate_config: GateConfig,
+    signals,
+    labeled,
+    windows,
+    funding_events,
+    max_holding_bars: int,
+) -> GatedSeriesResult:
+    """Shared body of run_gated_series()/run_gated_series_batch() -- takes
+    _prepare_series_data()'s output directly rather than recomputing it."""
     # Computed once per series (not per window) -- trailing_drift() only
     # ever looks at candles <= a signal's own ts, so precomputing this
     # against the FULL candle list is still walk-forward-safe (no future
@@ -363,6 +374,58 @@ def run_gated_series(
         promoted=promoted,
         pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
     )
+
+
+def run_gated_series(
+    series_name: str,
+    candles,
+    gate_config: GateConfig,
+    campaign_config: campaign.CampaignConfig = campaign.CAMPAIGN_CONFIGS[0],
+    derivatives_records=None,
+    funding_events=None,
+    max_holding_bars: int = 20,
+) -> GatedSeriesResult:
+    """campaign_config (F6b I1, docs/sonnet5-implementation-roadmap.md):
+    which R:R/SL config generates the underlying signals BEFORE any gate is
+    applied -- defaults to campaign.CAMPAIGN_CONFIGS[0] (current production
+    defaults, this module's original behavior, so every pre-existing call
+    site/test is unaffected), but I1's own pre-registered A/B runs this on
+    TOP of campaign.CAMPAIGN_CONFIGS[1] (F5's candidate) instead, per the
+    roadmap's explicit "di atas config kandidat F5" framing -- reusing
+    campaign.CampaignConfig rather than a parallel set of loose R:R/SL
+    params.
+
+    Single-gate convenience wrapper around _prepare_series_data()/_run_
+    gated_series_prepared() -- comparing MULTIPLE gates for the same
+    series should use run_gated_series_batch() instead, which shares the
+    expensive signal-generation step across all of them."""
+    signals, labeled, windows = _prepare_series_data(candles, campaign_config, derivatives_records, funding_events, max_holding_bars)
+    return _run_gated_series_prepared(series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars)
+
+
+def run_gated_series_batch(
+    series_name: str,
+    candles,
+    gate_configs,
+    campaign_config: campaign.CampaignConfig = campaign.CAMPAIGN_CONFIGS[0],
+    derivatives_records=None,
+    funding_events=None,
+    max_holding_bars: int = 20,
+) -> list[GatedSeriesResult]:
+    """Equivalent to [run_gated_series(series_name, candles, gc, ...) for gc
+    in gate_configs], but generates signals ONCE and reuses them across
+    every gate_configs entry -- the real motivating case (this module's own
+    CLI entrypoint, comparing N gates for the same series): the first real
+    6-gate x 4-series run against production's now ~26k-candle/3-year
+    series ran past 90 minutes without completing, re-running generate_
+    signals() from scratch for every single gate despite it producing
+    IDENTICAL output each time for a fixed (candles, campaign_config,
+    derivatives_records, funding_events, max_holding_bars) tuple."""
+    signals, labeled, windows = _prepare_series_data(candles, campaign_config, derivatives_records, funding_events, max_holding_bars)
+    return [
+        _run_gated_series_prepared(series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars)
+        for gate_config in gate_configs
+    ]
 
 
 # --- F6b I1(a): sizing multiplier (module docstring) ---
@@ -547,10 +610,14 @@ if __name__ == "__main__":
             continue
         series_name = f"{venue}_{coin}"
         print(f"{series_name}: {len(candles)} candles, {candles[0].ts} .. {candles[-1].ts}", flush=True)
-        for gate_config in gate_configs:
-            result = run_gated_series(series_name, candles, gate_config, campaign_config=f5_candidate)
+        # run_gated_series_batch(), not one run_gated_series() call per gate --
+        # generate_signals() is the expensive part at real series size (~26k
+        # candles/3 years) and produces IDENTICAL signals regardless of which
+        # gate is being measured; the first real run of this loop called it
+        # once per gate and ran past 90 minutes without finishing.
+        for result in run_gated_series_batch(series_name, candles, gate_configs, campaign_config=f5_candidate):
             print(
-                f"  {gate_config.name}: signals={result.total_signals} kept={result.total_kept} "
+                f"  {result.gate_name}: signals={result.total_signals} kept={result.total_kept} "
                 f"promoted={result.promoted} windows_passing_pf={result.windows_passing_pf}/{result.total_windows} "
                 f"pooled_pf_net={result.pooled_pf_net}",
                 flush=True,

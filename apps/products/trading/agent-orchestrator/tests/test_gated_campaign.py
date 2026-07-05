@@ -499,3 +499,28 @@ def test_run_gated_series_veto_short_bull_well_formed_result():
     assert result.gate_name == "veto_short_bull"
     assert result.total_windows >= 1
     assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+# --- run_gated_series_batch: shares signal generation, must match per-gate calls ---
+
+
+def test_run_gated_series_batch_matches_individual_calls():
+    candles = noisy_zigzag()
+    configs = [gc.GateConfig(name="no_gate"), gc.GateConfig(name="trend_alignment_only", use_trend_alignment_gate=True)]
+    batch_results = gc.run_gated_series_batch("synthetic", candles, configs)
+    individual_results = [gc.run_gated_series("synthetic", candles, config) for config in configs]
+    assert batch_results == individual_results
+
+
+def test_run_gated_series_batch_returns_one_result_per_gate_config():
+    candles = noisy_zigzag()
+    results = gc.run_gated_series_batch("synthetic", candles, list(gc.GATE_CONFIGS))
+    assert [r.gate_name for r in results] == [c.name for c in gc.GATE_CONFIGS]
+
+
+def test_run_gated_series_batch_campaign_config_changes_signal_generation():
+    candles = noisy_zigzag()
+    f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
+    default_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")])
+    candidate_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")], campaign_config=f5_candidate)
+    assert candidate_results[0].total_signals != default_results[0].total_signals
