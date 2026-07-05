@@ -889,6 +889,26 @@ F7 Tahap 2).
   sekunder resmi di samping window-pass-count. Murah, memperbaiki kualitas
   keputusan semua kampanye berikutnya, dan jadi dasar kriteria masuk-shadow
   di F7 Tahap 2.
+- **I6 — Exit-management & fee levers (deep-dive ronde 2, 4 Juli 2026;
+  temuan F12-F14 di `docs/validation-deep-dive-2026-07.md` bag. 8).**
+  Tiga A/B pre-registered di harness, di atas config kandidat F5 + gate
+  alignment #82, walk-forward penuh net-of-fees:
+  (a) **fee model maker** (entry limit + TP limit; stop/timeout tetap
+  taker) dgn rule fill KONSERVATIF (`high > tp` strict / penetrasi 1
+  tick) — lever paling andal ronde 2, +0.04-0.08 PF di SEMUA irisan
+  (STACK BTC 1.261→1.338, ETH 1.049→1.092), sifatnya mekanis bukan
+  taruhan pasar; butuh dukungan fee per-outcome di `trade_simulator.py`;
+  (b) **breakeven @ +1R — BTC saja** (STACK BTC → 1.383, CI90 bawah
+  1.09; nihil utk ETH);
+  (c) **momentum-exit @ -0.3R/-0.5R close — ETH saja** (STACK ETH →
+  1.272/1.199 — lever ETH nyata PERTAMA; MERUSAK BTC, pola monoton
+  berlawanan arah dua aset = kandidat fungsi dari normalized-vol utk F8,
+  BUKAN dial per-simbol).
+  Lima hipotesis exit yang SUDAH TERBANTAH ronde 2 — jangan dikerjakan
+  ulang: trailing 1R, time-stop 8 bar, timeout 40, TP 0.7×/1.5×, BE utk
+  ETH. Pelajaran metodologis: TIMEOUT PF 5.56 (F3) adalah efek seleksi
+  conditional-on-survival, bukan alpha yang bisa dipanen ex-ante.
+  Reproduksi: `validation/deep_dive_2026_07/exit_lab.py`.
 
   **SELESAI (4 Juli 2026).** `metrics.bootstrap_pf_net_ci()` — resample
   per-trade (2000 iterasi, seed tetap supaya reproducible), CI 90%,
