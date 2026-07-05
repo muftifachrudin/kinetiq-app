@@ -114,11 +114,11 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_seven_named_combinations():
+def test_gate_configs_covers_nine_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
     assert names == {
         "no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates",
-        "veto_short_bull", "veto_short_bull_ltf_override",
+        "veto_short_bull", "veto_short_bull_ltf_override", "veto_long_bear", "veto_long_bear_ltf_override",
     }
 
 
@@ -531,6 +531,106 @@ def test_run_gated_series_veto_short_bull_well_formed_result():
     assert result.gate_name == "veto_short_bull"
     assert result.total_windows >= 1
     assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+# --- F6b I2 follow-up v3: veto_long_bear (symmetric to veto_short_bull,
+# weaker prior -- module docstring "VETO_LONG_BEAR") ---
+
+
+def test_apply_gates_veto_long_bear_drops_long_in_bear_regime():
+    test = [mk_labeled_dir(0, LONG), mk_labeled_dir(1, SHORT)]
+    config = gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bear", 1: "bear"})
+    assert [ls.signal.index for ls in kept] == [1]  # LONG vetoed, SHORT untouched even in a bear regime
+
+
+def test_apply_gates_veto_long_bear_keeps_long_outside_bear_regime():
+    test = [mk_labeled_dir(0, LONG), mk_labeled_dir(1, LONG)]
+    config = gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull", 1: "range"})
+    assert {ls.signal.index for ls in kept} == {0, 1}
+
+
+def test_apply_gates_veto_long_bear_keeps_long_with_unknown_regime():
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={})
+    assert kept == test
+
+
+def test_apply_gates_veto_long_bear_never_touches_short_bull_veto():
+    # Both mechanisms can be requested together (independent booleans) --
+    # each only ever vetoes its OWN direction x regime combination.
+    test = [mk_labeled_dir(0, SHORT), mk_labeled_dir(1, LONG)]
+    config = gc.GateConfig(name="both_regime_vetoes", use_regime_direction_gate=True, use_long_bear_veto=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull", 1: "bear"})
+    assert kept == []  # SHORT vetoed by short_bull (bull regime), LONG vetoed by long_bear (bear regime)
+
+
+def test_apply_gates_ltf_override_keeps_long_with_fresh_bullish_choch():
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bear"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BULLISH)}
+    )
+    assert [ls.signal.index for ls in kept] == [0]  # fakeout confirmed -- override un-vetoes the LONG
+
+
+def test_apply_gates_ltf_override_still_vetoes_long_on_bearish_choch():
+    # Wrong direction (bearish) doesn't confirm a fakeout of the LONG
+    # candidate's own direction -- must not override.
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bear"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)}
+    )
+    assert kept == []
+
+
+def test_apply_gates_ltf_override_never_affects_short_bull_veto_direction():
+    # A bullish CHoCH override is only meaningful for a vetoed LONG -- a
+    # SHORT vetoed by veto_short_bull still needs a BEARISH CHoCH, not this.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(
+        name="both_ltf_override", use_regime_direction_gate=True, use_long_bear_veto=True, use_ltf_fakeout_override=True
+    )
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BULLISH)}
+    )
+    assert kept == []  # wrong-direction CHoCH -- SHORT stays vetoed
+
+
+def test_run_gated_series_veto_long_bear_never_increases_kept_count():
+    candles = noisy_zigzag()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True))
+    assert result.total_kept <= baseline.total_kept
+
+
+def test_run_gated_series_veto_long_bear_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True))
+    assert result.gate_name == "veto_long_bear"
+    assert result.total_windows >= 1
+    assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+def test_run_gated_series_veto_long_bear_ltf_override_requires_candles_15m():
+    candles = noisy_zigzag()
+    config = gc.GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True)
+    with pytest.raises(ValueError, match="candles_15m"):
+        gc.run_gated_series("synthetic", candles, config)
+
+
+def test_run_gated_series_veto_long_bear_ltf_override_never_increases_kept_count_vs_plain():
+    candles = noisy_zigzag()
+    candles_15m = noisy_zigzag_15m()
+    plain = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_long_bear", use_long_bear_veto=True))
+    overridden = gc.run_gated_series(
+        "synthetic", candles, gc.GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True),
+        candles_15m=candles_15m,
+    )
+    assert overridden.total_kept >= plain.total_kept
 
 
 # --- run_gated_series_batch: shares signal generation, must match per-gate calls ---

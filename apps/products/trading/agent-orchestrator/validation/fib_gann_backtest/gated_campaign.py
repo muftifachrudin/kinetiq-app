@@ -103,25 +103,40 @@ since "freshness" (a recent reversal, not a stale one) is the whole point
 here, not just performance.
 
 GateConfig.use_ltf_fakeout_override (only meaningful together with
-use_regime_direction_gate): a SHORT signal that veto_short_bull would
-drop for firing in a "bull" regime is let through anyway if the 15m
-series shows a CHoCH (NOT a BOS -- a CHoCH is specifically the "potential
-reversal just starting" read per market_structure.py's own docstring,
-which is the fakeout-failing moment the founder described, whereas a
-bearish BOS presupposes a downtrend already established at 15m and is a
-different, not-yet-tested question) whose break_direction is BEARISH
-(agrees with the SHORT candidate's own direction) within LTF_LOOKBACK_
-CANDLES of the signal. LONG is never touched, symmetric to
-veto_short_bull's own scope -- no long_bear veto exists yet for this
-override to apply to.
+use_regime_direction_gate and/or use_long_bear_veto below): a signal that
+would otherwise be vetoed for firing against its own direction's "wrong"
+regime is let through anyway if the 15m series shows a CHoCH (NOT a BOS
+-- a CHoCH is specifically the "potential reversal just starting" read
+per market_structure.py's own docstring, which is the fakeout-failing
+moment the founder described, whereas a BOS presupposes the opposite
+trend already established at 15m and is a different, not-yet-tested
+question) whose break_direction AGREES with the candidate's own direction
+(BEARISH for a vetoed SHORT, BULLISH for a vetoed LONG) within LTF_
+LOOKBACK_CANDLES of the signal.
+
+VETO_LONG_BEAR (F6b I2 follow-up v3, pre-registered 5 Juli 2026, NOT yet
+run against real data): symmetric mechanism to veto_short_bull -- veto
+LONG signals firing in a causally-classified "bear" regime, same
+trailing_drift()/regime_by_signal_index() machinery, no new regime
+classifier. Evidence for this is WEAKER than short_bull's own (flagged,
+not overstated): Section 30's formal direction x regime breakdown found
+BTC long_bear mediocre-to-breakeven (PF 0.69-0.99 across venue/config),
+not catastrophic like short_bull's 0.33-0.59 cell, and ETH long_bear was
+similarly mixed (0.69-1.08) -- the module's own original veto_short_bull
+docstring explicitly deferred this ("no long_bear veto exists yet...no
+evidence... jangan menambah tebakan yg belum diuji"). Tested anyway now,
+same "let evidence decide" discipline as every other gate here -- a
+weaker prior is a reason to report the real number honestly, not a
+reason to skip the experiment. GateConfig.use_long_bear_veto (new field)
++ GATE_CONFIGS entries veto_long_bear/veto_long_bear_ltf_override.
 
 Open questions deliberately NOT resolved by this initial pass (flagged,
 not assumed): LTF_LOOKBACK_CANDLES=3 days is an initial, untested number
 (same "initial numbers are free, evidence decides" convention as every
 other new constant in this module) -- a sensitivity grid is a natural
 follow-up, same discipline as veto_short_bull's own unresolved threshold/
-window follow-up. Whether a bearish BOS (not just CHoCH) should also
-count is left open rather than guessed.
+window follow-up. Whether a same-direction BOS (not just CHoCH) should
+also count is left open rather than guessed.
 
 SIZING MULTIPLIER (F6b I1(a)): a fundamentally different mechanism from
 the three gates above -- instead of dropping signals, every kept signal is
@@ -200,7 +215,8 @@ class GateConfig:
     use_daily_bias_gate: bool = False
     daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
     use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
-    use_ltf_fakeout_override: bool = False  # F6b I2 follow-up v2: let a fresh 15m bearish CHoCH un-veto a SHORT that use_regime_direction_gate would otherwise drop -- only meaningful together with use_regime_direction_gate=True
+    use_long_bear_veto: bool = False  # F6b I2 follow-up v3: veto LONG signals fired during a causally-classified bear regime -- symmetric mechanism, WEAKER evidence than short_bull (module docstring, "VETO_LONG_BEAR"), tested anyway
+    use_ltf_fakeout_override: bool = False  # F6b I2 follow-up v2: let a fresh, direction-agreeing 15m CHoCH un-veto a signal that use_regime_direction_gate/use_long_bear_veto would otherwise drop -- only meaningful together with at least one of those
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -223,6 +239,12 @@ GATE_CONFIGS = (
     # reported alongside, not instead of, veto_short_bull, same "let the
     # number decide" discipline as every other gate in this tuple.
     GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True),
+    # F6b I2 follow-up v3 (module docstring, "VETO_LONG_BEAR") -- weaker
+    # prior than veto_short_bull (Section 30: long_bear mediocre, not
+    # catastrophic), tested anyway; reported alongside every other gate
+    # here, not assumed to win.
+    GateConfig(name="veto_long_bear", use_long_bear_veto=True),
+    GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True),
 )
 
 
@@ -348,10 +370,10 @@ def apply_gates(
     ltf_events_by_index: dict[int, ms.StructureEvent | None] | None = None,
 ) -> list[fw.LabeledSignal]:
     """regime_by_index (regime_by_signal_index()'s output) is only needed
-    when gate_config.use_regime_direction_gate is True -- every other gate
-    ignores it, same optional-until-needed shape as every other gate-
-    specific input this function already takes (e.g. train is unused
-    unless use_confidence_gate). ltf_events_by_index
+    when gate_config.use_regime_direction_gate and/or use_long_bear_veto is
+    True -- every other gate ignores it, same optional-until-needed shape
+    as every other gate-specific input this function already takes (e.g.
+    train is unused unless use_confidence_gate). ltf_events_by_index
     (micro_structure_event_by_signal_index()'s output) is only needed on
     top of that when gate_config.use_ltf_fakeout_override is ALSO True."""
     candidates = list(test)
@@ -371,24 +393,30 @@ def apply_gates(
     if gate_config.use_daily_bias_gate:
         candidates = [ls for ls in candidates if ls.signal.daily_bias_alignment > gate_config.daily_bias_threshold]
 
-    if gate_config.use_regime_direction_gate:
+    if gate_config.use_regime_direction_gate or gate_config.use_long_bear_veto:
         regimes = regime_by_index or {}
         events = ltf_events_by_index or {}
 
         def _vetoed_by_regime_direction(ls: fw.LabeledSignal) -> bool:
-            wants_veto = ls.signal.direction is fgt.TradeDirection.SHORT and regimes.get(ls.signal.index) == "bull"
+            regime = regimes.get(ls.signal.index)
+            # A signal is either SHORT or LONG, never both, so at most one
+            # of these two can be true for any given signal -- no conflict
+            # in picking `wanted_break` below from whichever one fired.
+            wants_veto_short_bull = (
+                gate_config.use_regime_direction_gate and ls.signal.direction is fgt.TradeDirection.SHORT and regime == "bull"
+            )
+            wants_veto_long_bear = gate_config.use_long_bear_veto and ls.signal.direction is fgt.TradeDirection.LONG and regime == "bear"
+            wants_veto = wants_veto_short_bull or wants_veto_long_bear
             if not wants_veto or not gate_config.use_ltf_fakeout_override:
                 return wants_veto
             # LTF FAKEOUT OVERRIDE (module docstring): a fresh 15m CHoCH
-            # breaking BEARISH (agrees with this SHORT candidate's own
-            # direction) un-vetoes it -- treated as the fakeout failing,
-            # not as evidence the "bull" regime read itself was wrong.
+            # breaking in the SAME direction as this candidate's own
+            # direction (BEARISH for a vetoed SHORT, BULLISH for a vetoed
+            # LONG) un-vetoes it -- treated as the fakeout failing, not as
+            # evidence the regime read itself was wrong.
+            wanted_break = ms.StructureBreakDirection.BEARISH if wants_veto_short_bull else ms.StructureBreakDirection.BULLISH
             event = events.get(ls.signal.index)
-            fakeout_confirmed = (
-                event is not None
-                and event.event_type is ms.StructureEventType.CHOCH
-                and event.break_direction is ms.StructureBreakDirection.BEARISH
-            )
+            fakeout_confirmed = event is not None and event.event_type is ms.StructureEventType.CHOCH and event.break_direction is wanted_break
             return not fakeout_confirmed
 
         candidates = [ls for ls in candidates if not _vetoed_by_regime_direction(ls)]
@@ -473,7 +501,8 @@ def _run_gated_series_prepared(
     # its own lookback window is bounded and trailing, so precomputing
     # against the full 15m candle list can't leak a later window's data
     # into an earlier signal's classification either.
-    regime_by_index = regime_by_signal_index(signals, candles) if gate_config.use_regime_direction_gate else {}
+    needs_regime = gate_config.use_regime_direction_gate or gate_config.use_long_bear_veto
+    regime_by_index = regime_by_signal_index(signals, candles) if needs_regime else {}
     ltf_events_by_index = micro_structure_event_by_signal_index(signals, candles_15m) if gate_config.use_ltf_fakeout_override else {}
 
     pooled_trades = []
@@ -727,8 +756,11 @@ def run_sizing_series(
 # konsumen" finding, derivatives features don't influence which signals
 # fire or their PF at all when the confidence/both_gates gates aren't in
 # play for a given row -- this run reports every gate for comparability,
-# but only veto_short_bull/no_gate/trend_alignment_only/daily_bias_only
-# rows are unaffected by that omission either way.
+# but only no_gate/trend_alignment_only/daily_bias_only/veto_short_bull/
+# veto_short_bull_ltf_override/veto_long_bear/veto_long_bear_ltf_override
+# rows are unaffected by that omission either way (none of these read any
+# derivatives factor, direction x causal-regime or LTF micro-structure
+# only).
 # 15m OHLCV coverage per series is ~105,600-105,603 rows over 1100 days
 # (verified 5 Juli 2026 via real HTTP-SQL queries against production --
 # zero internal gaps, zero null/high<low/zero-volume/flat-candle rows,

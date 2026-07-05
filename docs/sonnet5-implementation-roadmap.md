@@ -907,6 +907,32 @@ F7 Tahap 2).
   **BELUM dijalankan thd data real 4-seri** — itu langkah berikutnya,
   sama disiplin pre-registrasi yg sama dgn setiap follow-up lain di
   modul ini (laporkan angka apa adanya, menang atau kalah).
+
+  **Follow-up v3 — veto_long_bear (5 Juli 2026, pre-registered, BELUM
+  dijalankan thd data real)**: mekanisme simetris `veto_short_bull` —
+  veto LONG saat regime causal-trailing "bear", reuse `regime_by_signal_
+  index()` yg sama persis, TANPA classifier baru. Bukti utk ini LEBIH
+  LEMAH drpd short_bull (jangan dilebih-lebihkan): breakdown formal
+  Section 30 nunjukkan `long_bear` BTC cuma mediocre/dekat-breakeven
+  (PF 0.69–0.99 lintas venue/config), bukan buruk drastis spt sel
+  `bull+short` (0.33–0.59); ETH `long_bear` juga campur (0.69–1.08).
+  Modul ini awalnya SENGAJA tidak menambah veto ini ("belum ada bukti
+  serupa utk long_bear, jadi tidak divetokan, sesuai disiplin jangan
+  menambah tebakan yg belum diuji") — sekarang diuji juga scr eksplisit
+  atas permintaan founder, tetap dgn disiplin yg sama: bukti lemah bukan
+  alasan skip eksperimen, tapi alasan utk melaporkan hasilnya jujur
+  (menang/kalah/tidak meyakinkan) bukan melebih-lebihkan ekspektasi.
+
+  `GateConfig.use_long_bear_veto` (baru) + entri `GATE_CONFIGS`
+  `veto_long_bear`/`veto_long_bear_ltf_override`. `apply_gates()`'s
+  blok regime-direction digeneralisasi (bukan diduplikasi) supaya
+  menangani KEDUA arah veto sekaligus — override LTF utk sisi ini
+  butuh CHoCH 15m segar yg break-nya BULLISH (searah kandidat LONG),
+  simetris persis dgn override short_bull yg butuh BEARISH. 12 test
+  baru (termasuk kombinasi kedua veto aktif bersamaan, dan memastikan
+  override satu sisi tidak pernah menyentuh veto sisi lain), 493 test
+  total lulus, ruff clean. **BELUM dijalankan thd data real** — sama
+  spt v2 di atas.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
