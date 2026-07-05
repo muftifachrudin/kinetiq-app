@@ -12,6 +12,7 @@ import campaign  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import fit_weights as fw  # noqa: E402
 import gated_campaign as gc  # noqa: E402
+import market_structure as ms  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
 
@@ -46,6 +47,32 @@ def noisy_zigzag(n: int = 1680, seed: int = 42) -> list[fgt.Candle]:
         h = max(o, c) + rng.uniform(0, 0.3)
         low = min(o, c) - rng.uniform(0, 0.3)
         candles.append(mk(i, o, h, low, c, v=100 + rng.uniform(-10, 10)))
+        price = c
+    return candles
+
+
+def noisy_zigzag_15m(days: int = 70, seed: int = 43) -> list[fgt.Candle]:
+    """15m companion series to noisy_zigzag() -- only veto_short_bull_ltf_
+    override reads a separate 15m series alongside the entry-timeframe
+    (1h) one, so every other gate's tests never need this fixture. Same
+    "small, fast, synthetic, not real data" rationale as noisy_zigzag()
+    itself, covering the same calendar span (`days`) so signals generated
+    from noisy_zigzag() always have 15m history available."""
+    rng = random.Random(seed)
+    candles = []
+    price = 100.0
+    direction = -1
+    n = days * 96  # 96 fifteen-minute candles/day
+    start = datetime.datetime(2024, 1, 1, tzinfo=UTC)
+    for i in range(n):
+        if i % 60 == 0:
+            direction *= -1
+        price += direction * rng.uniform(0.05, 0.2)
+        o = price
+        c = price + rng.uniform(-0.05, 0.05)
+        h = max(o, c) + rng.uniform(0, 0.05)
+        low = min(o, c) - rng.uniform(0, 0.05)
+        candles.append(fgt.Candle(ts=start + datetime.timedelta(minutes=15 * i), open=o, high=h, low=low, close=c, volume=100 + rng.uniform(-10, 10)))
         price = c
     return candles
 
@@ -87,9 +114,12 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_six_named_combinations():
+def test_gate_configs_covers_seven_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
-    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates", "veto_short_bull"}
+    assert names == {
+        "no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates",
+        "veto_short_bull", "veto_short_bull_ltf_override",
+    }
 
 
 def test_no_gate_config_has_both_gates_disabled():
@@ -237,8 +267,9 @@ def test_apply_gates_both_gates_applies_trend_filter_after_confidence_filter():
 
 def test_run_gated_series_returns_well_formed_result_for_every_gate_config():
     candles = noisy_zigzag()
+    candles_15m = noisy_zigzag_15m()
     for config in gc.GATE_CONFIGS:
-        result = gc.run_gated_series("synthetic", candles, config)
+        result = gc.run_gated_series("synthetic", candles, config, candles_15m=candles_15m)
         assert result.series == "synthetic"
         assert result.gate_name == config.name
         assert result.total_windows >= 1
@@ -259,11 +290,12 @@ def test_run_gated_series_no_gate_matches_total_signal_count_semantics():
 
 def test_run_gated_series_gates_never_increase_kept_count_vs_no_gate():
     candles = noisy_zigzag()
+    candles_15m = noisy_zigzag_15m()
     baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
     for config in gc.GATE_CONFIGS:
         if config.name == "no_gate":
             continue
-        result = gc.run_gated_series("synthetic", candles, config)
+        result = gc.run_gated_series("synthetic", candles, config, candles_15m=candles_15m)
         assert result.total_kept <= baseline.total_kept
 
 
@@ -514,7 +546,8 @@ def test_run_gated_series_batch_matches_individual_calls():
 
 def test_run_gated_series_batch_returns_one_result_per_gate_config():
     candles = noisy_zigzag()
-    results = gc.run_gated_series_batch("synthetic", candles, list(gc.GATE_CONFIGS))
+    candles_15m = noisy_zigzag_15m()
+    results = gc.run_gated_series_batch("synthetic", candles, list(gc.GATE_CONFIGS), candles_15m=candles_15m)
     assert [r.gate_name for r in results] == [c.name for c in gc.GATE_CONFIGS]
 
 
@@ -524,3 +557,206 @@ def test_run_gated_series_batch_campaign_config_changes_signal_generation():
     default_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")])
     candidate_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")], campaign_config=f5_candidate)
     assert candidate_results[0].total_signals != default_results[0].total_signals
+
+
+# --- F6b I2 follow-up v2: LTF fakeout override (micro_structure_event /
+# micro_structure_event_by_signal_index / apply_gates) ---
+
+
+def _mk15(i: int, o: float, h: float, l: float, c: float, v: float = 100.0) -> fgt.Candle:  # noqa: E741
+    return fgt.Candle(ts=datetime.datetime(2024, 1, 1, tzinfo=UTC) + datetime.timedelta(minutes=15 * i), open=o, high=h, low=l, close=c, volume=v)
+
+
+def _flat15(n: int, start_price: float = 100.0) -> list[fgt.Candle]:
+    return [_mk15(i, start_price, start_price + 0.05, start_price - 0.05, start_price) for i in range(n)]
+
+
+def _leg15(candles: list[fgt.Candle], start_idx: int, delta_per_candle: float, n: int) -> list[fgt.Candle]:
+    """Same strictly-monotonic-leg construction as test_fib_gann_timing.py's
+    own monotonic_leg(), just building 15m-spaced candles directly rather
+    than taking a generic `mk` -- this fixture is only ever used here."""
+    last_close = candles[-1].close
+    out = list(candles)
+    for step in range(n):
+        o = last_close
+        c = o + delta_per_candle
+        out.append(_mk15(start_idx + step, o, max(o, c), min(o, c), c))
+        last_close = c
+    return out
+
+
+def _uptrend_then_bearish_choch_15m() -> tuple[list[fgt.Candle], int]:
+    """Causal fixture for micro_structure_event(): establishes a clean 15m
+    UPTREND (2 confirmed higher-highs + higher-lows, same W-shape
+    construction test_fib_gann_timing.py's own detect_swings tests use)
+    then breaks BEARISH below the most recent confirmed swing low -- the
+    "fakeout failing" shape the LTF override (module docstring) exists to
+    detect. Returns (candles, index where the breaking leg starts)."""
+    candles = _flat15(20)
+    candles = _leg15(candles, 20, 2.0, 10)  # up ~100 -> ~120
+    candles = _leg15(candles, 30, -1.5, 8)  # pullback ~120 -> ~108 -- confirms swing HIGH ~120
+    candles = _leg15(candles, 38, 2.0, 8)  # up ~108 -> ~124 -- confirms swing LOW ~108
+    candles = _leg15(candles, 46, -1.5, 8)  # pullback ~124 -> ~112 -- confirms swing HIGH ~124
+    candles = _leg15(candles, 54, 2.0, 8)  # up ~112 -> ~128 -- confirms swing LOW ~112 (now 2 highs + 2 lows -> UPTREND)
+    break_start_idx = len(candles)
+    candles = _leg15(candles, break_start_idx, -3.0, 10)  # sharp decline breaking below ~112 -- BEARISH CHoCH
+    return candles, break_start_idx
+
+
+def test_micro_structure_event_detects_fresh_bearish_choch_after_uptrend():
+    candles, break_start_idx = _uptrend_then_bearish_choch_15m()
+    candles_ts = [c.ts for c in candles]
+    as_of = candles[break_start_idx + 8].ts  # well into the decline, clearly below the ~112 swing low
+    event = gc.micro_structure_event(candles_ts, candles, as_of)
+    assert event is not None
+    assert event.event_type is ms.StructureEventType.CHOCH
+    assert event.break_direction is ms.StructureBreakDirection.BEARISH
+
+
+def test_micro_structure_event_no_lookahead_before_the_break():
+    candles, break_start_idx = _uptrend_then_bearish_choch_15m()
+    candles_ts = [c.ts for c in candles]
+    as_of = candles[break_start_idx - 1].ts  # right before the decline starts
+    event = gc.micro_structure_event(candles_ts, candles, as_of)
+    is_bearish_choch = event is not None and event.event_type is ms.StructureEventType.CHOCH and event.break_direction is ms.StructureBreakDirection.BEARISH
+    assert not is_bearish_choch  # the future break must not be visible yet
+
+
+def test_micro_structure_event_stale_choch_outside_lookback_window_not_seen():
+    candles, _ = _uptrend_then_bearish_choch_15m()
+    # Long flat tail, well past LTF_LOOKBACK_CANDLES -- the fresh CHoCH
+    # detected right after the break must stop being "seen" once it falls
+    # outside the bounded trailing window (module docstring: freshness is
+    # the whole point of bounding this window, not just performance).
+    tail_start = candles[-1].ts
+    tail_price = candles[-1].close
+    tail = [
+        fgt.Candle(
+            ts=tail_start + datetime.timedelta(minutes=15 * (i + 1)),
+            open=tail_price, high=tail_price + 0.05, low=tail_price - 0.05, close=tail_price, volume=100.0,
+        )
+        for i in range(gc.LTF_LOOKBACK_CANDLES + 50)
+    ]
+    full = candles + tail
+    candles_ts = [c.ts for c in full]
+    event = gc.micro_structure_event(candles_ts, full, full[-1].ts)
+    assert event is None  # window is now pure flat noise -- no swings, no event
+
+
+def test_micro_structure_event_none_before_first_candle():
+    candles, _ = _uptrend_then_bearish_choch_15m()
+    candles_ts = [c.ts for c in candles]
+    before_series = candles_ts[0] - datetime.timedelta(minutes=15)
+    assert gc.micro_structure_event(candles_ts, candles, before_series) is None
+
+
+def test_micro_structure_event_none_with_too_few_candles():
+    candles = _flat15(5)
+    candles_ts = [c.ts for c in candles]
+    assert gc.micro_structure_event(candles_ts, candles, candles_ts[-1]) is None
+
+
+def test_micro_structure_event_by_signal_index_maps_each_signal():
+    candles, break_start_idx = _uptrend_then_bearish_choch_15m()
+    before_signal = dataclasses.replace(mk_signal(0), ts=candles[break_start_idx - 1].ts, index=0)
+    after_signal = dataclasses.replace(mk_signal(1), ts=candles[break_start_idx + 8].ts, index=1)
+    events = gc.micro_structure_event_by_signal_index([before_signal, after_signal], candles)
+    assert set(events) == {0, 1}
+    assert events[1] is not None
+    assert events[1].event_type is ms.StructureEventType.CHOCH
+    assert events[1].break_direction is ms.StructureBreakDirection.BEARISH
+
+
+# --- apply_gates: veto_short_bull_ltf_override ---
+
+
+def _choch(break_direction: ms.StructureBreakDirection) -> ms.StructureEvent:
+    return ms.StructureEvent(
+        event_type=ms.StructureEventType.CHOCH, break_direction=break_direction, trend_bias_before=ms.TrendBias.UPTREND, broken_level=100.0
+    )
+
+
+def _bos(break_direction: ms.StructureBreakDirection) -> ms.StructureEvent:
+    return ms.StructureEvent(
+        event_type=ms.StructureEventType.BOS, break_direction=break_direction, trend_bias_before=ms.TrendBias.DOWNTREND, broken_level=100.0
+    )
+
+
+def test_apply_gates_ltf_override_keeps_short_with_fresh_bearish_choch():
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)}
+    )
+    assert [ls.signal.index for ls in kept] == [0]  # fakeout confirmed -- override un-vetoes the SHORT
+
+
+def test_apply_gates_ltf_override_still_vetoes_without_an_event():
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: None})
+    assert kept == []
+
+
+def test_apply_gates_ltf_override_still_vetoes_on_bullish_choch():
+    # A CHoCH in the WRONG direction (bullish) doesn't confirm a fakeout of
+    # the SHORT candidate's own direction -- must not override.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BULLISH)}
+    )
+    assert kept == []
+
+
+def test_apply_gates_ltf_override_still_vetoes_on_bearish_bos_not_choch():
+    # A bearish BOS presupposes a downtrend already established at 15m --
+    # a different, not-yet-tested question from a fresh CHoCH (module
+    # docstring's "open questions") -- only CHOCH counts as the override
+    # trigger for now.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates(
+        [], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: _bos(ms.StructureBreakDirection.BEARISH)}
+    )
+    assert kept == []
+
+
+def test_apply_gates_ltf_override_never_affects_long():
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)})
+    assert kept == test  # LONG was never vetoed in the first place -- nothing to override
+
+
+def test_apply_gates_ltf_override_noop_without_regime_direction_gate():
+    # use_ltf_fakeout_override alone (without use_regime_direction_gate)
+    # has nothing to override -- confirms it never vetoes on its own.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="ltf_only", use_ltf_fakeout_override=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: None})
+    assert kept == test
+
+
+# --- run_gated_series: veto_short_bull_ltf_override requires candles_15m ---
+
+
+def test_run_gated_series_ltf_override_requires_candles_15m():
+    candles = noisy_zigzag()
+    config = gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True)
+    with pytest.raises(ValueError, match="candles_15m"):
+        gc.run_gated_series("synthetic", candles, config)  # candles_15m omitted -- must fail loud, not silently degrade
+
+
+def test_run_gated_series_ltf_override_never_increases_kept_count_vs_veto_short_bull():
+    # The override can only ADD BACK signals veto_short_bull alone would
+    # drop -- so kept count for the override variant is always >= plain
+    # veto_short_bull's, but both stay <= no_gate (already covered above).
+    candles = noisy_zigzag()
+    candles_15m = noisy_zigzag_15m()
+    plain = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True))
+    overridden = gc.run_gated_series(
+        "synthetic", candles, gc.GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True),
+        candles_15m=candles_15m,
+    )
+    assert overridden.total_kept >= plain.total_kept

@@ -73,6 +73,56 @@ at (and using only candles up to) each signal's own ts -- causal by
 construction, same guarantee sma_trend_bias_alignment/daily_bias_
 alignment already provide.
 
+LTF FAKEOUT OVERRIDE (F6b I2 follow-up v2, pre-registered 5 Juli 2026,
+founder's own 5-year trading experience, NOT yet run against real data):
+veto_short_bull's single 30-day trailing-drift regime read can't tell a
+genuine major-trend bull apart from a bullish blip inside a larger bear
+trend (a relief rally that later fails) -- it vetoes SHORT in both cases
+alike. The founder's hypothesis: the second case is exactly where a SHORT
+entry is BEST, not worst -- fading a failed rally (a fakeout) inside a
+larger downtrend. That distinction needs a finer, lower-timeframe read
+than the 30-day macro drift can provide.
+
+15m OHLCV for all 4 production series already exists in Neon (F0e P2's
+--backfill-15m-since-days 1100, originally ingested for the unrelated
+OI-fuel feature, never before consumed by any strategy/backtest code) --
+verified here (5 Juli 2026, real HTTP-SQL queries against production, not
+assumed from the backfill log alone): zero internal gaps and zero
+null/high<low/zero-volume/flat-candle rows across all 4 series, full
+2023-06-30..now coverage. Safe to use.
+
+micro_structure_event()/micro_structure_event_by_signal_index() below
+reuse market_structure.detect_structure_event() (already built for the
+entry-timeframe structure_alignment score, docstring already anticipates
+this exact case: "a fresh reversal INTO the trade's direction is the
+textbook trigger for a new-trend entry") against a BOUNDED trailing
+window of 15m candles ending at (and using only candles up to) each
+signal's own ts -- same causal-by-construction guarantee as
+trailing_drift(), never IncrementalSwingWalk's growing-prefix approach
+since "freshness" (a recent reversal, not a stale one) is the whole point
+here, not just performance.
+
+GateConfig.use_ltf_fakeout_override (only meaningful together with
+use_regime_direction_gate): a SHORT signal that veto_short_bull would
+drop for firing in a "bull" regime is let through anyway if the 15m
+series shows a CHoCH (NOT a BOS -- a CHoCH is specifically the "potential
+reversal just starting" read per market_structure.py's own docstring,
+which is the fakeout-failing moment the founder described, whereas a
+bearish BOS presupposes a downtrend already established at 15m and is a
+different, not-yet-tested question) whose break_direction is BEARISH
+(agrees with the SHORT candidate's own direction) within LTF_LOOKBACK_
+CANDLES of the signal. LONG is never touched, symmetric to
+veto_short_bull's own scope -- no long_bear veto exists yet for this
+override to apply to.
+
+Open questions deliberately NOT resolved by this initial pass (flagged,
+not assumed): LTF_LOOKBACK_CANDLES=3 days is an initial, untested number
+(same "initial numbers are free, evidence decides" convention as every
+other new constant in this module) -- a sensitivity grid is a natural
+follow-up, same discipline as veto_short_bull's own unresolved threshold/
+window follow-up. Whether a bearish BOS (not just CHoCH) should also
+count is left open rather than guessed.
+
 SIZING MULTIPLIER (F6b I1(a)): a fundamentally different mechanism from
 the three gates above -- instead of dropping signals, every kept signal is
 RESIZED by a continuous multiplier derived from the same per-window
@@ -121,6 +171,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import campaign  # noqa: E402
 import fib_gann_timing as fgt  # noqa: E402
 import fit_weights as fw  # noqa: E402
+import market_structure as ms  # noqa: E402
 import metrics  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
@@ -129,6 +180,14 @@ import trade_simulator as ts  # noqa: E402
 # expressed as a trailing day-count so it can be computed causally at any
 # signal's own ts rather than only at calendar-month boundaries.
 REGIME_LOOKBACK_DAYS = 30
+
+# LTF fakeout-override lookback (module docstring, "LTF FAKEOUT OVERRIDE")
+# -- a bounded TRAILING window of 15m candles, not the whole series: a
+# reversal from a year ago isn't "fresh" evidence of a fakeout happening
+# now. 3 days * 96 fifteen-minute candles/day -- an initial, untested
+# number (module docstring's own "open questions" section), not yet
+# validated independently via a sensitivity grid.
+LTF_LOOKBACK_CANDLES = 3 * 96
 
 
 @dataclasses.dataclass(frozen=True)
@@ -141,6 +200,7 @@ class GateConfig:
     use_daily_bias_gate: bool = False
     daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
     use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
+    use_ltf_fakeout_override: bool = False  # F6b I2 follow-up v2: let a fresh 15m bearish CHoCH un-veto a SHORT that use_regime_direction_gate would otherwise drop -- only meaningful together with use_regime_direction_gate=True
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -158,6 +218,11 @@ GATE_CONFIGS = (
     GateConfig(name="daily_bias_only", use_daily_bias_gate=True),
     GateConfig(name="both_gates", use_confidence_gate=True, use_trend_alignment_gate=True),
     GateConfig(name="veto_short_bull", use_regime_direction_gate=True),
+    # F6b I2 follow-up v2 (module docstring, "LTF FAKEOUT OVERRIDE") --
+    # requires candles_15m (run_gated_series(_batch)'s new optional param);
+    # reported alongside, not instead of, veto_short_bull, same "let the
+    # number decide" discipline as every other gate in this tuple.
+    GateConfig(name="veto_short_bull_ltf_override", use_regime_direction_gate=True, use_ltf_fakeout_override=True),
 )
 
 
@@ -202,6 +267,51 @@ def regime_by_signal_index(signals: list[sr.Signal], candles: list[fgt.Candle], 
     return result
 
 
+def micro_structure_event(
+    candles_15m_ts: list[datetime.datetime],
+    candles_15m: list[fgt.Candle],
+    as_of_ts: datetime.datetime,
+    lookback_candles: int = LTF_LOOKBACK_CANDLES,
+) -> ms.StructureEvent | None:
+    """Causal LTF (15m) micro-structure read for GATING -- module docstring
+    ("LTF FAKEOUT OVERRIDE"). Uses ONLY 15m candles with ts <= as_of_ts
+    (bisect, same technique as trailing_drift() above), and only the most
+    recent `lookback_candles` of those -- a BOUNDED trailing window, not
+    the whole series, since a stale reversal from a year ago isn't evidence
+    of a fakeout happening right now. `candles_15m_ts` is
+    `[c.ts for c in candles_15m]`, passed in rather than recomputed so
+    callers classifying many signals against the same 15m series only
+    build it once.
+
+    None if there aren't enough 15m candles before as_of_ts yet to run
+    detect_swings() at all (too early in the series, or as_of_ts before the
+    first 15m candle) -- caller treats this the same as "no event", never
+    an override (same can't-decide-so-pass-through fallback precedent as
+    every other gate in this module)."""
+    end_idx = bisect.bisect_right(candles_15m_ts, as_of_ts) - 1
+    if end_idx < 0:
+        return None
+    start_idx = max(0, end_idx - lookback_candles + 1)
+    window = candles_15m[start_idx : end_idx + 1]
+    if len(window) < fgt.DEFAULT_ATR_PERIOD + 2:
+        return None
+    swings = fgt.detect_swings(window)
+    return ms.detect_structure_event(swings, reference_price=window[-1].close)
+
+
+def micro_structure_event_by_signal_index(
+    signals: list[sr.Signal], candles_15m: list[fgt.Candle], lookback_candles: int = LTF_LOOKBACK_CANDLES
+) -> dict[int, ms.StructureEvent | None]:
+    """signal.index -> micro_structure_event() (or None), for every signal
+    -- always present (unlike regime_by_signal_index(), which omits
+    too-early signals entirely) since the gate only ever reads this via
+    .get(index), which already defaults missing keys to None; storing an
+    explicit None costs nothing and keeps this function's contract
+    "one entry per signal" rather than a partial mapping."""
+    candles_15m_ts = [c.ts for c in candles_15m]
+    return {signal.index: micro_structure_event(candles_15m_ts, candles_15m, signal.ts, lookback_candles) for signal in signals}
+
+
 def _fit_confidence_model(train: list[fw.LabeledSignal]) -> tuple[LogisticRegression, np.ndarray] | None:
     """Same fit fit_weights._fit_binary() performs (same solver/l1_ratio/
     guards), but returns the model itself (plus its train feature matrix,
@@ -235,12 +345,15 @@ def apply_gates(
     test: list[fw.LabeledSignal],
     gate_config: GateConfig,
     regime_by_index: dict[int, str] | None = None,
+    ltf_events_by_index: dict[int, ms.StructureEvent | None] | None = None,
 ) -> list[fw.LabeledSignal]:
     """regime_by_index (regime_by_signal_index()'s output) is only needed
     when gate_config.use_regime_direction_gate is True -- every other gate
     ignores it, same optional-until-needed shape as every other gate-
     specific input this function already takes (e.g. train is unused
-    unless use_confidence_gate)."""
+    unless use_confidence_gate). ltf_events_by_index
+    (micro_structure_event_by_signal_index()'s output) is only needed on
+    top of that when gate_config.use_ltf_fakeout_override is ALSO True."""
     candidates = list(test)
 
     if gate_config.use_confidence_gate:
@@ -260,9 +373,25 @@ def apply_gates(
 
     if gate_config.use_regime_direction_gate:
         regimes = regime_by_index or {}
-        candidates = [
-            ls for ls in candidates if not (ls.signal.direction is fgt.TradeDirection.SHORT and regimes.get(ls.signal.index) == "bull")
-        ]
+        events = ltf_events_by_index or {}
+
+        def _vetoed_by_regime_direction(ls: fw.LabeledSignal) -> bool:
+            wants_veto = ls.signal.direction is fgt.TradeDirection.SHORT and regimes.get(ls.signal.index) == "bull"
+            if not wants_veto or not gate_config.use_ltf_fakeout_override:
+                return wants_veto
+            # LTF FAKEOUT OVERRIDE (module docstring): a fresh 15m CHoCH
+            # breaking BEARISH (agrees with this SHORT candidate's own
+            # direction) un-vetoes it -- treated as the fakeout failing,
+            # not as evidence the "bull" regime read itself was wrong.
+            event = events.get(ls.signal.index)
+            fakeout_confirmed = (
+                event is not None
+                and event.event_type is ms.StructureEventType.CHOCH
+                and event.break_direction is ms.StructureBreakDirection.BEARISH
+            )
+            return not fakeout_confirmed
+
+        candidates = [ls for ls in candidates if not _vetoed_by_regime_direction(ls)]
 
     return candidates
 
@@ -323,21 +452,36 @@ def _run_gated_series_prepared(
     windows,
     funding_events,
     max_holding_bars: int,
+    candles_15m=None,
 ) -> GatedSeriesResult:
     """Shared body of run_gated_series()/run_gated_series_batch() -- takes
-    _prepare_series_data()'s output directly rather than recomputing it."""
+    _prepare_series_data()'s output directly rather than recomputing it.
+    candles_15m (module docstring, "LTF FAKEOUT OVERRIDE") is only required
+    when gate_config.use_ltf_fakeout_override is True -- fails loud (not a
+    silent no-op) if that gate is requested without it, since a missing
+    override input silently behaving like "never fires" would misreport
+    veto_short_bull_ltf_override as identical to veto_short_bull instead of
+    surfacing the caller's mistake."""
+    if gate_config.use_ltf_fakeout_override and not candles_15m:
+        raise ValueError(f"gate {gate_config.name!r} requires candles_15m but none were provided")
+
     # Computed once per series (not per window) -- trailing_drift() only
     # ever looks at candles <= a signal's own ts, so precomputing this
     # against the FULL candle list is still walk-forward-safe (no future
     # window's candles can affect an earlier signal's classification).
+    # Same reasoning applies to micro_structure_event_by_signal_index():
+    # its own lookback window is bounded and trailing, so precomputing
+    # against the full 15m candle list can't leak a later window's data
+    # into an earlier signal's classification either.
     regime_by_index = regime_by_signal_index(signals, candles) if gate_config.use_regime_direction_gate else {}
+    ltf_events_by_index = micro_structure_event_by_signal_index(signals, candles_15m) if gate_config.use_ltf_fakeout_override else {}
 
     pooled_trades = []
     total_kept = 0
     windows_passing = 0
     for window in windows:
         train, test = fw.split_by_window(labeled, window)
-        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index)
+        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index, ltf_events_by_index=ltf_events_by_index)
         total_kept += len(kept)
 
         # Gate SELECTION uses the hindsight-resolved labeled signals above
@@ -384,6 +528,7 @@ def run_gated_series(
     derivatives_records=None,
     funding_events=None,
     max_holding_bars: int = 20,
+    candles_15m=None,
 ) -> GatedSeriesResult:
     """campaign_config (F6b I1, docs/sonnet5-implementation-roadmap.md):
     which R:R/SL config generates the underlying signals BEFORE any gate is
@@ -393,14 +538,17 @@ def run_gated_series(
     TOP of campaign.CAMPAIGN_CONFIGS[1] (F5's candidate) instead, per the
     roadmap's explicit "di atas config kandidat F5" framing -- reusing
     campaign.CampaignConfig rather than a parallel set of loose R:R/SL
-    params.
+    params. candles_15m: see _run_gated_series_prepared()'s own docstring
+    -- only required for gate_config.use_ltf_fakeout_override.
 
     Single-gate convenience wrapper around _prepare_series_data()/_run_
     gated_series_prepared() -- comparing MULTIPLE gates for the same
     series should use run_gated_series_batch() instead, which shares the
     expensive signal-generation step across all of them."""
     signals, labeled, windows = _prepare_series_data(candles, campaign_config, derivatives_records, funding_events, max_holding_bars)
-    return _run_gated_series_prepared(series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars)
+    return _run_gated_series_prepared(
+        series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars, candles_15m=candles_15m
+    )
 
 
 def run_gated_series_batch(
@@ -411,6 +559,7 @@ def run_gated_series_batch(
     derivatives_records=None,
     funding_events=None,
     max_holding_bars: int = 20,
+    candles_15m=None,
 ) -> list[GatedSeriesResult]:
     """Equivalent to [run_gated_series(series_name, candles, gc, ...) for gc
     in gate_configs], but generates signals ONCE and reuses them across
@@ -423,7 +572,9 @@ def run_gated_series_batch(
     derivatives_records, funding_events, max_holding_bars) tuple."""
     signals, labeled, windows = _prepare_series_data(candles, campaign_config, derivatives_records, funding_events, max_holding_bars)
     return [
-        _run_gated_series_prepared(series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars)
+        _run_gated_series_prepared(
+            series_name, candles, gate_config, signals, labeled, windows, funding_events, max_holding_bars, candles_15m=candles_15m
+        )
         for gate_config in gate_configs
     ]
 
@@ -578,6 +729,17 @@ def run_sizing_series(
 # play for a given row -- this run reports every gate for comparability,
 # but only veto_short_bull/no_gate/trend_alignment_only/daily_bias_only
 # rows are unaffected by that omission either way.
+# 15m OHLCV coverage per series is ~105,600-105,603 rows over 1100 days
+# (verified 5 Juli 2026 via real HTTP-SQL queries against production --
+# zero internal gaps, zero null/high<low/zero-volume/flat-candle rows,
+# module docstring's "LTF FAKEOUT OVERRIDE"). campaign.CANDLE_LOAD_LIMIT
+# (100_000) is sized for the 1h series (~26k candles/3 years) and would
+# silently drop the ~5,600 OLDEST 15m candles (data_loader.load_candles()
+# orders DESC LIMIT then reverses) if reused here -- a separate, larger
+# limit for the 15m load only.
+LTF_TIMEFRAME = "15m"
+LTF_CANDLE_LOAD_LIMIT = 120_000
+
 if __name__ == "__main__":
     import argparse
     import json
@@ -600,6 +762,7 @@ if __name__ == "__main__":
     if args.gates:
         wanted = set(args.gates.split(","))
         gate_configs = tuple(c for c in GATE_CONFIGS if c.name in wanted)
+    needs_ltf = any(c.use_ltf_fakeout_override for c in gate_configs)
 
     f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
     all_results = []
@@ -608,14 +771,20 @@ if __name__ == "__main__":
         if not candles:
             print(f"no candles for {venue}/{symbol} -- skipping")
             continue
+        candles_15m = data_loader.load_candles(venue, symbol, LTF_TIMEFRAME, limit=LTF_CANDLE_LOAD_LIMIT) if needs_ltf else None
+        if needs_ltf and not candles_15m:
+            print(f"no 15m candles for {venue}/{symbol} -- skipping (needed by a requested gate)")
+            continue
         series_name = f"{venue}_{coin}"
         print(f"{series_name}: {len(candles)} candles, {candles[0].ts} .. {candles[-1].ts}", flush=True)
+        if needs_ltf:
+            print(f"  + {len(candles_15m)} 15m candles, {candles_15m[0].ts} .. {candles_15m[-1].ts}", flush=True)
         # run_gated_series_batch(), not one run_gated_series() call per gate --
         # generate_signals() is the expensive part at real series size (~26k
         # candles/3 years) and produces IDENTICAL signals regardless of which
         # gate is being measured; the first real run of this loop called it
         # once per gate and ran past 90 minutes without finishing.
-        for result in run_gated_series_batch(series_name, candles, gate_configs, campaign_config=f5_candidate):
+        for result in run_gated_series_batch(series_name, candles, gate_configs, campaign_config=f5_candidate, candles_15m=candles_15m):
             print(
                 f"  {result.gate_name}: signals={result.total_signals} kept={result.total_kept} "
                 f"promoted={result.promoted} windows_passing_pf={result.windows_passing_pf}/{result.total_windows} "

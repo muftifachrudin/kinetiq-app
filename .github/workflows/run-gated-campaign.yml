@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       gates:
-        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull' for the full comparison, much slower)"
+        description: "comma-separated GATE_CONFIGS names to run (default: the 3 non-refit gates -- fast; pass 'no_gate,confidence_only,trend_alignment_only,daily_bias_only,both_gates,veto_short_bull,veto_short_bull_ltf_override' for the full comparison, much slower -- veto_short_bull_ltf_override also loads a 15m candle series per instrument, F6b I2 follow-up v2)"
         required: false
         default: "no_gate,trend_alignment_only,veto_short_bull"
 

@@ -867,6 +867,46 @@ F7 Tahap 2).
   terpisah, sentimen wajib lewat studi predictive-value sendiri dulu
   (spt F4 OI-fuel) sebelum jadi input model. Detail lengkap: `docs/
   fib-gann-validation-brief.md` Section 32.
+
+  **Follow-up v2 — LTF fakeout override (5 Juli 2026, pre-registered,
+  BELUM dijalankan thd data real)**: hipotesis dari pengalaman trading
+  founder (5 tahun) — `trailing_drift()` 30-hari itu SATU timeframe,
+  tidak bisa membedakan bull mayor asli dari reli gagal (fakeout) di
+  dalam downtrend besar; kasus kedua itu justru titik entri SHORT
+  terbaik, bukan yg divetokan. Data 15m sudah ada di production utk
+  ke-4 seri (F0e P2's `--backfill-15m-since-days 1100`, awalnya utk
+  OI-fuel, belum pernah dipakai strategi apa pun) — diverifikasi ulang
+  (query HTTP-SQL langsung, bukan asumsi dari log backfill): nol gap
+  internal, nol baris null/high<low/volume=0/flat di ke-4 seri, cakupan
+  2023-06-30..sekarang penuh.
+
+  Kode baru `gated_campaign.micro_structure_event()`/`micro_structure_
+  event_by_signal_index()`: reuse `market_structure.detect_structure_
+  event()` (sudah ada, dipakai utk skor `structure_alignment` timeframe
+  entry) thd window TRAILING 15m candle yg dibatasi (`LTF_LOOKBACK_
+  CANDLES`, awal 3 hari — angka awal, belum divalidasi independen,
+  follow-up sensitivity sendiri), causal by construction (bisect ke
+  `as_of_ts` sinyal, sama persis `trailing_drift()`). `GateConfig.use_
+  ltf_fakeout_override` (gate baru `veto_short_bull_ltf_override`
+  di `GATE_CONFIGS`): SHORT yg divetokan `veto_short_bull` krn regime
+  "bull" di-un-veto lagi HANYA kalau ada CHoCH 15m segar yg break-nya
+  BEARISH (searah kandidat SHORT itu sendiri) dlm window lookback —
+  CHoCH dipilih (bukan BOS) krn itu persis "potensi pembalikan baru
+  mulai" per docstring modul `market_structure.py` sendiri, bukan BOS yg
+  mengasumsikan downtrend 15m sudah established (pertanyaan terpisah,
+  belum diuji). `run_gated_series(_batch)` dpt param opsional baru
+  `candles_15m`, wajib diisi kalau gate ini dipakai (gagal keras kalau
+  tidak, bukan diam-diam no-op) — CLI-nya sendiri (`gated_campaign.py`
+  `__main__`) otomatis load candle 15m via `data_loader.load_candles`
+  (limit terpisah `LTF_CANDLE_LOAD_LIMIT=120_000`, krn `CANDLE_LOAD_
+  LIMIT` punya proyek ini pas utk 1h bukan 15m yg row-nya ~4x lipat)
+  hanya kalau ada gate yg diminta butuh itu. 14 test baru (synthetic,
+  termasuk uji no-lookahead & bounded-window eksplisit), 482 test total
+  lulus, ruff clean.
+
+  **BELUM dijalankan thd data real 4-seri** — itu langkah berikutnya,
+  sama disiplin pre-registrasi yg sama dgn setiap follow-up lain di
+  modul ini (laporkan angka apa adanya, menang atau kalah).
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
