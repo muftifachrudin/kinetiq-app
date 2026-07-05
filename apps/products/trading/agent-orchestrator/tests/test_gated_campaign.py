@@ -114,11 +114,12 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_nine_named_combinations():
+def test_gate_configs_covers_eleven_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
     assert names == {
         "no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates",
         "veto_short_bull", "veto_short_bull_ltf_override", "veto_long_bear", "veto_long_bear_ltf_override",
+        "veto_short_bull_ltf_override_major_conflict", "veto_long_bear_ltf_override_major_conflict",
     }
 
 
@@ -896,6 +897,121 @@ def test_apply_gates_ltf_override_noop_without_regime_direction_gate():
     config = gc.GateConfig(name="ltf_only", use_ltf_fakeout_override=True)
     kept = gc.apply_gates([], test, config, regime_by_index={0: "bull"}, ltf_events_by_index={0: None})
     assert kept == test
+
+
+# --- apply_gates: LTF fakeout override v2 (require_major_regime_conflict) ---
+
+
+def _major_conflict_config(**kwargs) -> gc.GateConfig:
+    return gc.GateConfig(
+        name="veto_short_bull_ltf_override_major_conflict", use_regime_direction_gate=True, use_ltf_fakeout_override=True,
+        require_major_regime_conflict=True, **kwargs,
+    )
+
+
+def test_apply_gates_major_conflict_overrides_when_major_regime_disagrees():
+    # Local (30-day) regime says bull -- triggers the veto -- but the
+    # major (90-day) regime is bear, confirming a real major/local
+    # conflict (the founder's "fakeout inside a larger downtrend" case).
+    test = [mk_labeled_dir(0, SHORT)]
+    config = _major_conflict_config()
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bull"},
+        ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)},
+        major_regime_by_index={0: "bear"},
+    )
+    assert [ls.signal.index for ls in kept] == [0]
+
+
+def test_apply_gates_major_conflict_stays_vetoed_when_major_regime_agrees():
+    # Major regime is ALSO bull -- this is an ordinary pullback inside a
+    # genuine sustained uptrend, not a fakeout -- v1's failure mode
+    # (Section 33) this redesign exists to fix. Must stay vetoed even
+    # though a same-direction CHoCH fired.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = _major_conflict_config()
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bull"},
+        ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)},
+        major_regime_by_index={0: "bull"},
+    )
+    assert kept == []
+
+
+def test_apply_gates_major_conflict_range_counts_as_conflict():
+    # "Major regime is NOT bull" is the deliberately loose reading of
+    # conflict (module docstring) -- "range" (not a confirmed bull either)
+    # also counts, not just strict "bear".
+    test = [mk_labeled_dir(0, SHORT)]
+    config = _major_conflict_config()
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bull"},
+        ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)},
+        major_regime_by_index={0: "range"},
+    )
+    assert [ls.signal.index for ls in kept] == [0]
+
+
+def test_apply_gates_major_conflict_unknown_major_regime_stays_vetoed():
+    # Too early in the series for 90 days of major-regime history -- can't
+    # confirm a conflict, so it stays vetoed (can't-decide fallback, same
+    # precedent as every other gate here), even with a matching CHoCH.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = _major_conflict_config()
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bull"},
+        ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BEARISH)},
+        major_regime_by_index={},
+    )
+    assert kept == []
+
+
+def test_apply_gates_major_conflict_still_requires_a_choch_too():
+    # A confirmed major/local conflict alone isn't enough -- still needs
+    # the same-direction CHoCH v1 already required.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = _major_conflict_config()
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bull"},
+        ltf_events_by_index={0: None},
+        major_regime_by_index={0: "bear"},
+    )
+    assert kept == []
+
+
+def test_apply_gates_major_conflict_symmetric_for_long_bear():
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(
+        name="veto_long_bear_ltf_override_major_conflict", use_long_bear_veto=True, use_ltf_fakeout_override=True,
+        require_major_regime_conflict=True,
+    )
+    kept = gc.apply_gates(
+        [], test, config,
+        regime_by_index={0: "bear"},
+        ltf_events_by_index={0: _choch(ms.StructureBreakDirection.BULLISH)},
+        major_regime_by_index={0: "bull"},  # major disagrees with the local "bear" -- confirms conflict
+    )
+    assert [ls.signal.index for ls in kept] == [0]
+
+
+def test_run_gated_series_major_conflict_never_increases_kept_count_vs_no_gate():
+    candles = noisy_zigzag()
+    candles_15m = noisy_zigzag_15m()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    result = gc.run_gated_series(
+        "synthetic", candles,
+        gc.GateConfig(
+            name="veto_short_bull_ltf_override_major_conflict", use_regime_direction_gate=True, use_ltf_fakeout_override=True,
+            require_major_regime_conflict=True,
+        ),
+        candles_15m=candles_15m,
+    )
+    assert result.total_kept <= baseline.total_kept
 
 
 # --- run_gated_series: veto_short_bull_ltf_override requires candles_15m ---

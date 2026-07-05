@@ -1615,3 +1615,42 @@ follow-up baru (LTF override, long_bear) dilaporkan sbg temuan NEGATIF
 valid — TIDAK diadopsi, TIDAK direkomendasikan utk eksperimen lanjutan
 tanpa desain ulang. `promoted: false` semua baris, sama sekali tidak
 ada yg mendekati kriteria promosi resmi.
+
+### Desain ulang LTF fakeout override (v2) — kandidat penyebab (c) di atas belum dites, ini yg (a) — PRE-REGISTERED 5 Juli 2026, BELUM dijalankan thd data real
+
+Kandidat penyebab (a) dari Temuan 1 di atas — override v1 cuma cek "ada
+CHoCH 15m searah" TANPA cek apakah bacaan regime 30-hari yg memicu veto
+itu sendiri genuinely konflik dgn tren yg lebih besar — dioperasionalkan
+jadi hipotesis baru yg bisa dites: satu bacaan regime 30-hari TIDAK bisa
+membedakan dua situasi yg sama-sama tampak "regime bull + CHoCH 15m
+searah lokal":
+- (a) tren bull mayor GENUINE yg lagi koreksi biasa (CHoCH 15m di sini
+  cuma noise/konsolidasi dalam uptrend asli — short di sini ya memang
+  trade counter-trend buruk yg `veto_short_bull` dirancang utk diblok);
+- (b) fakeout beneran: window 30-hari kebetulan nyebrang ambang "bull"
+  tapi tren SEBENARNYA masih bearish/tidak jelas (CHoCH 15m di sini
+  adalah reli palsu yg gagal — kasus yg dideskripsikan founder).
+
+v1 gagal membedakan keduanya krn tidak pernah cek apa pun di luar window
+30-hari yg sama yg memicu veto itu sendiri. **Fix v2**:
+`GateConfig.require_major_regime_conflict` (baru) — tambah bacaan regime
+KEDUA yg lebih panjang (`major_regime_lookback_days`, default 90 hari,
+mesin `trailing_drift()`/`regime_by_signal_index()` yg sama persis,
+threshold sama, TANPA classifier baru) — override CHoCH cuma dipercaya
+kalau bacaan mayor ini TIDAK SETUJU dgn bacaan lokal 30-hari yg memicu
+veto (mayor BUKAN "bull" utk sinyal yg divetokan `veto_short_bull`, BUKAN
+"bear" utk `veto_long_bear`). Regime mayor tidak diketahui (data historis
+kurang dari 90 hari) TIDAK bisa konfirmasi konflik → tetap divetokan
+(fallback "tidak bisa putuskan" yg sama dgn gate lain di modul ini). Ini
+mengembalikan pembeda "tren mayor vs blip lokal" dari cerita asli founder
+yg hilang di v1 (v1 cuma pakai SATU timeframe utk regime).
+
+**Kode**: `apply_gates()`'s blok regime-direction digeneralisasi lagi
+(bukan diduplikasi) — parameter baru `major_regime_by_index`. Entri
+`GATE_CONFIGS` baru: `veto_short_bull_ltf_override_major_conflict`,
+`veto_long_bear_ltf_override_major_conflict`. "Regime mayor BUKAN bull"
+(bukan cuma "bear" ketat) adalah bacaan "konflik" yg SENGAJA longgar —
+apakah harus "bear" ketat malah masih terbuka, follow-up sensitivity
+tersendiri setelah ini diukur dulu. 8 test baru, 507 test total lulus,
+ruff clean. **BELUM dijalankan thd data real** — sama disiplin
+pre-registrasi yg sama dgn setiap follow-up lain di dokumen ini.

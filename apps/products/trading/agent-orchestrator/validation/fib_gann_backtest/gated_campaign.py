@@ -74,8 +74,11 @@ construction, same guarantee sma_trend_bias_alignment/daily_bias_
 alignment already provide.
 
 LTF FAKEOUT OVERRIDE (F6b I2 follow-up v2, pre-registered 5 Juli 2026,
-founder's own 5-year trading experience, NOT yet run against real data):
-veto_short_bull's single 30-day trailing-drift regime read can't tell a
+founder's own 5-year trading experience -- run against real data 5 Juli
+2026, result: LOST to no override in 3/4 series, see "LTF FAKEOUT
+OVERRIDE v2" below and docs/fib-gann-validation-brief.md Section 33 for
+the redesign this motivated): veto_short_bull's single 30-day
+trailing-drift regime read can't tell a
 genuine major-trend bull apart from a bullish blip inside a larger bear
 trend (a relief rally that later fails) -- it vetoes SHORT in both cases
 alike. The founder's hypothesis: the second case is exactly where a SHORT
@@ -114,8 +117,11 @@ question) whose break_direction AGREES with the candidate's own direction
 (BEARISH for a vetoed SHORT, BULLISH for a vetoed LONG) within LTF_
 LOOKBACK_CANDLES of the signal.
 
-VETO_LONG_BEAR (F6b I2 follow-up v3, pre-registered 5 Juli 2026, NOT yet
-run against real data): symmetric mechanism to veto_short_bull -- veto
+VETO_LONG_BEAR (F6b I2 follow-up v3, pre-registered 5 Juli 2026 -- run
+against real data 5 Juli 2026, result: made pooled PF net WORSE than
+no_gate in ALL 4 series, not just weak as the prior below anticipated,
+see docs/fib-gann-validation-brief.md Section 33): symmetric mechanism
+to veto_short_bull -- veto
 LONG signals firing in a causally-classified "bear" regime, same
 trailing_drift()/regime_by_signal_index() machinery, no new regime
 classifier. Evidence for this is WEAKER than short_bull's own (flagged,
@@ -129,6 +135,40 @@ same "let evidence decide" discipline as every other gate here -- a
 weaker prior is a reason to report the real number honestly, not a
 reason to skip the experiment. GateConfig.use_long_bear_veto (new field)
 + GATE_CONFIGS entries veto_long_bear/veto_long_bear_ltf_override.
+
+LTF FAKEOUT OVERRIDE v2 (pre-registered 5 Juli 2026, NOT yet run against
+real data): v1 above lost to no override in 3/4 series -- the added-back
+signals (a fresh same-direction 15m CHoCH, ~2-3% of the previously
+vetoed population in every series) were on average WORSE, not better,
+than what stayed vetoed. Root-cause hypothesis: a single 30-day regime
+read can't distinguish two very different situations that both look like
+"bull regime + a same-direction local 15m CHoCH" --
+  (a) a genuine, sustained bull trend having an ORDINARY pullback (the
+      15m CHoCH here is just noise/consolidation inside a real uptrend --
+      shorting it is exactly the bad counter-trend trade veto_short_bull
+      exists to block), vs.
+  (b) an actual fakeout: the 30-day window barely tipped "bull" but the
+      REAL, larger trend is still bearish or undirected (the 15m CHoCH
+      here is the fake rally failing -- the founder's described case).
+v1 couldn't tell these apart because it never checked anything beyond
+the SAME 30-day window that triggered the veto in the first place. v2's
+fix: GateConfig.require_major_regime_conflict (new) adds a SECOND,
+LONGER regime read (major_regime_lookback_days, default MAJOR_REGIME_
+LOOKBACK_DAYS=90 days, same trailing_drift()/regime_by_signal_index()
+machinery, same regime_threshold, no new classifier) -- the CHoCH
+override is only trusted when this major read DISAGREES with the local
+30-day one (major regime is NOT "bull" for a signal veto_short_bull
+would drop, NOT "bear" for one veto_long_bear would drop). An unknown
+major regime (too early in the series for 90 days of history) can't
+confirm a conflict, so the signal stays vetoed -- same can't-decide
+fallback precedent as every other gate here. This directly restores the
+"major trend vs local blip" distinction the founder's original story
+described, which v1's single-timeframe regime check had dropped.
+GATE_CONFIGS entries veto_short_bull_ltf_override_major_conflict/
+veto_long_bear_ltf_override_major_conflict. "Major regime is NOT bull"
+(i.e. bear OR range) is the deliberately LOOSER reading of "conflict" --
+whether it should require strictly "bear" instead is left open, a
+natural sensitivity-grid follow-up once this is measured at all.
 
 Open questions deliberately NOT resolved by this initial pass (flagged,
 not assumed): LTF_LOOKBACK_CANDLES=3 days is an initial, untested number
@@ -218,6 +258,15 @@ REGIME_LOOKBACK_DAYS = 30
 # validated independently via a sensitivity grid.
 LTF_LOOKBACK_CANDLES = 3 * 96
 
+# Major-regime lookback for the v2 override redesign (module docstring,
+# "LTF FAKEOUT OVERRIDE v2") -- deliberately much longer than REGIME_
+# LOOKBACK_DAYS (30): the whole point is a coarser, slower-moving read
+# that a genuine sustained trend satisfies but a mere 30-day blip inside a
+# larger conflicting trend does not. 90 days -- an initial, untested
+# number (same "initial numbers are free" convention as every other new
+# constant here), not yet validated independently.
+MAJOR_REGIME_LOOKBACK_DAYS = 90
+
 
 @dataclasses.dataclass(frozen=True)
 class GateConfig:
@@ -233,6 +282,8 @@ class GateConfig:
     use_ltf_fakeout_override: bool = False  # F6b I2 follow-up v2: let a fresh, direction-agreeing 15m CHoCH un-veto a signal that use_regime_direction_gate/use_long_bear_veto would otherwise drop -- only meaningful together with at least one of those
     regime_lookback_days: int = REGIME_LOOKBACK_DAYS  # F6b I2 sensitivity follow-up ("SENSITIVITY GRID" below): trailing_drift()'s own window, only meaningful together with use_regime_direction_gate/use_long_bear_veto
     regime_threshold: float = campaign.BULL_DRIFT_THRESHOLD  # symmetric +/- drift threshold -- bull regime is drift > this, bear is drift < -this; defaults to campaign's own 5% for comparability, overridable by the sensitivity grid
+    require_major_regime_conflict: bool = False  # F6b I2 follow-up v2 redesign ("LTF FAKEOUT OVERRIDE v2"): only trust the LTF CHoCH override when a longer-lookback major regime disagrees with the local regime that triggered the veto -- only meaningful together with use_ltf_fakeout_override
+    major_regime_lookback_days: int = MAJOR_REGIME_LOOKBACK_DAYS  # trailing_drift() window for the "major" regime read above, only meaningful together with require_major_regime_conflict
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -261,6 +312,28 @@ GATE_CONFIGS = (
     # here, not assumed to win.
     GateConfig(name="veto_long_bear", use_long_bear_veto=True),
     GateConfig(name="veto_long_bear_ltf_override", use_long_bear_veto=True, use_ltf_fakeout_override=True),
+    # F6b I2 follow-up v2 REDESIGN (module docstring, "LTF FAKEOUT
+    # OVERRIDE v2") -- pre-registered 5 Juli 2026, NOT yet run against
+    # real data. v1 (plain veto_short_bull_ltf_override above) LOST to no
+    # override in 3/4 series (docs/fib-gann-validation-brief.md Section
+    # 33): a same-direction 15m CHoCH alone can't distinguish an ordinary
+    # pullback inside a genuine sustained trend from an actual fakeout
+    # inside a conflicting LARGER trend. require_major_regime_conflict
+    # adds that missing check -- only trust the CHoCH when a longer
+    # (90-day) regime read disagrees with the local (30-day) one that
+    # triggered the veto.
+    GateConfig(
+        name="veto_short_bull_ltf_override_major_conflict",
+        use_regime_direction_gate=True,
+        use_ltf_fakeout_override=True,
+        require_major_regime_conflict=True,
+    ),
+    GateConfig(
+        name="veto_long_bear_ltf_override_major_conflict",
+        use_long_bear_veto=True,
+        use_ltf_fakeout_override=True,
+        require_major_regime_conflict=True,
+    ),
 )
 
 
@@ -451,6 +524,7 @@ def apply_gates(
     gate_config: GateConfig,
     regime_by_index: dict[int, str] | None = None,
     ltf_events_by_index: dict[int, ms.StructureEvent | None] | None = None,
+    major_regime_by_index: dict[int, str] | None = None,
 ) -> list[fw.LabeledSignal]:
     """regime_by_index (regime_by_signal_index()'s output) is only needed
     when gate_config.use_regime_direction_gate and/or use_long_bear_veto is
@@ -458,7 +532,11 @@ def apply_gates(
     as every other gate-specific input this function already takes (e.g.
     train is unused unless use_confidence_gate). ltf_events_by_index
     (micro_structure_event_by_signal_index()'s output) is only needed on
-    top of that when gate_config.use_ltf_fakeout_override is ALSO True."""
+    top of that when gate_config.use_ltf_fakeout_override is ALSO True.
+    major_regime_by_index (regime_by_signal_index()'s output computed at a
+    LONGER lookback, module docstring's "LTF FAKEOUT OVERRIDE v2") is only
+    needed on top of THAT when gate_config.require_major_regime_conflict
+    is ALSO True."""
     candidates = list(test)
 
     if gate_config.use_confidence_gate:
@@ -479,12 +557,14 @@ def apply_gates(
     if gate_config.use_regime_direction_gate or gate_config.use_long_bear_veto:
         regimes = regime_by_index or {}
         events = ltf_events_by_index or {}
+        major_regimes = major_regime_by_index or {}
 
         def _vetoed_by_regime_direction(ls: fw.LabeledSignal) -> bool:
             regime = regimes.get(ls.signal.index)
             # A signal is either SHORT or LONG, never both, so at most one
             # of these two can be true for any given signal -- no conflict
-            # in picking `wanted_break` below from whichever one fired.
+            # in picking `wanted_break`/`major_conflicts` below from
+            # whichever one fired.
             wants_veto_short_bull = (
                 gate_config.use_regime_direction_gate and ls.signal.direction is fgt.TradeDirection.SHORT and regime == "bull"
             )
@@ -492,6 +572,30 @@ def apply_gates(
             wants_veto = wants_veto_short_bull or wants_veto_long_bear
             if not wants_veto or not gate_config.use_ltf_fakeout_override:
                 return wants_veto
+
+            # LTF FAKEOUT OVERRIDE v2 (module docstring, "MAJOR/LOCAL
+            # REGIME CONFLICT"): Section 33's real-data finding was that a
+            # plain fresh CHoCH override (v1) LOSES to no override in 3/4
+            # series -- the local 30-day regime read alone can't tell a
+            # genuine sustained trend's ordinary pullback (a same-direction
+            # 15m CHoCH here is just noise/consolidation, NOT the fakeout
+            # the founder described) from an actual fakeout inside a
+            # conflicting LARGER trend. require_major_regime_conflict adds
+            # exactly the missing piece: only trust the 15m CHoCH when a
+            # LONGER-lookback regime read disagrees with the local one
+            # that triggered the veto in the first place (major regime is
+            # NOT "bull" for a vetoed SHORT, NOT "bear" for a vetoed LONG)
+            # -- an unknown major regime (too early in the series) can't
+            # confirm a conflict, so it stays vetoed, same can't-decide
+            # fallback precedent as every other gate here.
+            if gate_config.require_major_regime_conflict:
+                major_regime = major_regimes.get(ls.signal.index)
+                major_conflicts = (major_regime is not None) and (
+                    (major_regime != "bull") if wants_veto_short_bull else (major_regime != "bear")
+                )
+                if not major_conflicts:
+                    return wants_veto  # local regime alone, unconfirmed by a major/local conflict -- stays vetoed
+
             # LTF FAKEOUT OVERRIDE (module docstring): a fresh 15m CHoCH
             # breaking in the SAME direction as this candidate's own
             # direction (BEARISH for a vetoed SHORT, BULLISH for a vetoed
@@ -597,13 +701,31 @@ def _run_gated_series_prepared(
         else {}
     )
     ltf_events_by_index = micro_structure_event_by_signal_index(signals, candles_15m) if gate_config.use_ltf_fakeout_override else {}
+    major_regime_by_index = (
+        regime_by_signal_index(
+            signals,
+            candles,
+            lookback_days=gate_config.major_regime_lookback_days,
+            bull_threshold=gate_config.regime_threshold,
+            bear_threshold=-gate_config.regime_threshold,
+        )
+        if gate_config.require_major_regime_conflict
+        else {}
+    )
 
     pooled_trades = []
     total_kept = 0
     windows_passing = 0
     for window in windows:
         train, test = fw.split_by_window(labeled, window)
-        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index, ltf_events_by_index=ltf_events_by_index)
+        kept = apply_gates(
+            train,
+            test,
+            gate_config,
+            regime_by_index=regime_by_index,
+            ltf_events_by_index=ltf_events_by_index,
+            major_regime_by_index=major_regime_by_index,
+        )
         total_kept += len(kept)
 
         # Gate SELECTION uses the hindsight-resolved labeled signals above

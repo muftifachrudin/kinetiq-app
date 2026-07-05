@@ -914,6 +914,18 @@ F7 Tahap 2).
   benar. Detail lengkap + kandidat penyebab: `docs/fib-gann-validation-
   brief.md` Section 33.
 
+  **Desain ulang v2 (5 Juli 2026, pre-registered, BELUM dijalankan thd
+  data real)**: `GateConfig.require_major_regime_conflict` (baru) —
+  override CHoCH cuma dipercaya kalau bacaan regime KEDUA yg lebih
+  panjang (90 hari, mesin sama, threshold sama) TIDAK SETUJU dgn bacaan
+  lokal 30-hari yg memicu veto — membedakan koreksi biasa dlm tren
+  mayor genuine (v1's failure mode) dari fakeout beneran dlm tren mayor
+  yg konflik. Entri `GATE_CONFIGS` baru `veto_short_bull_ltf_override_
+  major_conflict`/`veto_long_bear_ltf_override_major_conflict`. 8 test
+  baru, 507 test total lulus, ruff clean. Detail lengkap: `docs/
+  fib-gann-validation-brief.md` Section 33 ("Desain ulang..."). **BELUM
+  dijalankan thd data real.**
+
   **Follow-up v3 — veto_long_bear (5 Juli 2026, pre-registered, BELUM
   dijalankan thd data real)**: mekanisme simetris `veto_short_bull` —
   veto LONG saat regime causal-trailing "bear", reuse `regime_by_signal_
