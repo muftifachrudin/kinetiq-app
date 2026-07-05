@@ -1545,3 +1545,80 @@ makro/sentimen dipertimbangkan tapi sengaja DITUNDA scr terpisah
 tanpa validasi dulu) — kalau sentimen mau jadi input model, wajib lewat
 studi predictive-value tersendiri dulu (spt F4's OI-fuel), bukan
 diasumsikan berguna dari narasi.
+
+## 33. Uji "rubrik 10/10 versi jujur" — direction×regime di data 3-tahun seimbang-rezim (5 Juli 2026), hasil: TEORI INTI TERKONFIRMASI KUAT, TAPI SKOR RUBRIK TIDAK BERUBAH
+
+Deep-dive doc (`docs/validation-deep-dive-2026-07.md` Section 7) sendiri
+sudah mencatat keterbatasan jujur sejak awal: **"1 tahun data = dominan
+SATU rezim (bear). Filter tren yang menyelamatkan P&L di tahun bear bisa
+underperform di tahun choppy — makanya rubrik 10/10 minta lintas rezim."**
+Section 32 (veto_short_bull) tidak sengaja mengonfirmasi kekhawatiran ini:
+`trend_alignment_only` yang di data 1-tahun dulu tampak kuat (BTC avg PF
+1.185) turun jadi 0.911-0.940 begitu diuji ulang di data 3-tahun. Follow-up
+ini menjawab langsung pertanyaan yang sudah lama menggantung: **apakah
+pola arah-searah-tren itu artefak satu rezim dominan, atau memang bertahan
+lintas siklus bull/bear/range yang lebih banyak?**
+
+**Langkah 1 — cek keseimbangan rezim** (one-off script, reuse
+`campaign.monthly_drift()`/`classify_regime()` tanpa logika baru, TIDAK
+dicommit sbg production code — pola yang sama dgn skrip deep-dive F1-F14).
+Data production sekarang (2023-06-30 → 2026-07-05, 38 bulan kalender,
+~26.400 candle/seri):
+
+| Seri | Bull | Bear | Range |
+|---|---|---|---|
+| BTC (kedua venue) | 42% | 26% | 32% |
+| ETH (kedua venue) | 34% | 39% | 26% |
+
+**Jauh lebih seimbang** drpd data 1-tahun lama (yg dikonfirmasi
+dominan-bear) — tidak ada satu rezim yg menguasai sampel, prasyarat
+supaya breakdown arah×regime bisa dipercaya.
+
+**Langkah 2 — breakdown arah×regime di data 3-tahun.** Tidak perlu
+kampanye baru: `monthly-campaign.yml` (jadwal bulanan, F0e P4) SUDAH
+menjalankan ini otomatis 4 Juli 2026 lewat `campaign.direction_regime_
+breakdown()` yg sudah wired sejak Section 30 — datanya sudah ada di
+`docs/validation-results/campaign.json`, tinggal dianalisis:
+
+| Seri (kandidat F5) | long_bull (searah) | short_bull (lawan) | long_bear (lawan) | short_bear (searah) |
+|---|---|---|---|---|
+| BTC/Binance | **1.531** | 0.643 | 0.648 | **1.422** |
+| BTC/Bybit | **1.559** | 0.658 | 0.624 | **1.511** |
+| ETH/Binance | **1.154** | 0.706 | 0.868 | **1.272** |
+| ETH/Bybit | **1.283** | 0.760 | 0.886 | **1.150** |
+
+Searah-tren menang di **SEMUA 8 dari 8 perbandingan** (BTC+ETH, kedua
+venue). Yang paling signifikan: **pola ETH yg dulu "jauh lebih kabur" di
+data 1-tahun (Section 30) sekarang BERSIH dan konsisten** di data
+3-tahun -- keraguan eksplisit deep-dive doc Section 7 sekarang punya
+jawaban: **pola ini BUKAN artefak satu-rezim-dominan.**
+
+**PENTING -- batas hasil ini, kenapa skor rubrik (deep-dive doc Section 5)
+TIDAK berubah walau temuan ini positif:**
+1. `direction_regime_metrics` pakai `monthly_drift()` yg NON-CAUSAL (drift
+   realized SATU BULAN PENUH, baru diketahui setelah bulan itu selesai) --
+   ini analisis deskriptif, BUKAN gate yg bisa di-trade live. Versi causal
+   yg benar-benar deployable (`veto_short_bull`, trailing 30-hari, Section
+   32) sudah diuji dan cuma dapat PF 0.96-1.12 -- ada gap nyata antara
+   "polanya benar secara deskriptif" vs "proxy causal kita cukup tajam
+   menangkapnya real-time".
+2. Kriteria promosi resmi bag. 7 (rubrik 7/10: PF>1.3 di >=66.66% window)
+   MASIH belum tercapai bahkan di data 3-tahun yg lebih seimbang ini --
+   window lolos tertinggi cuma 10/35 (28.6%).
+3. Bahkan syarat rubrik 5/10 (PF net pooled >1.1 in-sample di SEMUA 4
+   seri) MASIH belum lolos: kandidat F5 pooled_pf_net di 3-tahun (BTC
+   0.920/0.938, ETH 1.039/1.046) semuanya di bawah 1.1.
+4. Rubrik 9/10-10/10 secara arsitektural TIDAK BISA dicapai lewat backtest
+   tambahan apa pun -- deep-dive doc Section 5 eksplisit: jalur 8->10
+   "SELURUHNYA lewat shadow-pair & fidelity" (3+ bulan eksposur shadow/
+   live nyata), bukan analisis data historis lagi.
+
+**Kesimpulan**: ini BUKAN kegagalan -- ini jawaban paling meyakinkan yang
+pernah didapat untuk pertanyaan inti teori (arah searah-regime memang
+konsisten menang, bukan kebetulan satu tahun bear), tapi tidak mengubah
+posisi skor rubrik krn keterbatasannya bersifat struktural (non-causal
+vs causal gap; dan 9/10-10/10 butuh waktu shadow/live yg tidak bisa
+dipercepat lewat backtest). Task follow-up #23 (docs Section 32) SEBAGIAN
+selesai lewat ini: komposisi rezim (bagian dari segmentasi) sudah
+dihitung; segmentasi fase per-tanggal-mulai/akhir yg presisi (bukan
+sekadar hitungan bulanan) BELUM dikerjakan.
