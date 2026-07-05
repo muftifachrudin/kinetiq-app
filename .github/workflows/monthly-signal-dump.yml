@@ -1,0 +1,83 @@
+name: Monthly Signal Table Dump (F0e P7)
+
+# F0e P7 (docs/sonnet5-implementation-roadmap.md): `signal` is the ONLY
+# record of Shadow Tahap 1's genuine forward/out-of-sample signal
+# generation -- unlike ohlcv/funding_rate/open_interest, it can never be
+# re-backfilled from the exchange after the fact. Neon's point-in-time
+# recovery is a bounded first line of defense (7 days as of 2026-07-05,
+# this project's history_retention_seconds); this workflow is the second,
+# independent line -- a full snapshot committed straight into the repo
+# every month.
+#
+# Deliberately committed to docs/signal-dumps/ rather than uploaded as a
+# GitHub Actions artifact -- this repo already learned that lesson the
+# hard way (monthly-campaign.yml's own header comment: campaign report
+# run #2's artifact expired Oct 2026). Same ephemeral-Neon-branch pattern
+# as monthly-campaign.yml/run-validation.yml (copy-on-write snapshot,
+# read-only, reuses the same NEON_API_KEY/NEON_PROJECT_ID secrets -- no
+# new Neon credential needed).
+on:
+  schedule:
+    # 41 3 UTC on the 1st of each month -- right after monthly-campaign.yml
+    # (17 3 1 * *), an off-the-hour minute so this doesn't collide with
+    # every other repo's "0 0 1 * *" cron.
+    - cron: "41 3 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  monthly-signal-dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral Neon branch (copy-on-write snapshot of production)
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: monthly-signal-dump-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages/db (kinetiq_db) + ingestion deps
+        run: pip install -e packages/db -r apps/products/trading/ingestion/requirements.txt
+
+      - name: Dump the full signal table (read-only, ephemeral branch)
+        id: dump
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: |
+          OUT="docs/signal-dumps/signal-$(date -u +%Y-%m).json"
+          mkdir -p docs/signal-dumps
+          python apps/products/trading/ingestion/dump_signal_table.py "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Delete ephemeral Neon branch
+        if: always()
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: monthly-signal-dump-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Commit the dump to docs/signal-dumps/ (not just an artifact)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ steps.dump.outputs.path }}"
+          if git diff --cached --quiet; then
+            echo "no change in ${{ steps.dump.outputs.path }} this run -- nothing to commit"
+            exit 0
+          fi
+          git commit -m "Monthly signal table dump ($(date -u +%Y-%m-%d))"
+          # Rebase onto the current main tip before pushing -- this is a
+          # scheduled job, main may have moved since checkout (parallel PR
+          # merges are normal/expected in this repo, see CLAUDE.md).
+          git pull --rebase origin main
+          git push origin HEAD:main
