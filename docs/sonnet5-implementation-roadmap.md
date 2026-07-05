@@ -867,6 +867,29 @@ F7 Tahap 2).
   terpisah, sentimen wajib lewat studi predictive-value sendiri dulu
   (spt F4 OI-fuel) sebelum jadi input model. Detail lengkap: `docs/
   fib-gann-validation-brief.md` Section 32.
+
+  **Follow-up lanjutan: uji "rubrik 10/10 versi jujur" (5 Juli 2026) --
+  komposisi rezim + breakdown arah×regime di data 3-tahun.** Deep-dive
+  doc Section 7 sudah mencatat 1-tahun data dominan SATU rezim (bear);
+  Section 32's temuan `trend_alignment_only` melemah di data 3-tahun
+  (1.185→0.911-0.940) memicu pertanyaan: apakah pola searah-tren itu
+  artefak satu-rezim, atau bertahan lintas siklus? **Cek komposisi rezim**
+  (one-off script, reuse `campaign.monthly_drift()`/`classify_regime()`,
+  data 2023-06-30→2026-07-05, 38 bulan): BTC 42% bull/26% bear/32% range,
+  ETH 34% bull/39% bear/26% range -- jauh lebih seimbang drpd data lama.
+  **Breakdown arah×regime di 3-tahun** (sudah otomatis dihitung
+  `monthly-campaign.yml`, tinggal dianalisis dari `docs/validation-
+  results/campaign.json`): searah-tren menang di SEMUA 8/8 perbandingan
+  (BTC+ETH, kedua venue) -- termasuk ETH yg dulu "kabur" di 1-tahun,
+  SEKARANG bersih & konsisten. **Kesimpulan: pola inti BUKAN artefak
+  satu-rezim**, tapi status rubrik TIDAK berubah -- alasan struktural:
+  (a) `direction_regime_metrics` non-causal (post-hoc), gap nyata vs versi
+  causal deployable (`veto_short_bull`, cuma PF 0.96-1.12); (b) rubrik
+  7/10 & bahkan 5/10 masih belum lolos di data 3-tahun ini juga; (c)
+  9/10-10/10 butuh shadow/live 3+ bulan, tidak bisa dipercepat backtest.
+  Task follow-up A SEBAGIAN selesai: komposisi rezim done, segmentasi
+  fase per-tanggal-mulai/akhir presisi BELUM dikerjakan. Detail lengkap:
+  `docs/fib-gann-validation-brief.md` Section 33.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
