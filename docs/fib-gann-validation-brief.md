@@ -1462,3 +1462,86 @@ lambat) ke ~14 detik masing-masing, konsisten dgn eliminasi biaya O(n²)
 3 test baru, 428 test total lulus, ruff clean. **Kampanye 3-tahun
 pertama (setelah PR-B/#87's backfill 1100-hari live) sekarang aman
 dijalankan thd kode ini** — prasyarat P6 terpenuhi.
+
+## 32. F6b I2 follow-up — gate `veto_short_bull`, regime causal-trailing (PR #104) — DIIMPLEMENTASI 5 Juli 2026, hasil: PENINGKATAN KONSISTEN di 4/4 seri, BELUM LOLOS PROMOSI
+
+Section 30's I2 breakdown formal sudah konfirmasi: bull+short SELALU sel
+terburuk di BTC (kedua venue, kedua config), bear+short SELALU terbaik —
+"bull terburuk universal" ternyata artefak campuran dua populasi arah
+yang berlawanan, bukan properti regime itu sendiri. Follow-up ini
+mengoperasionalkan temuan itu LANGSUNG sbg gate live (bukan cuma laporan
+post-hoc): veto sinyal SHORT saat regime terklasifikasi bull, LONG sama
+sekali tidak disentuh (tidak simetris ke bear — tidak ada bukti serupa
+utk long_bear, jadi tidak divetokan, sesuai disiplin "jangan menambah
+tebakan yg belum diuji").
+
+**Kehati-hatian metodologis wajib dicatat**: `campaign.classify_regime()`/
+`monthly_drift()` yang sudah ada sengaja NON-CAUSAL by design (dokumentasi
+modulnya sendiri bilang gitu) — pakai realized drift SATU BULAN PENUH utk
+laporan post-hoc, aman utk analisis retrospektif tapi kalau dipakai
+LANGSUNG sbg gate live itu lookahead bias sungguhan (sinyal tanggal 3 jadi
+"tahu" nasib pasar sampai akhir bulan). Fungsi baru `gated_campaign.
+trailing_drift()`/`regime_by_signal_index()` reuse threshold ±5% yang sama
+persis (`BULL_DRIFT_THRESHOLD`/`BEAR_DRIFT_THRESHOLD`, demi komparabilitas
+dgn laporan lama) TAPI dihitung dari window TRAILING 30 hari yang berakhir
+tepat di timestamp sinyal itu sendiri, cuma pakai candle ≤ timestamp itu
+(via `bisect`) — causal by construction, bukan aproksimasi. Sinyal yang
+belum punya 30 hari histori penuh (awal seri) diberi label "tidak
+diketahui" dan TIDAK PERNAH divetokan (fallback sama spt gate lain di
+modul ini yg tidak bisa memutuskan).
+
+**Kode**: `GateConfig.use_regime_direction_gate` (baru) + entri
+`GATE_CONFIGS` `veto_short_bull`; `apply_gates()` buang kandidat SHORT
+yang jatuh di regime "bull", LONG (dan SHORT di regime bear/range) tidak
+tersentuh.
+
+**Perbaikan performa yg jadi prasyarat run penuh (PR #104)**: run
+percobaan pertama (6 gate × 4 seri) tidak selesai lewat 90 menit di
+GitHub Actions thd data real ~26k-candle/3-tahun — akar masalahnya
+`run_gated_series()` memanggil `generate_signals()` FRESH per gate,
+padahal outputnya identik utk `(candles, campaign_config, derivatives_
+records, funding_events, max_holding_bars)` yang sama, tidak bergantung
+gate apa pun. `run_gated_series_batch()` baru menghitung sinyal SEKALI per
+seri lalu dipakai ulang lintas semua gate dlm satu batch — run susulan (4
+seri × 3 gate: `no_gate`/`trend_alignment_only`/`veto_short_bull`)
+selesai natural dlm ~88.5 menit, di bawah timeout.
+
+**Hasil real (4 seri, config kandidat F5, 35 window walk-forward per
+seri), `pooled_pf_net`:**
+
+| Seri | `no_gate` | `trend_alignment_only` | `veto_short_bull` | window lolos PF>1.3 |
+|---|---|---|---|---|
+| BTC/Binance | 0.920 | 0.911 | **0.959** | 9/35 |
+| BTC/Bybit | 0.938 | 0.940 | **0.982** | 12/35 |
+| ETH/Binance | 1.039 | 0.902 | **1.124** | 12/35 |
+| ETH/Bybit | 1.046 | 0.941 | **1.106** | 11/35 |
+
+`veto_short_bull` MENANG di SEMUA 4 seri, baik lawan `no_gate` maupun
+lawan `trend_alignment_only` — bukan kebetulan satu seri, konsisten lintas
+venue & aset. Kenaikan terbesar di ETH (+0.08 s/d +0.09 dari `no_gate`).
+Funnel: menyisakan ~76-78% sinyal (876-890 dari 1126-1147), jadi ini
+trade-off "sinyal lebih sedikit, kualitas lebih baik", bukan filter tanpa
+biaya.
+
+**PENTING — batas hasil ini, sesuai disiplin "let evidence decide" yg
+sama dgn Section 27/28/30**: TIDAK ADA satu pun kombinasi yang menembus
+kriteria promosi resmi bag. 7 (PF net > 1.3 di ≥66.66% window) — window
+lolos tertinggi cuma 12/35 (~34%), jauh dari ~23/35 yang dibutuhkan.
+Status resmi SEMUA baris di atas: `promoted: false`. Ini dilaporkan
+sbg TEMUAN VALID (peningkatan inkremental terarah, bukan kebisingan) —
+BUKAN keputusan adopsi, sama spt setiap gate lain yg diuji modul ini
+sejauh ini.
+
+**Follow-up yang belum dikerjakan (dicatat, bukan diasumsikan selesai)**:
+(1) sensitivity test threshold ±5%/window 30-hari itu sendiri (grid
+14/30/60 hari × 3%/5%/7%) — angka ini dipinjam dari `classify_regime()`
+lama demi komparabilitas, BELUM pernah divalidasi/di-tuning independen
+sbg pengklasifikasi regime; (2) segmentasi fase (tanggal mulai/akhir tiap
+fase bull/bear/range) utk QA visual & diagnostik langsung dari (1) —
+kalau fase ternyata flip tiap beberapa hari (bukan minggu/bulan), itu
+tanda label terlalu noisy di kombinasi window/threshold itu. Anotasi
+makro/sentimen dipertimbangkan tapi sengaja DITUNDA scr terpisah
+(risiko sama spt `ConfluenceWeights` lama yg ternyata anti-prediktif
+tanpa validasi dulu) — kalau sentimen mau jadi input model, wajib lewat
+studi predictive-value tersendiri dulu (spt F4's OI-fuel), bukan
+diasumsikan berguna dari narasi.

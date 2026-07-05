@@ -837,6 +837,36 @@ F7 Tahap 2).
   ke ETH, sesuai kenapa gate literal/proxy I1(b) juga jauh lebih lemah
   di seri itu. Detail lengkap (tabel 6-sel × 4 seri × 2 config):
   `docs/fib-gann-validation-brief.md` Section 30.
+
+  **Follow-up: operasionalkan temuan ini langsung sbg gate live, bukan
+  cuma laporan post-hoc (5 Juli 2026, PR #104).** Gate baru
+  `gated_campaign.GATE_CONFIGS["veto_short_bull"]`: veto sinyal SHORT
+  saat regime bull, LONG tidak disentuh (tidak simetris ke bear — belum
+  ada bukti serupa utk long_bear). Kehati-hatian metodologis wajib: TIDAK
+  reuse `campaign.classify_regime()`/`monthly_drift()` langsung krn itu
+  non-causal by design (realized drift SATU BULAN PENUH, aman utk laporan
+  post-hoc tapi lookahead bias kalau jadi gate live) — fungsi baru
+  `trailing_drift()`/`regime_by_signal_index()` reuse threshold ±5% yang
+  sama tapi dihitung causal, trailing 30 hari berakhir tepat di timestamp
+  sinyal, cuma pakai candle ≤ timestamp itu. Run percobaan pertama (6
+  gate × 4 seri) tidak selesai lewat 90 menit di GH Actions thd data real
+  3-tahun — akar masalah: `generate_signals()` dipanggil fresh per gate
+  padahal identik lintas gate utk seri yg sama; `run_gated_series_batch()`
+  baru menghitung sinyal sekali per seri (PR #104). **Hasil real (4 seri,
+  config kandidat F5, 35 window)**: `veto_short_bull` MENANG di SEMUA 4
+  seri baik lawan `no_gate` maupun `trend_alignment_only` (BTC/Binance
+  0.920→0.959; BTC/Bybit 0.938→0.982; ETH/Binance 1.039→1.124; ETH/Bybit
+  1.046→1.106) — konsisten lintas venue & aset, kenaikan terbesar di ETH.
+  **TAPI tidak ada yg lolos kriteria promosi resmi** (PF>1.3 di ≥66.66%
+  window; tertinggi cuma 12/35 ~34%) — status `promoted: false` di semua
+  baris, dilaporkan sbg temuan valid (peningkatan terarah), BUKAN
+  keputusan adopsi. Follow-up belum dikerjakan: sensitivity test
+  window/threshold (±5%/30-hari itu sendiri belum divalidasi independen)
+  + segmentasi fase (tanggal mulai/akhir tiap fase, utk QA & diagnostik
+  langsung sensitivity test); anotasi makro/sentimen sengaja ditunda
+  terpisah, sentimen wajib lewat studi predictive-value sendiri dulu
+  (spt F4 OI-fuel) sebelum jadi input model. Detail lengkap: `docs/
+  fib-gann-validation-brief.md` Section 32.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
