@@ -67,14 +67,18 @@
 # design is meant to make that distinction not matter.
 #
 # --backfill-15m-since-days 1100: F0e P2 staged rollout stage 2 (docs/
-# sonnet5-implementation-roadmap.md, PR #87's own test plan) -- stage 1
-# (the 1100-day 1h default above) already verified live via real Deploy
-# Logs (`backfill SKIPPED (already covers 2023-06-30...)` for all 4
-# series). Same lookback window as the 1h backfill, one-time (idempotent
-# skip-if-covered like every other backfill here) -- raises intrabar
-# TP-vs-SL resolution fidelity for the validation harness, per P1's own
-# rationale. funding/OI flags (stage 3/4) deliberately NOT added yet --
-# staged one at a time per the roadmap's explicit ask, verified via HTTP-SQL
-# count+coverage before the next stage.
-startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100"
+# sonnet5-implementation-roadmap.md, PR #87's own test plan) -- verified
+# live via real Deploy Logs (all 4 series: "backfill OK (105600+ candles)",
+# then "15m backfill done", zero errors) and via HTTP-SQL (ohlcv
+# timeframe='15m' coverage 2023-06-30 to now, matching the 1100-day
+# target for both series across binance+bybit).
+#
+# --backfill-funding-since-days 365: stage 3. One-time funding_rate
+# history backfill (ccxt fetchFundingRateHistory paging), independent of
+# the OHLCV backfills above -- funding_rate already has live-poll rows
+# (poll_once() writes them every cycle), this just fills in the missing
+# history behind them. 365 days per PR #87's own test plan ("or more");
+# open_interest (stage 4) deliberately NOT added yet -- staged one at a
+# time, verified via HTTP-SQL count+coverage before the next stage.
+startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100 --backfill-funding-since-days 365"
 restartPolicyType = "always"
