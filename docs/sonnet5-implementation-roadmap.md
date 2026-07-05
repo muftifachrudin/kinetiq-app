@@ -282,6 +282,21 @@ production): tabel `signal` SUDAH ada (migration 0008 merged),
   (candle bisa di-backfill ulang; sinyal forward yang hilang, hilang
   selamanya).
 
+  **SELESAI (5 Juli 2026).** Cek langsung ke Neon API: `history_retention_
+  seconds` project cuma 86400 (1 hari) -- plan Launch project ini
+  mendukung sampai 7 hari (biaya tambahan kecil, ~$0.20/GB-month WAL).
+  Dinaikkan ke 604800 (7 hari) via Neon API, diverifikasi baca-balik
+  nilainya. Workflow baru `.github/workflows/monthly-signal-dump.yml`
+  (cron bulanan, pola ephemeral-branch yang sama dgn monthly-campaign.yml)
+  + `apps/products/trading/ingestion/dump_signal_table.py` men-dump
+  SELURUH tabel `signal` (readable venue/symbol, bukan raw instrument_id)
+  ke `docs/signal-dumps/signal-YYYY-MM.json`, di-commit langsung ke repo
+  -- BUKAN artifact GH Actions (pelajaran repo ini sendiri: artifact
+  campaign report run #2 sudah expire Okt 2026, lihat monthly-campaign.
+  yml). `rows_to_records()` (transform murni) diuji unit
+  (test_dump_signal_table.py, 5 test baru, 68 test total ingestion lulus,
+  ruff clean).
+
 Urutan eksekusi: **P3 dulu** (nyalakan jam OOS), lalu P1+P2 satu paket
 backfill, P4+P5 satu paket workflow, P6 sebelum kampanye 3-tahun pertama,
 P7 kapan saja. Yang TIDAK perlu: upgrade CoinGlass, servis Railway baru,
