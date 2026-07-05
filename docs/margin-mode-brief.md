@@ -245,6 +245,20 @@ dengan matematika sizing risk-first:
    — tidak terlihat di backtest mana pun, diukurnya lewat shadow-pair
    `size_leverage_effect`/`manual_override` (F7 Tahap 2).
 
+**Status: WIRED ke `position_sizing.py` (5 Juli 2026, follow-up sesi yang
+sama).** `η`/`L_onset` di-implementasi persis sebagai `ETA_SAFETY_FACTOR`
+(0.5) dan `LEVERAGE_ONSET_CEILING` (20.0) -- `leverage_used = min(
+max_leverage_cap, ETA_SAFETY_FACTOR * max_safe_leverage,
+LEVERAGE_ONSET_CEILING)`, ganti formula lama `min(max_leverage_cap,
+max_safe_leverage)` yang belum menerapkan kedua faktor ini. `max_safe_
+leverage` field pada `PreTradeCard` tetap nilai mentah (properti
+struktural tanpa η/ceiling) utk diagnostik; hanya `leverage_used` yang
+menerapkan envelope penuh. Pesan warning dibedakan: SL/ATR (dikali η) vs
+ceiling 20× empiris, mana pun yang jadi pembatas. 1 test baru (ceiling
+mengikat saat SL/ATR sangat rapat), 2 test lama diupdate angkanya (η
+membelah leverage_used yg tadinya cuma dibatasi struktur), 465 test
+agent-orchestrator total lulus, ruff clean.
+
 **Formula envelope (perluasan rantai F7a `position_sizing.py`):**
 
 ```

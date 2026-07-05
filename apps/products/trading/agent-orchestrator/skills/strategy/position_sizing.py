@@ -18,11 +18,25 @@ correct (brief Section 1, point 2).
 Leverage/margin math is NOT reimplemented here -- max_safe_leverage(),
 build_margin_context(), and assert_liquidation_safe() are reused directly
 from trade_simulator.py (brief's explicit instruction: "jangan tulis
-ulang"). leverage_used = min(mandate's max_leverage_cap, max_safe_leverage)
-is the one new formula this module adds: leverage is an OUTPUT of trade
-structure (risk_amount -> qty -> leverage), never a user-chosen input,
-matching the same principle shadow-simulator-brief Section 5 already
-established for risk sizing generally.
+ulang"). leverage_used = min(mandate's max_leverage_cap, ETA_SAFETY_FACTOR
+* max_safe_leverage, LEVERAGE_ONSET_CEILING) is the one new formula this
+module adds: leverage is an OUTPUT of trade structure (risk_amount -> qty
+-> leverage), never a user-chosen input, matching the same principle
+shadow-simulator-brief Section 5 already established for risk sizing
+generally.
+
+ETA_SAFETY_FACTOR/LEVERAGE_ONSET_CEILING (brief Section 7, PR #101's
+empirical margin-envelope research replaying 622 real stack trades with
+liquidation-before-SL mechanics): PF-vs-leverage is a flat 1.309 from
+2x-20x -- structural leverage never touches PF at all while the
+liquidation price stays beyond SL+buffer, it's purely a capital-lock
+dial -- then decays past ~20x as liquidations start appearing (25x: 0.5%
+of trades liquidated, PF 1.282; 50x: 14.6% liquidated, PF 1.123). There is
+no PF benefit whatsoever above ~20x, only tail-risk, so LEVERAGE_ONSET_
+CEILING=20 is a hard cap independent of any mandate setting; ETA_SAFETY_
+FACTOR=0.5 keeps leverage_used a further margin below max_safe_leverage's
+own boundary (extra cushion for gap/wick risk max_safe_leverage's exact
+algebraic derivation doesn't itself account for).
 
 Two distance-vs-price scales, deliberately both reported (brief Section 4,
 citing brief-utama bag. 13's lesson that margin_return can be -50% from a
@@ -59,6 +73,15 @@ import trade_simulator as ts  # noqa: E402
 # a flat multiplier when a high-vol/liq-cascade flag is set. Not fitted --
 # a manual, conservative starting point like DEFAULT_LIQUIDATION_BUFFER_K.
 HIGH_VOL_RISK_MULTIPLIER = 0.5
+
+# Brief Section 7 / PR #101's empirical lev_curve.py finding (module
+# docstring): no PF benefit above ~20x (only tail-risk from there), and an
+# extra 0.5x safety margin below the trade's own algebraic max_safe_
+# leverage boundary. Both are hard bounds on leverage_used -- neither is
+# fitted, both are the "initial numbers are free, evidence decides
+# adoption" kind of constant this codebase's other modules already use.
+ETA_SAFETY_FACTOR = 0.5
+LEVERAGE_ONSET_CEILING = 20.0
 
 
 class CrossMarginNotImplementedError(NotImplementedError):
@@ -134,7 +157,7 @@ def build_pre_trade_card(
     notional_usd = qty * entry_price
 
     max_safe = ts.max_safe_leverage(entry_price, stop_loss, atr_value, maintenance_margin_rate, buffer_k)
-    leverage_used = min(max_leverage_cap, max_safe)
+    leverage_used = min(max_leverage_cap, ETA_SAFETY_FACTOR * max_safe, LEVERAGE_ONSET_CEILING)
 
     margin_context = ts.build_margin_context(entry_price, exit_plan.direction, leverage_used, margin_mode, maintenance_margin_rate)
     ts.assert_liquidation_safe(entry_price, stop_loss, atr_value, margin_context, buffer_k)
@@ -153,10 +176,12 @@ def build_pre_trade_card(
 
     warnings = []
     if leverage_used < max_leverage_cap:
-        warnings.append(
-            f"leverage_used {leverage_used:.2f}x is below max_leverage_cap {max_leverage_cap:.2f}x -- "
-            f"trade structure (SL distance vs ATR buffer), not the mandate cap, is what's limiting leverage here"
+        binding_reason = (
+            f"the {LEVERAGE_ONSET_CEILING:.0f}x empirical onset ceiling (brief Section 7 -- no PF benefit above this, only tail-risk)"
+            if leverage_used == LEVERAGE_ONSET_CEILING
+            else f"trade structure (SL distance vs ATR buffer, x{ETA_SAFETY_FACTOR} safety factor)"
         )
+        warnings.append(f"leverage_used {leverage_used:.2f}x is below max_leverage_cap {max_leverage_cap:.2f}x -- {binding_reason}, not the mandate cap, is what's limiting leverage here")
     liq_distance_pct = _distance_pct(entry_price, margin_context.liquidation_price)
     required_pct = sl_distance_pct_notional + buffer_k * (atr_value / entry_price)
     if liq_distance_pct < required_pct * 1.1:
