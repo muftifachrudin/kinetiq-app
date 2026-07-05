@@ -45,3 +45,15 @@ equivalent (the as_of walk is strictly causal, so the signal set at each
 bar is identical) except trades near a window's test_end resolve with
 later data instead of being censored. Verified against the real CI run
 (BTC/Binance: same 2/10 windows passing, same per-window PF pattern).
+
+## Round 2 (4 Jul 2026): exit_lab.py
+
+`exit_lab.py` replays every trade from step 2's result_*.json under
+alternative exit rules and fee models (breakeven, momentum exit, TP
+scaling, timeout length, taker-taker vs maker-entry/TP), with bootstrap
+CI90s, on the full set and the aligned-SMA200 & rr[2,5) "stack" subset.
+Findings: deep-dive doc section 8 (F12-F14). Examples:
+
+    python exit_lab.py --fees mm                # maker-fee baseline
+    python exit_lab.py --fees mm --be 1.0       # BTC's best variant
+    python exit_lab.py --fees mm --mom 0.3      # ETH's best variant

@@ -341,3 +341,96 @@ paper-vs-real per komponen), bukan lewat backtest yang makin panjang.
 - Barrier check masih granularity 1h (aturan konservatif same-candle=SL
   tetap dipakai); data <1h belum ada di ohlcv.
 - Semua PF di dokumen ini gross-of-fees kecuali disebut "net".
+
+---
+
+## 8. Ronde 2 (4 Juli 2026) — Exit-management & fee lab: 3 lever nyata, 5 hipotesis terbantah
+
+Riset lanjutan atas permintaan founder ("naikkan PF net secara nyata,
+bukan sekadar tunggu data forward"). Metode: replay ke-2.679 trade yang
+sama (4 seri, config default) di bawah aturan exit alternatif — script
+`validation/deep_dive_2026_07/exit_lab.py`, aturan konservatif
+same-candle=SL dipertahankan, managed-stop hanya bertindak di close bar
+(no lookahead), semua angka net-of-fees. "STACK" = subset kausal
+aligned-SMA200 & rr∈[2,5) (aproksimasi stack terbaik saat ini). Konteks
+posisi: setelah PR #82, gate trend-alignment sudah mengangkat BTC ke PF
+net 1.185 (full-set) — ronde ini mencari lever di ATAS itu, terutama
+untuk ETH yang masih buntu.
+
+**Status kejujuran: ini mining pass ke-4 atas tahun data yang sama.**
+Semua angka di bawah = hipotesis in-sample untuk diuji OOS di harness,
+KECUALI lever fee yang sifatnya mekanis (pengurangan biaya deterministik,
+bukan taruhan pasar — risikonya fill probability, bukan statistik).
+
+### F12 — Eksekusi maker (entry limit + TP limit): lever paling andal, naik di SEMUA irisan
+
+Akuntansi fee maker-entry + maker-TP (stop/timeout tetap taker; Binance
+VIP0: maker 2bps vs taker 5bps) menaikkan PF di setiap varian dan setiap
+irisan tanpa pengecualian, +0.04 s/d +0.08 PF:
+
+| Irisan | taker-taker | maker-entry/TP | CI90 (maker) |
+|---|---|---|---|
+| STACK pooled (n=622) | 1.131 | **1.187** | [1.000, 1.396] |
+| STACK BTC (n=314) | 1.261 | **1.338** | [1.068, 1.655] |
+| STACK ETH (n=308) | 1.049 | **1.092** | [0.871, 1.383] |
+
+Logika fill JUJUR yang wajib dipakai saat ini masuk harness: sinyal fire
+saat harga MENYENTUH level → limit entry di level itu terisi saat harga
+menembusnya (probabilitas tinggi tapi bukan 100% — antrian di touch
+persis tidak pasti); TP limit butuh penetrasi, bukan sekadar touch → rule
+fill konservatif: `high > tp` strict (bukan `>=`), atau penetrasi minimal
+1 tick. Downside case: limit entry tidak terisi = trade tidak terjadi =
+kehilangan sebagian sinyal, BUKAN kerugian.
+
+### F13 — Asimetri exit-style per aset: BTC "tahan noise", ETH "potong cepat" — lever ETH nyata PERTAMA
+
+Semua angka maker-fee, subset STACK, CI90 bootstrap 3.000 iterasi:
+
+| Varian exit | STACK BTC | STACK ETH |
+|---|---|---|
+| baseline (TP1/SL/timeout20) | 1.338 [1.07-1.66] | 1.092 [0.87-1.38] |
+| + breakeven @ +1R | **1.383 [1.09-1.73]** | 1.100 (nihil) |
+| + momentum-exit @ -0.3R close | 1.011 (RUSAK) | **1.272 [1.00-1.63]** |
+| + momentum-exit @ -0.5R close | 1.142 | 1.199 |
+| + momentum-exit @ -0.7R close | 1.274 | 1.118 |
+
+Polanya monoton dan BERLAWANAN ARAH di dua aset: makin ketat
+momentum-exit makin bagus ETH dan makin rusak BTC. Ini koheren dengan
+karakter aset yang sudah terukur (vol harian ETH 2.5-3% vs BTC 1.5% —
+close melawan -0.3R di ETH lebih sering berlanjut ke SL; BTC lebih sering
+mean-revert). **Framing untuk F8 nanti: threshold momentum-exit BUKAN
+dial per-simbol bebas (melanggar prinsip no-per-symbol-tuning) — dia
+kandidat fungsi dari properti aset terukur (normalized vol/ATR%), yang
+bisa diuji generalisasinya begitu universe bertambah.**
+
+Best stack in-sample per aset setelah ronde ini (maker-fee):
+- **BTC: aligned + rr[2,5) + BE@1R → PF 1.383, CI90 bawah 1.09** (di atas
+  1.0!) — dan ini BELUM dikombinasikan dgn temuan gate #82 di harness.
+- **ETH: aligned + rr[2,5) + mom@0.3R → PF 1.272, CI90 bawah ~1.00** —
+  pertama kalinya ETH menyentuh wilayah kriteria masuk-shadow.
+
+### F14 — Lima hipotesis exit TERBANTAH (jangan dikerjakan ulang)
+
+1. **Trailing stop 1R setelah +1R**: netral s/d merusak (STACK BTC 1.19
+   vs baseline 1.34). 2. **Time-stop 8 bar** (exit kalau belum profit):
+   merusak di semua irisan (STACK pooled 1.03). 3. **Timeout 40 bar**:
+   nihil di STACK (+0.00-0.01); +0.03 hanya di set unfiltered.
+   4. **TP lebih dekat 0.7× / lebih jauh 1.5×**: dua-duanya menurunkan PF
+   di STACK. 5. **BE untuk ETH**: nihil (1.092→1.100).
+   
+   **Pelajaran metodologis penting**: TIMEOUT PF 5.56 dari temuan F3 itu
+   **efek seleksi** (conditional on survival 20 bar), BUKAN alpha yang
+   bisa dipanen ex-ante — memperpanjang timeout tidak menangkap apa-apa
+   karena populasi yang bertahan memang sudah tersaring. Contoh konkret
+   kenapa "slice yang bagus" ≠ "rule yang bagus".
+
+### Instruksi uji OOS untuk harness (DEV)
+
+Tiga A/B pre-registered di `rr_sl_experiment.py`/`campaign.py`, di atas
+config kandidat F5 + gate alignment (#82), walk-forward penuh, semua
+net-of-fees, funnel dilaporkan: (a) fee model maker dgn rule fill
+konservatif (F12) — ini juga butuh dukungan `fee_entry/exit` per-outcome
+di simulator; (b) BE@1R, BTC saja dulu; (c) momentum-exit @0.3R/0.5R,
+ETH saja dulu — dan JANGAN diadopsi lintas aset tanpa uji generalisasi
+properti-vol (F13). Kriteria keputusan tetap bag. 7 + kriteria
+masuk-shadow F7 Tahap 2 (PF pooled > 1.1, CI bawah > 1.0).
