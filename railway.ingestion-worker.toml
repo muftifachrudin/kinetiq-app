@@ -73,23 +73,38 @@
 # timeframe='15m' coverage 2023-06-30 to now, matching the 1100-day
 # target for both series across binance+bybit).
 #
-# --backfill-funding-since-days 365: stage 3. One-time funding_rate
-# history backfill (ccxt fetchFundingRateHistory paging), independent of
-# the OHLCV backfills above -- funding_rate already has live-poll rows
-# (poll_once() writes them every cycle), this just fills in the missing
-# history behind them. Verified live via Deploy Logs (zero errors) and
-# HTTP-SQL: binance covers the full 365 days requested (1155 rows/series,
-# back to 2025-07-05); bybit's ccxt fetchFundingRateHistory only ever
-# returns ~98 days regardless of the days requested (354 rows/series,
-# back to 2026-03-29) -- a real exchange/ccxt API depth limit, not a bug
-# in this backfill's own paging logic.
+# --backfill-funding-since-days: stage 3, ORIGINALLY 365 (PR #87's test
+# plan) -- ran successfully once at 365 (binance got the full 1155
+# rows/series back to 2025-07-05, zero errors), but real Deploy Logs +
+# HTTP-SQL then showed bybit's ccxt fetchFundingRateHistory only EVER
+# returns ~98 days of history regardless of how many days are requested
+# (354 rows/series, back to 2026-03-29 -- a real exchange/ccxt API depth
+# limit, not a bug in this backfill's own paging). Since bybit's existing
+# coverage (98 days old) can never satisfy a 365-day-back check,
+# needs_backfill() would re-trigger this fetch on every single restart
+# forever -- harmless (idempotent merge, no crash) but wasted network
+# calls + log noise every redeploy. Lowered to 90 (safely under bybit's
+# ~98-day real ceiling) so future restarts correctly see bybit as already
+# covered and skip; binance's existing 365-day backfill from the first
+# run is untouched (a much larger existing window keeps satisfying a
+# 90-day check for a long time).
 #
-# --backfill-oi-since-days 365: stage 4 (final stage). One-time
-# open_interest history backfill (ccxt fetchOpenInterestHistory paging,
-# same timeframe-bucketed cursor as OHLCV) -- open_interest had 0 rows
-# before this; ingest_open_interest() already writes live-poll rows every
-# cycle (confirmed via Deploy Logs' "open_interest OK" lines since P2
-# merged), this just fills the history behind them. Last of the 4 staged
-# rollout steps from PR #87's own test plan.
-startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100 --backfill-funding-since-days 365 --backfill-oi-since-days 365"
+# --backfill-oi-since-days: stage 4 (final stage), ORIGINALLY 365 (PR
+# #87's test plan). Real Deploy Logs showed binance's REST API rejects
+# this outright -- `binanceusdm {"msg":"parameter 'startTime' is
+# invalid.","code":-1130}` for BOTH series, zero rows backfilled (only
+# the pre-existing live-poll rows remained). bybit's ccxt
+# fetchOpenInterestHistory didn't error but only ever returned ~8 days
+# (200 rows/series, back to 2026-06-26) regardless of the 365 requested.
+# Both are real exchange API depth limits (Binance's public futures OI
+# history endpoint only accepts a startTime within roughly its last
+# month), not bugs in this backfill's own paging/error-handling (the
+# per-instrument try/except already contained binance's failure without
+# crashing the worker, per this worker's established resilience pattern).
+# Lowered to 7 (safely under BOTH real ceilings): lets binance's request
+# actually succeed this time (real backfilled OI history instead of a
+# guaranteed-invalid request), and matches bybit's real ceiling so
+# needs_backfill() sees both as covered on future restarts instead of
+# retrying this same failure/truncation on every redeploy.
+startCommand = "PYTHONPATH=packages/db/src:apps/products/trading/ingestion python -m worker --venues binance bybit --symbols BTC/USDT:USDT ETH/USDT:USDT --backfill-15m-since-days 1100 --backfill-funding-since-days 90 --backfill-oi-since-days 7"
 restartPolicyType = "always"
