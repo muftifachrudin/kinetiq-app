@@ -1622,3 +1622,54 @@ dipercepat lewat backtest). Task follow-up #23 (docs Section 32) SEBAGIAN
 selesai lewat ini: komposisi rezim (bagian dari segmentasi) sudah
 dihitung; segmentasi fase per-tanggal-mulai/akhir yg presisi (bukan
 sekadar hitungan bulanan) BELUM dikerjakan.
+
+## 34. Gate `veto_both_counter_trend` — versi simetris veto_short_bull (5 Juli 2026), hasil: PREDIKSI PRE-REGISTERED SALAH, KALAH di SEMUA 4 seri
+
+Follow-up langsung dari Section 33: kalau `long_bear` juga konsisten sel
+terburuk/hampir-terburuk di data 3-tahun (PF 0.62-0.89 di semua 4 seri,
+bukan cuma `short_bull`), kenapa tidak veto KEDUA sisi lawan-arah
+sekaligus, bukan cuma SHORT-saat-bull? `GateConfig.veto_both_counter_
+trend_directions` (PR #107) memperluas `apply_gates()`'s klasifikasi
+causal `trailing_drift()`/`regime_by_signal_index()` yang SAMA (tidak ada
+logika klasifikasi baru) utk JUGA membuang sinyal LONG saat regime bear,
+di atas veto SHORT-saat-bull yg sudah ada.
+
+**Ekspektasi pre-registered (ditulis di docstring modul SEBELUM dijalankan
+thd data real)**: "likely a modest improvement... no reason a priori to
+expect it clears the >=66.66% window promotion bar." Prediksi pertamanya
+(peningkatan sederhana) **TERBUKTI SALAH**.
+
+**Hasil real (4 seri, config kandidat F5, 35 window)**:
+
+| Seri | `veto_short_bull` (1 sisi) | `veto_both_counter_trend` (2 sisi) | Sinyal tersisa |
+|---|---|---|---|
+| BTC/Binance | 0.959 | **0.920** (turun) | 709/1133 (63%) vs 876/1133 (77%) |
+| BTC/Bybit | 0.982 | **0.946** (turun) | 707/1126 (63%) vs 870/1126 (77%) |
+| ETH/Binance | 1.124 | **1.078** (turun) | 655/1146 (57%) vs 884/1146 (77%) |
+| ETH/Bybit | 1.106 | **1.090** (turun) | 653/1148 (57%) vs 890/1148 (78%) |
+
+**Versi simetris KALAH di SEMUA 4 seri tanpa kecuali** — bukan sedikit
+lebih baik, benar-benar turun dari versi asimetris di setiap perbandingan.
+Window lolos PF>1.3 malah naik di sebagian seri (bybit_BTC 14/35=40%,
+TERTINGGI yg pernah dicapai BTC di seluruh investigasi ini), tapi pooled
+PF net-nya turun — indikasi varians antar-window makin liar begitu filter
+makin agresif (sampel per-window makin kecil krn makin banyak sinyal
+dibuang).
+
+**Analisis kenapa (bukti, bukan spekulasi)**: klasifikasi causal `bear`
+(`trailing_drift`, window 30-hari) ternyata tidak cukup presisi menangkap
+sel `long_bear` yg di breakdown POST-HOC (Section 33, non-causal, tahu
+seluruh bulan) kelihatan konsisten jelek — banyak trade LONG yg dibuang
+gate causal ini kemungkinan sebenarnya trade yg baik, cuma kebetulan
+terjadi saat window trailing 30-harinya sedang menunjukkan drift negatif
+sesaat. Ini demonstrasi LANGSUNG dari gap causal-vs-post-hoc yg sudah
+diperingatkan di Section 33 poin 1 — kali ini gap-nya cukup besar utk
+membalik arah efek (bukan cuma mengecilkannya).
+
+**Status**: `promoted: false` di semua baris (tertinggi tetap 14/35, jauh
+dari ~23/35 yg dibutuhkan). Dilaporkan sbg temuan valid (hipotesis yg
+diuji dan terbantah), bukan kegagalan implementasi — modul ini tetap
+`veto_short_bull` (versi asimetris) sbg kandidat terbaik dari keluarga
+regime-direction-veto sejauh ini, `veto_both_counter_trend` dilaporkan sbg
+perbandingan yg kalah (sesuai disiplin "laporkan juga yang kalah" module
+ini sejak awal), bukan dihapus.
