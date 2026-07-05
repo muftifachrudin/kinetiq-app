@@ -1545,3 +1545,73 @@ makro/sentimen dipertimbangkan tapi sengaja DITUNDA scr terpisah
 tanpa validasi dulu) — kalau sentimen mau jadi input model, wajib lewat
 studi predictive-value tersendiri dulu (spt F4's OI-fuel), bukan
 diasumsikan berguna dari narasi.
+
+## 33. F6b I2 follow-up v2+v3 — LTF fakeout override & veto_long_bear, hasil REAL 4-seri (PR menyusul) — DIIMPLEMENTASI & DIJALANKAN 5 Juli 2026, hasil: KEDUANYA TIDAK MEMBANTU (temuan valid, negatif)
+
+Dua hipotesis pre-registered (Section 32's follow-up, plus permintaan
+founder berdasarkan pengalaman trading 5 tahun) dijalankan bersamaan thd
+data real 4-seri (config kandidat F5, 35 window/seri, workflow_dispatch
+`run-gated-campaign.yml` run
+[#28737051602](https://github.com/muftifachrudin/kinetiq-app/actions/runs/28737051602),
+~84.5 menit, GitHub Actions, ephemeral Neon branch — bukan production):
+
+**Sanity check dulu**: baris `no_gate`/`veto_short_bull` di run ini
+COCOK PERSIS dgn tabel Section 32 (0.920/0.959 9/35 BTC/Binance;
+0.938/0.982 12/35 BTC/Bybit; 1.039/1.124 12/35 ETH/Binance; 1.046/1.106
+11/35 ETH/Bybit) — refactor kode (generalisasi `apply_gates()`, field
+`GateConfig` baru) TIDAK mengubah perilaku gate yg sudah ada.
+
+**Hasil real, `pooled_pf_net` (window lolos PF>1.3 /35):**
+
+| Seri | `no_gate` | `veto_short_bull` | `veto_short_bull_ltf_override` | `veto_long_bear` | `veto_long_bear_ltf_override` |
+|---|---|---|---|---|---|
+| BTC/Binance | 0.920 (6) | 0.959 (9) | 0.963 (8) | **0.882 (9)** | 0.881 (9) |
+| BTC/Bybit | 0.938 (8) | 0.982 (12) | 0.976 (10) | **0.901 (10)** | 0.896 (9) |
+| ETH/Binance | 1.039 (10) | 1.124 (12) | 1.106 (11) | **0.979 (9)** | 0.985 (9) |
+| ETH/Bybit | 1.046 (10) | 1.106 (11) | 1.082 (10) | **1.015 (10)** | 1.033 (9) |
+
+Semua baris `promoted: false` — tidak ada yg dekat 24/35 (~68.6%, koreksi
+pembulatan dari 66.66% × 35) yg dibutuhkan; window lolos tertinggi tetap
+12/35 (~34%), sama spt Section 32.
+
+**Temuan 1 — LTF fakeout override (hipotesis founder: fading reli gagal
+di bear mayor = entry short bagus) TIDAK terbukti di implementasi ini**:
+`veto_short_bull_ltf_override` KALAH dari `veto_short_bull` polos di
+3/4 seri, baik dari `pooled_pf_net` (BTC/Bybit 0.982→0.976, ETH/Binance
+1.124→1.106, ETH/Bybit 1.106→1.082) maupun window lolos (12→10, 12→11,
+11→10) — cuma BTC/Binance yg pooled PF-nya naik tipis (0.959→0.963)
+tapi window lolos-nya JUSTRU turun (9→8). Sinyal yg di-un-veto lewat
+CHoCH 15m (funnel naik ~2-3% di semua seri: 876→899, 870→890, 884→907,
+890→915) rata-rata lebih JELEK, bukan lebih bagus, drpd populasi yg
+tersisa. **Ini TIDAK membantah pengalaman trading founder** (fading
+fakeout tetap valid sbg konsep) — tapi operasionalisasi spesifik di sini
+(CHoCH 15m, window 3-hari, syarat break searah kandidat) belum
+menangkapnya dgn benar. Kandidat penyebab (belum diuji, bukan
+kesimpulan): (a) `LTF_LOOKBACK_CANDLES`=3 hari itu sendiri belum
+divalidasi (sensitivity grid Follow-up A baru mencakup window regime
+30-hari, BUKAN window LTF 15m ini — follow-up terpisah); (b) CHoCH
+tunggal tanpa konfirmasi lanjutan (mis. follow-through beberapa candle)
+mungkin masih menangkap fakeout-DALAM-fakeout (CHoCH itu sendiri gagal
+lanjut); (c) tidak ada filter kekuatan/skala breakout (broken_level vs
+ATR), jadi CHoCH kecil di noise ikut ke-trigger.
+
+**Temuan 2 — `veto_long_bear` justru MEMPERBURUK di SEMUA 4 seri
+dibanding `no_gate`** (0.920→0.882, 0.938→0.901, 1.039→0.979,
+1.046→1.015) — bukan cuma "lemah" spt diperkirakan Section 30
+(long_bear BTC mediocre 0.69-0.99, bukan buruk drastis spt bull+short),
+tapi NET NEGATIF thd baseline tanpa gate sama sekali. Window lolos
+malah naik tipis di 3/4 seri (6→9, 8→10, 10→10 tetap) meski pooled PF
+turun — indikasi trade yg dibuang justru berkontribusi POSITIF ke PF
+pool secara agregat, kebalikan dari asumsi simetri thd `veto_short_bull`.
+**Konfirmasi langsung disiplin modul aslinya** ("jangan menambah tebakan
+yg belum diuji") — keputusan awal utk TIDAK menambah veto ini tanpa
+bukti ternyata benar, bukan cuma konservatisme berlebihan.
+`veto_long_bear_ltf_override` tidak menyelamatkan (hampir identik/sedikit
+lebih jelek drpd `veto_long_bear` polos di 3/4 seri).
+
+**Status resmi**: `veto_short_bull` TETAP satu-satunya gate di modul ini
+dgn peningkatan terarah konsisten 4/4 seri (sesuai Section 32). Kedua
+follow-up baru (LTF override, long_bear) dilaporkan sbg temuan NEGATIF
+valid — TIDAK diadopsi, TIDAK direkomendasikan utk eksperimen lanjutan
+tanpa desain ulang. `promoted: false` semua baris, sama sekali tidak
+ada yg mendekati kriteria promosi resmi.

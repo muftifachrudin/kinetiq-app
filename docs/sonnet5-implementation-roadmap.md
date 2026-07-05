@@ -904,9 +904,15 @@ F7 Tahap 2).
   termasuk uji no-lookahead & bounded-window eksplisit), 482 test total
   lulus, ruff clean.
 
-  **BELUM dijalankan thd data real 4-seri** — itu langkah berikutnya,
-  sama disiplin pre-registrasi yg sama dgn setiap follow-up lain di
-  modul ini (laporkan angka apa adanya, menang atau kalah).
+  **SUDAH dijalankan thd data real 4-seri (5 Juli 2026, workflow run
+  #28737051602, ~84.5 menit) — hasil: TIDAK MEMBANTU.**
+  `veto_short_bull_ltf_override` KALAH dari `veto_short_bull` polos di
+  3/4 seri (pooled PF net turun, window lolos turun), cuma BTC/Binance
+  naik tipis di pooled PF tapi window lolos-nya malah turun. Hipotesis
+  founder (fading fakeout) TIDAK terbantah sbg konsep, tapi
+  operasionalisasi CHoCH-15m/window-3-hari ini belum menangkapnya dgn
+  benar. Detail lengkap + kandidat penyebab: `docs/fib-gann-validation-
+  brief.md` Section 33.
 
   **Follow-up v3 — veto_long_bear (5 Juli 2026, pre-registered, BELUM
   dijalankan thd data real)**: mekanisme simetris `veto_short_bull` —
@@ -931,8 +937,15 @@ F7 Tahap 2).
   simetris persis dgn override short_bull yg butuh BEARISH. 12 test
   baru (termasuk kombinasi kedua veto aktif bersamaan, dan memastikan
   override satu sisi tidak pernah menyentuh veto sisi lain), 493 test
-  total lulus, ruff clean. **BELUM dijalankan thd data real** — sama
-  spt v2 di atas.
+  total lulus, ruff clean.
+
+  **SUDAH dijalankan thd data real (run #28737051602 yg sama) — hasil:
+  MEMPERBURUK di SEMUA 4 seri** dibanding `no_gate` (bukan cuma "lemah"
+  spt diperkirakan dari breakdown Section 30's long_bear mediocre) —
+  konfirmasi langsung kenapa modul ini awalnya sengaja tidak menambah
+  veto ini tanpa bukti. `veto_long_bear_ltf_override` tidak
+  menyelamatkan. Detail lengkap: `docs/fib-gann-validation-brief.md`
+  Section 33.
 
   **Follow-up A — sensitivity grid threshold/window (5 Juli 2026,
   pre-registered, BELUM dijalankan thd data real)**: mengerjakan
