@@ -44,6 +44,35 @@ invalid"), not a stand-in for it. Same no-lookahead reasoning as the
 trend-alignment gate: this factor is already computed causally at
 signal-generation time, so filtering on it introduces nothing new.
 
+REGIME-DIRECTION GATE (F6b I2 follow-up, pre-registered 2026-07-05):
+campaign.direction_regime_breakdown() found BTC's "bull regime is worst"
+finding is actually a clean, consistent split -- bull+short is always the
+worst cell, bear+short always the best -- across both venues and both
+CAMPAIGN_CONFIGS. trend_alignment_only already exploits this INDIRECTLY
+via a continuous sma_trend_bias_alignment score threshold; this gate
+operationalizes the SAME finding DIRECTLY: veto a SHORT signal outright
+whenever it fires during a classified bull regime, LONG signals are never
+touched. Hypothesis (pre-registered BEFORE running against real data):
+this more surgical, direct veto could clear BTC's promotion threshold
+where the indirect proxy gate (trend_alignment_only, best BTC/Bybit
+result so far: PF net 1.228, 6/10 windows) fell short of >=7/10 -- but
+this is a hypothesis to test, not an assumed win; report the real number
+either way, same discipline as every other gate here.
+
+Critically, regime classification for THIS gate can NOT reuse campaign.
+monthly_drift()/classify_regime() as-is -- that classifier deliberately
+uses each FULL calendar month's REALIZED drift for a post-hoc breakdown
+(campaign.py's own module docstring: "non-causal freedom... assumes of
+its caller-supplied regime_of()"), which is fine for a retrospective
+report but would be genuine lookahead bias if used as a LIVE gate (a
+trade taken on the 3rd of the month would "know" whether the rest of
+that month turns out bullish). trailing_drift()/_regime_by_signal_index()
+below reuse the exact same classify_regime() thresholds (+/-5%) for
+comparability, but compute drift over a TRAILING lookback window ending
+at (and using only candles up to) each signal's own ts -- causal by
+construction, same guarantee sma_trend_bias_alignment/daily_bias_
+alignment already provide.
+
 SIZING MULTIPLIER (F6b I1(a)): a fundamentally different mechanism from
 the three gates above -- instead of dropping signals, every kept signal is
 RESIZED by a continuous multiplier derived from the same per-window
@@ -76,7 +105,9 @@ discipline every prior phase has followed), not assumed correct from
 synthetic tests alone.
 """
 
+import bisect
 import dataclasses
+import datetime
 import os
 import statistics
 import sys
@@ -88,10 +119,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills",
 sys.path.insert(0, os.path.dirname(__file__))
 
 import campaign  # noqa: E402
+import fib_gann_timing as fgt  # noqa: E402
 import fit_weights as fw  # noqa: E402
 import metrics  # noqa: E402
 import signal_runner as sr  # noqa: E402
 import trade_simulator as ts  # noqa: E402
+
+# Same "monthly" cadence as campaign.py's own calendar-month drift, but
+# expressed as a trailing day-count so it can be computed causally at any
+# signal's own ts rather than only at calendar-month boundaries.
+REGIME_LOOKBACK_DAYS = 30
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +140,7 @@ class GateConfig:
     trend_alignment_threshold: float = 0.5  # keep signals with sma_trend_bias_alignment strictly above this
     use_daily_bias_gate: bool = False
     daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
+    use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -110,14 +148,58 @@ class GateConfig:
 # is F6b I1(b)'s literal, pre-registered variant -- reported alongside
 # (not instead of) trend_alignment_only, which already answered the SMA
 # proxy question; both are kept so the comparison itself is visible in
-# the same report ("laporkan juga yang kalah").
+# the same report ("laporkan juga yang kalah"). veto_short_bull is the I2
+# follow-up (module docstring) -- reported alongside, not instead of, the
+# indirect trend_alignment_only proxy it's compared against.
 GATE_CONFIGS = (
     GateConfig(name="no_gate"),
     GateConfig(name="confidence_only", use_confidence_gate=True),
     GateConfig(name="trend_alignment_only", use_trend_alignment_gate=True),
     GateConfig(name="daily_bias_only", use_daily_bias_gate=True),
     GateConfig(name="both_gates", use_confidence_gate=True, use_trend_alignment_gate=True),
+    GateConfig(name="veto_short_bull", use_regime_direction_gate=True),
 )
+
+
+def trailing_drift(candle_ts: list[datetime.datetime], candles: list[fgt.Candle], as_of_ts: datetime.datetime, lookback_days: int = REGIME_LOOKBACK_DAYS) -> float | None:
+    """Causal regime proxy for GATING -- see module docstring ("REGIME-
+    DIRECTION GATE") for why this can't just reuse campaign.monthly_drift().
+    Realized price drift over the trailing `lookback_days` window ending at
+    (and including) as_of_ts, using ONLY candles with ts <= as_of_ts.
+    `candle_ts` is `[c.ts for c in candles]` -- passed in rather than
+    recomputed so callers classifying many signals against the same series
+    only build it once (bisect needs a plain sorted list, not Candle
+    objects). None if there isn't at least `lookback_days` of history
+    before as_of_ts yet (too early in the series to classify -- caller
+    treats this as "unknown", never vetoed, same fallback precedent as
+    every other gate's can't-decide case in this module)."""
+    window_start = as_of_ts - datetime.timedelta(days=lookback_days)
+    end_idx = bisect.bisect_right(candle_ts, as_of_ts) - 1
+    if end_idx < 0:
+        return None
+    start_idx = bisect.bisect_left(candle_ts, window_start)
+    if start_idx > end_idx or candle_ts[start_idx] > window_start:
+        return None  # not enough trailing history yet
+    start_candle, end_candle = candles[start_idx], candles[end_idx]
+    if start_candle.open == 0:
+        return None
+    return (end_candle.close - start_candle.open) / start_candle.open
+
+
+def regime_by_signal_index(signals: list[sr.Signal], candles: list[fgt.Candle], lookback_days: int = REGIME_LOOKBACK_DAYS) -> dict[int, str]:
+    """signal.index -> "bull"/"bear"/"range" (campaign.classify_regime()'s
+    own thresholds, reused for comparability with campaign.py's post-hoc
+    breakdown), computed causally per trailing_drift() above. Signals too
+    early in the series to have `lookback_days` of trailing history are
+    simply absent from the result (caller/gate treats a missing key as
+    "unknown", never vetoed)."""
+    candle_ts = [c.ts for c in candles]
+    result = {}
+    for signal in signals:
+        drift = trailing_drift(candle_ts, candles, signal.ts, lookback_days)
+        if drift is not None:
+            result[signal.index] = campaign.classify_regime(drift)
+    return result
 
 
 def _fit_confidence_model(train: list[fw.LabeledSignal]) -> tuple[LogisticRegression, np.ndarray] | None:
@@ -148,7 +230,17 @@ def _predict_proba(model: LogisticRegression, signal: sr.Signal) -> float:
     return float(model.predict_proba(x)[0][list(model.classes_).index(1)])
 
 
-def apply_gates(train: list[fw.LabeledSignal], test: list[fw.LabeledSignal], gate_config: GateConfig) -> list[fw.LabeledSignal]:
+def apply_gates(
+    train: list[fw.LabeledSignal],
+    test: list[fw.LabeledSignal],
+    gate_config: GateConfig,
+    regime_by_index: dict[int, str] | None = None,
+) -> list[fw.LabeledSignal]:
+    """regime_by_index (regime_by_signal_index()'s output) is only needed
+    when gate_config.use_regime_direction_gate is True -- every other gate
+    ignores it, same optional-until-needed shape as every other gate-
+    specific input this function already takes (e.g. train is unused
+    unless use_confidence_gate)."""
     candidates = list(test)
 
     if gate_config.use_confidence_gate:
@@ -165,6 +257,12 @@ def apply_gates(train: list[fw.LabeledSignal], test: list[fw.LabeledSignal], gat
 
     if gate_config.use_daily_bias_gate:
         candidates = [ls for ls in candidates if ls.signal.daily_bias_alignment > gate_config.daily_bias_threshold]
+
+    if gate_config.use_regime_direction_gate:
+        regimes = regime_by_index or {}
+        candidates = [
+            ls for ls in candidates if not (ls.signal.direction is fgt.TradeDirection.SHORT and regimes.get(ls.signal.index) == "bull")
+        ]
 
     return candidates
 
@@ -217,13 +315,18 @@ def run_gated_series(
         step_months=campaign.exp.STEP_MONTHS,
         mode=campaign.exp.WINDOW_MODE,
     )
+    # Computed once per series (not per window) -- trailing_drift() only
+    # ever looks at candles <= a signal's own ts, so precomputing this
+    # against the FULL candle list is still walk-forward-safe (no future
+    # window's candles can affect an earlier signal's classification).
+    regime_by_index = regime_by_signal_index(signals, candles) if gate_config.use_regime_direction_gate else {}
 
     pooled_trades = []
     total_kept = 0
     windows_passing = 0
     for window in windows:
         train, test = fw.split_by_window(labeled, window)
-        kept = apply_gates(train, test, gate_config)
+        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index)
         total_kept += len(kept)
 
         # Gate SELECTION uses the hindsight-resolved labeled signals above
@@ -395,3 +498,54 @@ def run_sizing_series(
         min_multiplier=min(applied_multipliers) if applied_multipliers else None,
         max_multiplier=max(applied_multipliers) if applied_multipliers else None,
     )
+
+
+# --- CLI entrypoint (F6b I2 follow-up: veto_short_bull real 4-series run) ---
+#
+# Runs every GATE_CONFIGS entry against all 4 production series, on top of
+# campaign.CAMPAIGN_CONFIGS[1] (F5's candidate: min_rr=2.0/max_rr=5.0/
+# sl=1.0atr) -- matching I1's own established "di atas config kandidat F5"
+# convention (docs/sonnet5-implementation-roadmap.md F6b), not production
+# defaults, so results are directly comparable to I1's already-documented
+# table. derivatives_records is intentionally left at its None default:
+# veto_short_bull's mechanism (direction x causal-regime) never reads any
+# derivatives factor, and per F6b's own "skor confidence tidak punya
+# konsumen" finding, derivatives features don't influence which signals
+# fire or their PF at all when the confidence/both_gates gates aren't in
+# play for a given row -- this run reports every gate for comparability,
+# but only veto_short_bull/no_gate/trend_alignment_only/daily_bias_only
+# rows are unaffected by that omission either way.
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        default=os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "..", "docs", "validation-results", "gated_campaign.json"),
+    )
+    args = parser.parse_args()
+
+    import data_loader  # deferred: see rr_sl_experiment.py's own comment for why
+
+    f5_candidate = campaign.CAMPAIGN_CONFIGS[1]
+    all_results = []
+    for venue, symbol, coin in campaign.SERIES:
+        candles = data_loader.load_candles(venue, symbol, campaign.TIMEFRAME, limit=campaign.CANDLE_LOAD_LIMIT)
+        if not candles:
+            print(f"no candles for {venue}/{symbol} -- skipping")
+            continue
+        series_name = f"{venue}_{coin}"
+        print(f"{series_name}: {len(candles)} candles, {candles[0].ts} .. {candles[-1].ts}")
+        for gate_config in GATE_CONFIGS:
+            result = run_gated_series(series_name, candles, gate_config, campaign_config=f5_candidate)
+            print(
+                f"  {gate_config.name}: signals={result.total_signals} kept={result.total_kept} "
+                f"promoted={result.promoted} windows_passing_pf={result.windows_passing_pf}/{result.total_windows} "
+                f"pooled_pf_net={result.pooled_pf_net}"
+            )
+            all_results.append(dataclasses.asdict(result))
+
+    with open(args.output, "w") as f:
+        json.dump(all_results, f, indent=2)
+    print(f"wrote {args.output}")

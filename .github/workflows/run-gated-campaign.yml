@@ -1,0 +1,57 @@
+name: Run Gated Campaign (manual, F6b I2 follow-up)
+
+# On-demand only -- same exploratory-analysis-against-real-data pattern as
+# run-validation.yml (ephemeral Neon branch, NOT the real production
+# DATABASE_URL, reuses the same NEON_API_KEY/NEON_PROJECT_ID secrets).
+# Runs gated_campaign.py's own CLI entrypoint: every GATE_CONFIGS entry
+# (including the new veto_short_bull, F6b I2 follow-up -- docs/sonnet5-
+# implementation-roadmap.md) against all 4 production series, on top of
+# campaign.CAMPAIGN_CONFIGS[1] (F5's candidate), matching I1's own
+# established "di atas config kandidat F5" convention.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  run-gated-campaign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral Neon branch (copy-on-write snapshot of production)
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: gated-campaign-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages/backtest-core + packages/db (kinetiq_db)
+        run: pip install -e "packages/backtest-core[dev]" -e packages/db
+
+      - name: Run gated_campaign.py against the ephemeral branch (real historical candles, read-only)
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: python apps/products/trading/agent-orchestrator/validation/fib_gann_backtest/gated_campaign.py | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gated-campaign-${{ github.run_id }}
+          path: docs/validation-results/gated_campaign.json
+          if-no-files-found: warn
+
+      - name: Delete ephemeral Neon branch
+        if: always()
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: gated-campaign-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}

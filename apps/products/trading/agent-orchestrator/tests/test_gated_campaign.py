@@ -87,9 +87,9 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_five_named_combinations():
+def test_gate_configs_covers_six_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
-    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates"}
+    assert names == {"no_gate", "confidence_only", "trend_alignment_only", "daily_bias_only", "both_gates", "veto_short_bull"}
 
 
 def test_no_gate_config_has_both_gates_disabled():
@@ -374,3 +374,128 @@ def test_run_sizing_series_campaign_config_changes_signal_generation():
     default_result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"))
     candidate_result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="no_sizing"), campaign_config=f5_candidate)
     assert candidate_result.total_signals != default_result.total_signals
+
+
+# --- F6b I2 follow-up: veto_short_bull (trailing_drift / regime_by_signal_index / apply_gates) ---
+
+SHORT = fgt.TradeDirection.SHORT
+
+
+def rising_candles(n: int, start_price: float = 100.0, step: float = 0.5) -> list[fgt.Candle]:
+    # Monotonic uptrend -- unambiguous "bull" by any trailing-drift lookback
+    # once enough of it has accumulated (drift > BULL_DRIFT_THRESHOLD=0.05).
+    candles = []
+    price = start_price
+    for i in range(n):
+        o = price
+        c = price + step
+        candles.append(mk(i, o, max(o, c), min(o, c), c))
+        price = c
+    return candles
+
+
+def test_trailing_drift_none_before_enough_history():
+    candles = rising_candles(24 * 10)  # 10 days -- fewer than the 30-day default lookback
+    candle_ts = [c.ts for c in candles]
+    assert gc.trailing_drift(candle_ts, candles, candles[-1].ts) is None
+
+
+def test_trailing_drift_detects_bull_on_monotonic_uptrend():
+    candles = rising_candles(24 * 40)  # 40 days, well past the 30-day lookback
+    candle_ts = [c.ts for c in candles]
+    drift = gc.trailing_drift(candle_ts, candles, candles[-1].ts)
+    assert drift is not None
+    assert drift > campaign.BULL_DRIFT_THRESHOLD
+
+
+def test_trailing_drift_uses_only_candles_up_to_as_of_ts():
+    # A monotonic uptrend that STOPS partway through must not "see" the
+    # continuation after as_of_ts -- this is the whole causality guarantee
+    # the module docstring promises (unlike campaign.monthly_drift(), which
+    # deliberately uses the full month including its future).
+    up = rising_candles(24 * 40)
+    flat_start_price = up[-1].close
+    flat = [mk(len(up) + i, flat_start_price, flat_start_price, flat_start_price, flat_start_price) for i in range(24 * 5)]
+    candles = up + flat
+    candle_ts = [c.ts for c in candles]
+    as_of = up[-1].ts  # right when the uptrend stops, before the flat tail
+    drift = gc.trailing_drift(candle_ts, candles, as_of)
+    assert drift is not None
+    assert drift > campaign.BULL_DRIFT_THRESHOLD  # must reflect the uptrend, unaffected by the flat tail that follows
+
+
+def test_trailing_drift_none_when_as_of_ts_before_first_candle():
+    candles = rising_candles(24 * 40)
+    candle_ts = [c.ts for c in candles]
+    before_series = candles[0].ts - datetime.timedelta(days=1)
+    assert gc.trailing_drift(candle_ts, candles, before_series) is None
+
+
+def test_regime_by_signal_index_classifies_bull_and_omits_too_early_signals():
+    candles = rising_candles(24 * 40)
+    early_signal = mk_signal(24 * 5)  # only 5 days of history -- too early to classify
+    late_signal = mk_signal(24 * 35)  # well past the 30-day lookback
+    regimes = gc.regime_by_signal_index([early_signal, late_signal], candles)
+    assert early_signal.index not in regimes
+    assert regimes[late_signal.index] == "bull"
+
+
+# --- apply_gates: veto_short_bull ---
+
+
+def mk_labeled_dir(index: int, direction, outcome=TP, return_pct: float = 0.02) -> fw.LabeledSignal:
+    base = mk_signal(index)
+    signal = dataclasses.replace(base, direction=direction)
+    trade = mk_trade(signal, outcome, return_pct)
+    return fw.LabeledSignal(signal=signal, trade=trade)
+
+
+def test_apply_gates_veto_short_bull_drops_short_in_bull_regime():
+    test = [mk_labeled_dir(0, SHORT), mk_labeled_dir(1, LONG)]
+    config = gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bull", 1: "bull"})
+    assert [ls.signal.index for ls in kept] == [1]  # SHORT vetoed, LONG untouched even in a bull regime
+
+
+def test_apply_gates_veto_short_bull_keeps_short_outside_bull_regime():
+    test = [mk_labeled_dir(0, SHORT), mk_labeled_dir(1, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={0: "bear", 1: "range"})
+    assert {ls.signal.index for ls in kept} == {0, 1}
+
+
+def test_apply_gates_veto_short_bull_keeps_short_with_unknown_regime():
+    # A signal absent from regime_by_index (too early in the series for
+    # trailing_drift to classify) must never be vetoed -- same
+    # can't-decide-so-pass-through fallback precedent as every other gate.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True)
+    kept = gc.apply_gates([], test, config, regime_by_index={})
+    assert kept == test
+
+
+def test_apply_gates_veto_short_bull_noop_without_regime_by_index_arg():
+    # regime_by_index defaults to None -- must not crash, must behave as
+    # "no regimes known" (nothing vetoed), not raise on a missing dict.
+    test = [mk_labeled_dir(0, SHORT)]
+    config = gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True)
+    kept = gc.apply_gates([], test, config)
+    assert kept == test
+
+
+# --- run_gated_series: veto_short_bull end-to-end (synthetic data) ---
+
+
+def test_run_gated_series_veto_short_bull_never_increases_kept_count():
+    candles = noisy_zigzag()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True))
+    assert result.total_kept <= baseline.total_kept
+
+
+def test_run_gated_series_veto_short_bull_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="veto_short_bull", use_regime_direction_gate=True))
+    assert result.gate_name == "veto_short_bull"
+    assert result.total_windows >= 1
+    assert 0 <= result.windows_passing_pf <= result.total_windows
