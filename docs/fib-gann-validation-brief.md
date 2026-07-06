@@ -1727,3 +1727,50 @@ dibanding definisi post-hoc, di parameter manapun yg masuk akal dicoba.
 rezim (Section 33) dan sensitivity test (bagian ini) sudah menjawab
 pertanyaan intinya; segmentasi fase per-tanggal-mulai/akhir presisi jadi
 prioritas rendah krn temuan ini sudah menjawab pertanyaan yg mendasarinya.
+
+## 36. Cek gerbang shadow Tahap 2 (I5 CI diwire ke `gated_campaign.py`, 6 Juli 2026) — hasil: SEMUA 8 kombinasi GAGAL, termasuk kandidat terbaik
+
+Pertanyaan penutup rantai investigasi F6b I2: roadmap Fase 7 mendefinisikan
+gerbang MASUK shadow Tahap 2 (founder mulai trading uang real kecil
+searah sinyal) scr terpisah dan LEBIH RENDAH drpd gerbang live-eksekusi
+penuh bag. 7 -- pooled PF net-of-fees > 1.1 DENGAN bootstrap CI bawah
+(I5) > 1.0 di >=1 aset. Gerbang ini belum pernah bisa dicek utk kandidat
+gate TERBAIK (`veto_short_bull`) krn `gated_campaign.py`'s
+`GatedSeriesResult` belum pernah menghitung CI (I5) sama sekali --
+`campaign.py` sudah, tapi cuma utk config polos (`no_gate`), bukan gate
+hasil investigasi ini. `pooled_pf_net_ci90` diwire (PR #111, reuse
+`metrics.bootstrap_pf_net_ci()` yg sama, tanpa logika statistik baru),
+lalu dijalankan thd data real 4 seri (config F5, `no_gate` +
+`veto_short_bull`, lokal krn GH Actions masih kena quota Actions habis
+bulan ini).
+
+**Hasil real (35 window per seri, bootstrap 2000 iterasi):**
+
+| Seri | Gate | PF net | CI 90% | Gerbang Tahap 2? |
+|---|---|---|---|---|
+| BTC/Binance | no_gate | 0.920 | [0.803, 1.046] | GAGAL |
+| BTC/Binance | veto_short_bull | 0.959 | [0.826, 1.105] | GAGAL |
+| BTC/Bybit | no_gate | 0.938 | [0.827, 1.066] | GAGAL |
+| BTC/Bybit | veto_short_bull | 0.982 | [0.840, 1.134] | GAGAL |
+| ETH/Binance | no_gate | 1.039 | [0.916, 1.191] | GAGAL |
+| ETH/Binance | veto_short_bull | **1.124** | **[0.966, 1.300]** | GAGAL (CI bawah <1.0) |
+| ETH/Bybit | no_gate | 1.046 | [0.916, 1.193] | GAGAL |
+| ETH/Bybit | veto_short_bull | **1.106** | **[0.954, 1.285]** | GAGAL (CI bawah <1.0) |
+
+**SEMUA 8 kombinasi gagal** -- termasuk kandidat terbaik dari seluruh
+investigasi ini (`veto_short_bull` di ETH). Dua baris ETH/`veto_short_
+bull` bahkan sudah melewati syarat PF>1.1 (1.124 dan 1.106), TAPI CI
+bawahnya (0.966 dan 0.954) masih di bawah 1.0 -- secara statistik,
+performa ini belum bisa dibedakan dari sekadar breakeven pada jumlah
+trade yg ada. Ini demonstrasi langsung lagi kenapa I5 (bootstrap CI)
+penting sbg gerbang, bukan cuma titik-estimasi PF sendirian (pola yg
+sama persis spt temuan I5 original di Section 30).
+
+**Kesimpulan -- menutup seluruh rantai investigasi F6b I2** (`veto_
+short_bull` -> `veto_both_counter_trend` -> uji 3-tahun -> sensitivity
+test -> cek gerbang Tahap 2 ini): **tidak ada satu pun kombinasi yg siap
+utk mulai shadow trading uang real**, sekalipun itu kandidat paling
+teruji sepanjang investigasi. Status resmi: semua gate/config yg
+dilaporkan modul ini TETAP di tahap "temuan valid, terus dipantau" --
+bukan diadopsi, sesuai disiplin "let evidence decide" yg sama dari awal
+sampai akhir rantai ini.

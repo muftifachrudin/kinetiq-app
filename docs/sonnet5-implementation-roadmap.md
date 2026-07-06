@@ -930,6 +930,22 @@ F7 Tahap 2).
   test keduanya sudah jawab pertanyaan inti); segmentasi fase per-tanggal
   presisi jadi prioritas rendah. Detail lengkap: `docs/fib-gann-
   validation-brief.md` Section 35.
+
+  **Penutup rantai I2: cek gerbang shadow Tahap 2 (Fase 7, 6 Juli 2026)
+  -- hasil: SEMUA 8 kombinasi GAGAL.** Gerbang Tahap 2 (PF net>1.1 DENGAN
+  CI bawah I5>1.0 di >=1 aset) belum pernah bisa dicek utk kandidat
+  terbaik (`veto_short_bull`) krn `gated_campaign.py` blm pernah hitung
+  CI -- `pooled_pf_net_ci90` diwire (PR #111, reuse `metrics.bootstrap_
+  pf_net_ci()`, tanpa logika baru), dijalankan lokal thd data real 4 seri
+  (GH Actions masih kena quota habis). **Hasil: SEMUA 8 kombinasi (4
+  seri x {no_gate, veto_short_bull}) GAGAL** -- termasuk ETH/Binance &
+  ETH/Bybit `veto_short_bull` yg sudah PF>1.1 (1.124 & 1.106) TAPI CI
+  bawahnya (0.966 & 0.954) masih di bawah 1.0, artinya scr statistik
+  belum beda dari breakeven. **Menutup seluruh rantai investigasi F6b
+  I2**: tidak ada satu pun kombinasi (dari veto_short_bull sampai
+  veto_both_counter_trend) yg siap masuk shadow Tahap 2, sekalipun
+  kandidat paling teruji sepanjang investigasi ini. Detail lengkap:
+  `docs/fib-gann-validation-brief.md` Section 36.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
