@@ -381,6 +381,31 @@ hits `git push origin <local>:main` failing with a 503 while `git ls-remote`
 (read-only) works fine, this is the pattern to reach for -- it's a session/
 relay quirk, not a real permissions problem.
 
+## Manual deploy/migrate scripts (GitHub Actions minutes exhausted, 5 Juli 2026)
+
+`scripts/manual-deploy-railway.sh <service>` and `scripts/manual-migrate-
+neon.sh` -- for use from any local machine (MobaXterm on Windows, Termux on
+Android, or a regular laptop shell) when GitHub Actions is unavailable
+(e.g. the account's monthly included Actions minutes are exhausted --
+Settings -> Billing -> "Metered usage" shows this). Both are thin wrappers
+around the Railway CLI / Alembic, documented with one-time setup steps in
+their own header comments -- read those before first use, not reproduced
+here to avoid the two copies drifting.
+
+Important: Railway's own deploy is a **native GitHub integration**
+(Settings -> Source in the Railway dashboard), not a GitHub Actions
+workflow -- it already auto-deploys on every push to `main` regardless of
+Actions quota/status. These scripts exist for deploying *without* pushing
+to `main` first (local/uncommitted changes, or a feature branch), or as a
+manual trigger if the native webhook itself ever stalls -- not because
+normal merges to `main` are blocked by Actions quota.
+
+If GitHub Actions minutes are exhausted for the rest of a billing cycle
+and a self-hosted runner isn't set up yet, PR merges can still proceed
+without a green CI check via manual review + local `pytest`/`ruff check`
+(the same checks CI would run) -- this is a documented, deliberate
+exception for that specific situation, not a general license to skip CI.
+
 ## Verification checklist before pushing an infra/config change
 
 - **Simulate Railpack exactly, don't just run the app locally the easy way.**
