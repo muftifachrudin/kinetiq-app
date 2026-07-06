@@ -890,6 +890,27 @@ F7 Tahap 2).
   Task follow-up A SEBAGIAN selesai: komposisi rezim done, segmentasi
   fase per-tanggal-mulai/akhir presisi BELUM dikerjakan. Detail lengkap:
   `docs/fib-gann-validation-brief.md` Section 33.
+
+  **Follow-up lanjutan: gate `veto_both_counter_trend`, versi simetris
+  (5 Juli 2026, PR #107) -- hasil: PREDIKSI PRE-REGISTERED SALAH.**
+  Section 33 menunjukkan `long_bear` JUGA konsisten sel terburuk/hampir-
+  terburuk di 4 seri -- follow-up logisnya: veto KEDUA sisi lawan-arah
+  (SHORT-saat-bull DAN LONG-saat-bear), bukan cuma satu sisi. Ekspektasi
+  pre-registered (ditulis SEBELUM run): "likely a modest improvement" --
+  **TERBUKTI SALAH**. Hasil real (4 seri, config F5, 35 window): versi
+  simetris KALAH di SEMUA 4 seri drpd `veto_short_bull` asimetris (BTC/
+  Binance 0.959->0.920; BTC/Bybit 0.982->0.946; ETH/Binance 1.124->1.078;
+  ETH/Bybit 1.106->1.090), meski window-lolos individual sempat naik di
+  sebagian seri (bybit_BTC 14/35=40%, tertinggi BTC pernah dicapai).
+  Analisis: filter jauh lebih agresif (cuma 57-63% sinyal tersisa vs 77-
+  79%) memperbesar varians antar-window; klasifikasi causal `bear` tidak
+  cukup presisi menangkap sel `long_bear` yg di breakdown POST-HOC
+  Section 33 kelihatan jelek -- gap causal-vs-post-hoc yg sudah
+  diperingatkan Section 33 ternyata cukup besar utk MEMBALIK arah efek,
+  bukan cuma mengecilkannya. `veto_short_bull` (asimetris) tetap kandidat
+  terbaik dari keluarga regime-direction-veto; `veto_both_counter_trend`
+  dilaporkan sbg perbandingan yg kalah, bukan dihapus dari modul. Detail
+  lengkap: `docs/fib-gann-validation-brief.md` Section 34.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
