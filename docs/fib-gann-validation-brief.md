@@ -1673,3 +1673,57 @@ diuji dan terbantah), bukan kegagalan implementasi — modul ini tetap
 regime-direction-veto sejauh ini, `veto_both_counter_trend` dilaporkan sbg
 perbandingan yg kalah (sesuai disiplin "laporkan juga yang kalah" module
 ini sejak awal), bukan dihapus.
+
+## 35. Sensitivity test window/threshold regime causal (Task follow-up A, 5 Juli 2026) — hasil: GAP CAUSAL-VS-POST-HOC STRUKTURAL, BUKAN artefak salah pilih parameter
+
+Follow-up terakhir dari Section 33/34: apakah gap antara sel post-hoc yg
+kelihatan bagus (PF 1.3-1.6) dan gate causal deployable yg cuma dapat PF
+0.96-1.12 bisa dipersempit dgn window/threshold `trailing_drift()` yg
+beda, atau itu batas struktural? One-off script (reuse `campaign.
+monthly_drift()`/`classify_regime()` non-causal sbg "ground truth" +
+`gated_campaign.trailing_drift()` causal yg sama dipakai `veto_short_
+bull`, TIDAK ada logika klasifikasi baru), diuji thd sinyal real 4 seri
+(config kandidat F5, ~1130-1150 sinyal/seri) di grid window {14,30,60}
+hari × threshold {3%,5%,7%}, mengukur: agreement rate 3-arah + presisi/
+recall khusus label "bull" (yg jadi dasar keputusan veto SHORT).
+
+**Hasil real (4.262-4.503 pasangan sinyal per titik grid, pooled 4 seri):**
+
+| Window | Threshold | Agreement | Bull recall | Bull precision |
+|---|---|---|---|---|
+| 14 hari | 3%/5%/7% | 53.6-55.7% | 49.4-59.4% | 69.1-76.1% |
+| **30 hari (default)** | 3% | 59.3% | 69.3% | 70.0% |
+| **30 hari (default)** | **5% (dipakai `veto_short_bull`)** | **58.9%** | **69.2%** | **72.1%** |
+| **30 hari (default)** | 7% | 60.5% | 66.6% | 74.6% |
+| 60 hari | 3%/5%/7% | 47.2-50.0% | 65.1-68.3% | 56.9-59.8% |
+
+**Temuan 1 -- window 30-hari (default yg sudah dipakai) TERBUKTI pilihan
+TERBAIK** dari 3 window yg diuji: window 14-hari terlalu pendek (agreement
+53-56%, kalah dari 30-hari di semua threshold), window 60-hari terlalu
+panjang (agreement JATUH ke 47-50%, presisi bull turun ke 57-60%) --
+window 30-hari BUKAN pilihan sembarangan yg kebetulan salah, ini memang
+titik terbaik di grid yg diuji.
+
+**Temuan 2 -- threshold 7% sedikit lebih baik dari 5% (default) di window
+30-hari**: agreement 58.9%->60.5%, presisi bull 72.1%->74.6%, TAPI recall
+turun 69.2%->66.6% (trade-off, bukan kemenangan telak) -- perbaikan
+marjinal, bukan terobosan yg mengubah kesimpulan modul ini.
+
+**Temuan 3 (paling penting) -- bahkan kombinasi TERBAIK di seluruh grid
+(30 hari/7%) cuma capai 60.5% agreement dgn label post-hoc.** ~40% klasifikasi
+causal TIDAK cocok dgn "kebenaran" post-hoc di kombinasi manapun yg diuji
+-- bukan soal salah pilih angka, ini keterbatasan struktural: window
+trailing (menengok ke belakang) secara matematis tidak bisa menyamai
+drift satu-bulan-penuh yg "curang" tahu masa depan bulan itu sendiri.
+Presisi bull terbaik cuma 76.1% (window 14/threshold 7%, TAPI recall-nya
+jatuh ke 49.4% -- trade-off lain lagi, bukan solusi bebas biaya).
+
+**Kesimpulan -- gap causal-vs-post-hoc dianggap CUKUP diselidiki, BUKAN
+sesuatu yg bisa dihilangkan lewat tuning window/threshold.** Ini penjelasan
+langsung kenapa `veto_short_bull`/`veto_both_counter_trend` tidak pernah
+mendekati angka post-hoc: sekitar 25-40% keputusan veto-nya "salah"
+dibanding definisi post-hoc, di parameter manapun yg masuk akal dicoba.
+**Task follow-up A (docs Section 32) sekarang SELESAI** -- komposisi
+rezim (Section 33) dan sensitivity test (bagian ini) sudah menjawab
+pertanyaan intinya; segmentasi fase per-tanggal-mulai/akhir presisi jadi
+prioritas rendah krn temuan ini sudah menjawab pertanyaan yg mendasarinya.

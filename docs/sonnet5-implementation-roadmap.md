@@ -911,6 +911,25 @@ F7 Tahap 2).
   terbaik dari keluarga regime-direction-veto; `veto_both_counter_trend`
   dilaporkan sbg perbandingan yg kalah, bukan dihapus dari modul. Detail
   lengkap: `docs/fib-gann-validation-brief.md` Section 34.
+
+  **Follow-up A tuntas: sensitivity test window/threshold (5 Juli 2026)
+  -- hasil: gap causal-vs-post-hoc STRUKTURAL, bukan artefak parameter.**
+  One-off script (reuse `campaign.monthly_drift()`/`classify_regime()`
+  non-causal sbg "ground truth" + `trailing_drift()` causal yg sama, TANPA
+  logika baru), grid window{14,30,60hari}×threshold{3%,5%,7%} thd sinyal
+  real 4 seri. **Window 30-hari (default) TERBUKTI pilihan terbaik**
+  (agreement 58.9-60.5%, window 14/60-hari lebih jelek); threshold 7%
+  sedikit lebih baik dari 5% (agreement 60.5% vs 58.9%, tapi recall turun)
+  -- perbaikan marjinal, bukan terobosan. **Bahkan kombinasi terbaik cuma
+  60.5% agreement** dgn label post-hoc -- ~40% klasifikasi causal TIDAK
+  cocok dgn ground truth di kombinasi manapun, keterbatasan struktural
+  (window trailing scr matematis tak bisa menyamai drift satu-bulan-penuh
+  yg "curang" tahu masa depannya sendiri). Ini penjelasan langsung kenapa
+  veto_short_bull/veto_both_counter_trend tak pernah mendekati angka
+  post-hoc. **Task follow-up A SELESAI** (komposisi rezim + sensitivity
+  test keduanya sudah jawab pertanyaan inti); segmentasi fase per-tanggal
+  presisi jadi prioritas rendah. Detail lengkap: `docs/fib-gann-
+  validation-brief.md` Section 35.
 - **I3 — Formalkan `sma_trend_bias_alignment` ke skema fitting utama**:
   satu keputusan adopsi resmi pre-registered (kriteria sama: median AUC
   OOS > 0.55 DAN korelasi OOS > 0) — bukti kandidat sudah kuat (AUC 0.617,
