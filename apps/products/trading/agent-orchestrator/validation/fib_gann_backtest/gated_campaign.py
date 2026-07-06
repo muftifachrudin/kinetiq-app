@@ -304,6 +304,7 @@ class GatedSeriesResult:
     windows_passing_pf: int
     promoted: bool
     pooled_pf_net: float | None
+    pooled_pf_net_ci90: tuple[float, float] | None  # F6b I5 (metrics.bootstrap_pf_net_ci), same convention as campaign.SeriesCampaignResult -- shadow Tahap 2's own entry gate (roadmap Fase 7) needs this, not just window-pass-count
 
 
 def _prepare_series_data(
@@ -387,6 +388,7 @@ def _run_gated_series_prepared(
 
     pooled_non_censored = [t for t in pooled_trades if not t.label.censored]
     pooled_metrics = metrics.compute_metrics(pooled_trades) if pooled_non_censored else None
+    pooled_pf_net_ci90 = metrics.bootstrap_pf_net_ci(pooled_trades) if pooled_non_censored else None
 
     total_windows = len(windows)
     promoted = total_windows > 0 and (windows_passing / total_windows) >= campaign.PF_PASS_FRACTION
@@ -400,6 +402,7 @@ def _run_gated_series_prepared(
         windows_passing_pf=windows_passing,
         promoted=promoted,
         pooled_pf_net=pooled_metrics.profit_factor_net if pooled_metrics else None,
+        pooled_pf_net_ci90=pooled_pf_net_ci90,
     )
 
 

@@ -255,6 +255,23 @@ def test_run_gated_series_returns_well_formed_result_for_every_gate_config():
         assert isinstance(result.promoted, bool)
 
 
+def test_run_gated_series_pooled_pf_net_ci90_well_formed_when_present():
+    # F6b I5 wired to gated_campaign (shadow Tahap 2's own entry gate --
+    # roadmap Fase 7 -- needs pooled_pf_net + CI, not just window-pass-count).
+    candles = noisy_zigzag()
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    if result.pooled_pf_net_ci90 is not None:
+        lower, upper = result.pooled_pf_net_ci90
+        assert lower <= upper
+
+
+def test_run_gated_series_pooled_pf_net_ci90_is_deterministic():
+    candles = noisy_zigzag()
+    a = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    b = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    assert a.pooled_pf_net_ci90 == b.pooled_pf_net_ci90
+
+
 def test_run_gated_series_no_gate_matches_total_signal_count_semantics():
     candles = noisy_zigzag()
     result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
@@ -277,7 +294,15 @@ def test_run_gated_series_gates_never_increase_kept_count_vs_no_gate():
 
 def test_gated_series_result_is_frozen_dataclass():
     result = gc.GatedSeriesResult(
-        series="x", gate_name="no_gate", total_signals=1, total_kept=1, total_windows=1, windows_passing_pf=0, promoted=False, pooled_pf_net=None
+        series="x",
+        gate_name="no_gate",
+        total_signals=1,
+        total_kept=1,
+        total_windows=1,
+        windows_passing_pf=0,
+        promoted=False,
+        pooled_pf_net=None,
+        pooled_pf_net_ci90=None,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.series = "y"
