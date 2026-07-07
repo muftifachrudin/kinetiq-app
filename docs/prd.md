@@ -232,6 +232,8 @@ Praktiknya: `tenant.plan_tier` dan billing di-desain per **product+tier** (mis. 
 
 Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik produk" — jangan over-engineer detail agent exam/chatbot sekarang karena requirement-nya belum ada, cukup pastikan pondasinya tidak mengunci ke trading doang.
 
+> **Update (6 Juli 2026) — visi ini sekarang diaktifkan, bukan lagi cuma "jangan mengunci ke trading":** founder punya sistem trading live terpisah (`ai-perp-bot-core`, nama internal **"Markoviz"**, dibangun di atas paket `vibe-trading-ai`) yang akan jadi bagian dari platform ini sbg **produk agent trading** (bukan produk terpisah) — swarm analisisnya (funding/liquidation/flow) digabung ke **mesin riset yang sama** dgn Fib+Gann (lihat B.6c), dan sidecar eksekusinya diadopsi sbg pola utk custody/eksekusi multi-agent (lihat B.3b). Urutan aktivasi vertical yg disepakati: **trading dulu (Markoviz+Fib-Gann digabung)**, baru **agent chatbot bisnis** (per-tenant knowledge base, terintegrasi ke channel bisnis pelanggan sendiri spt WhatsApp/website — dinamis, bukan fixed) menyusul **setelah** trading jalan DAN web app live utk pengaturan per-agent (RBAC beda per jenis agent langganan). Satu tenant **bisa langganan lebih dari satu agent sekaligus**. Detail lengkap diskusi arsitektur: sesi 6 Juli 2026 (belum ada dokumen brief terpisah, dirangkum langsung di PRD ini sesuai prinsip "PRD = destination marker" dari `docs/ai-coding-workflow.md`).
+
 ---
 
 ## PART B — Technical Architecture
@@ -258,6 +260,8 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | Custody | Non-custodial per-tenant: API key trade-only/no-withdraw (CEX), agent-wallet/session-key (DEX), envelope encryption per-tenant (data key unik per tenant, master key di KMS/Railway secret) | dikonfirmasi user; isolasi per-tenant mencegah satu key bocor berdampak ke tenant lain |
 | LLM Provider | **OpenRouter** sbg provider utama (satu API key, akses banyak model/vendor sekaligus) diakses lewat `platform-core/llm-gateway`, dgn adapter interface tetap provider-agnostic (bisa tambah direct OpenAI/Anthropic/DeepSeek API key nanti tanpa ubah kontrak) | dikonfirmasi user (paket all-in-one OpenRouter), plus jaga fleksibilitas kalau nanti mau direct API utk model tertentu (lebih murah/cepat) |
 | Role & Access | 3 level: **superadmin** (founder, bypass billing, pakai resource sendiri, kontrol penuh konfigurasi platform) — **admin** (mengatur LLM/model per agent & per tier, feature flag, monitoring — bisa didelegasikan ke tim nanti) — **tenant/customer** (subscriber biasa, akses sesuai plan yg dibayar) | wajib disebut eksplisit oleh user; jadi dasar `llm_config` dinamis per agent (lihat B.13) |
+
+> **REVISI SEDANG DIBAHAS (6 Juli 2026) — Compute & DB baris di atas TIDAK LAGI final.** Founder berencana migrasi penuh dari Railway+Neon ke **VM Vultr** krn scope bisnis sekarang lebih besar (multi-agent platform, bukan cuma trading). Ini keputusan besar dgn briefing terpisah (belum ditulis di sesi ini) yg wajib mencakup: tech stack final utk multi-produk, opsi replikasi PITR/branching Neon di Postgres self-hosted (utk tetap dapat ephemeral-branch-per-PR testing yg sudah jadi kebiasaan CI proyek ini), dan penyesuaian workflow deploy (docker-compose + auto-deploy, referensi pola `ai-perp-bot-core/VM-DEPLOY.md`). **Jangan asumsikan Railway/Neon sbg keputusan final** sampai briefing migrasi itu selesai & disepakati.
 
 ### B.2 Struktur Direktori (Platform Core generik + Trading sbg product vertical pertama)
 
@@ -359,6 +363,15 @@ CREATE TABLE dlmm_position (
 );
 ```
 
+### B.3b Sidecar Multi-Agent — Kredensial & Eksekusi per Agent per Tenant (adopsi pola Markoviz)
+
+`tenant_credential` (B.3) diperluas jadi konsep **"sidecar"**: lapisan koneksi kredensial + eksekusi yg **berbeda bentuknya per jenis agent**, bukan satu form generik:
+- **Agent trading**: kredensial bursa CEX/DEX (API key/secret trade-only, atau agent-wallet/session-key) — pola ini yg sudah dirancang di B.3.
+- **Agent content-creator** (vertical masa depan, belum detail): OAuth ke platform medsos pengguna.
+- Agent lain menyusul, bentuk kredensial ditentukan pas vertical itu digarap — **jangan desain skema generik "satu kolom cocok semua agent" sekarang**, cukup pastikan `tenant_credential.credential_type`/`venue_id` sudah cukup fleksibel menampung tipe baru (lihat A.6 prinsip "generalize the boring 20%").
+
+**Referensi implementasi**: adaptasi dari **execution sidecar** `ai-perp-bot-core` (Markoviz) — servis TypeScript terpisah yg reuse kode battle-tested (`direct-execution.ts`, `binance-futures-adapter.ts`, `risk-shield.ts`), expose REST API sempit utk order placement/cancel dgn margin guardrail + kill switch, **TIDAK PERNAH diakses langsung oleh LLM** (lihat B.7 & `docs/llm-telegram-guardrails-brief.md` — prinsip yg sama persis, dikonfirmasi independen di dua sistem). Adaptasi wajib: skema order/`TradeLog` Markoviz saat ini single-operator (satu akun Binance global) → harus jadi **per-tenant** (kredensial resolve dari `tenant_credential` sesuai request, bukan satu API key hardcoded), dan kill switch/margin guardrail berlaku **per tenant**, bukan satu akun global. Detail teknis integrasi (skema `TradeLog` per-tenant, reconciliation poller yg belum ada di Markoviz asli) didiskusikan lebih lanjut per-agent saat implementasi — **belum final di sini**.
+
 ### B.4 Row-Level Isolation
 Postgres RLS policy `USING (tenant_id = current_setting('app.tenant_id')::uuid)` di semua tabel domain, di-set per-request oleh `apps/api/deps.py` — defense-in-depth di luar filtering di level ORM (kalau ada bug query lupa filter tenant, RLS tetap block).
 
@@ -388,6 +401,17 @@ User mau agent "punya memory latihan yang berkembang" dan **untuk MVP meniru pen
 - **Kalibrasi**: parameter `fib_gann_timing` (lookback swing-detection, bobot confluence per timeframe, threshold skor entry) di-fit supaya sinyal algoritmik **paling mendekati** keputusan riil founder di data historis — ukur dgn metrik "agreement rate" (persentase sinyal algoritmik yg match keputusan founder) sbg bagian dari verification plan (B.10).
 - **Feedback loop berjalan**: tiap sinyal yg dikirim (Telegram/dashboard), founder confirm/reject/koreksi → tersimpan lagi ke `trade_annotation` → re-kalibrasi periodik (bukan real-time, cukup batch mingguan di awal) — ini mekanisme "belajar pesat" yg dimaksud user, scope-nya dulu **founder-only**.
 - **Post-MVP (bukan scope sekarang, sengaja ditunda)**: per-tenant `trader_profile` (tiap pelanggan bisa personalisasi/kalibrasi agent versi mereka sendiri) + agregat lintas-tenant sbg peningkatan "meta-model" bisnis — ini butuh consent/privacy design eksplisit (data trading pelanggan sensitif) sebelum dikerjakan, dicatat sbg **item riset lanjutan**, bukan komitmen teknis di rencana ini.
+
+### B.6c Integrasi Markoviz — Strategi Swarm Digabung ke Mesin Riset yang Sama (bukan strategi terpisah)
+
+Founder punya sinyal swarm 4-agent (`funding_basis_analyst`/`liquidation_analyst`/`flow_analyst`/`desk_risk_manager`, sintesis tertimbang funding 35%/liquidation 25%/flow 40%) dari `ai-perp-bot-core` yg sudah live, dibangun di atas `vibe-trading-ai`. Keputusan: **digabung** ke mesin riset trading yg sama dgn Fib+Gann (`agent-orchestrator/validation/fib_gann_backtest`), **BUKAN** jalan sbg strategi/silo terpisah.
+
+**Kehati-hatian metodologis wajib** (temuan F4 `docs/sonnet5-implementation-roadmap.md` sudah lebih dulu ada sebelum keputusan ini): funding rate & open interest sudah terbukti empiris jadi **indikator rezim volatilitas, BUKAN prediktor arah** — bobot swarm Markoviz utk *arah* trade (funding/liquidation/flow) perlu diuji ulang dgn disiplin yg SAMA (`fit_weights.py`'s skema fitting, kriteria adopsi median AUC>0.55 & korelasi OOS>0 — lihat Section 25/29 `docs/fib-gann-validation-brief.md`) sebelum jadi bagian sinyal yg didorong ke pengguna. **Jangan diasumsikan benar cuma krn sudah jalan live** — perlakukan sbg kandidat faktor skor baru yg diuji lewat mesin fitting yg sudah ada, sama seperti setiap faktor lain di riwayat proyek ini.
+
+Item teknis yg masih perlu dicoba/dibahas saat implementasi (bukan keputusan final di sini):
+- Performa mesin riset perlu ditingkatkan utk menguji data **multi-timeframe** (ingestion worker sudah menarik beberapa timeframe, blm semua dipakai di walk-forward campaign) — kandidat sesi implementasi/riset khusus tersendiri.
+- **TBD, belum jelas maksudnya, jangan diasumsikan**: founder menyebut pola "vibe-trading memberikan analisa tiap 4 jam" sbg sesuatu yg disukai — perlu klarifikasi apakah ini pola cron/scheduled-analysis yg sudah ada di `vibe-trading-ai`/swarm config, atau permintaan baru (mesin riset Kinetiq kirim laporan berkala tiap 4 jam ke pengguna). Jangan diimplementasi sebelum ini jelas.
+- Mesin riset utk vertical agent lain (chatbot bisnis, dst) akan **berbeda** dari mesin riset trading ini — belum dirancang, menyusul saat vertical itu digarap (lihat A.6).
 
 ### B.7 Keamanan & Guardrails (sama seperti sebelumnya + tenant isolation)
 Paper/live separation, DB-based kill switch, bounded autonomy via `risk_mandate` (sekarang per `tenant_id`), liquidation protection, append-only audit ledger, non-custodial custody per-tenant (Section B.1/B.3) — **plus untuk meme-sniper**: `token_safety_score` skill sbg mandatory gate sebelum snipe (cek liquidity lock, mint authority renounced, simulasi sell/honeypot check via API pihak ketiga mis. GoPlus Security/Honeypot.is) — token dgn safety_score di bawah threshold otomatis di-skip, tidak peduli seberapa menarik momentum-nya.
@@ -510,6 +534,22 @@ CREATE TABLE llm_config (
 - **Implikasi biaya**: percakapan bebas = tiap pesan butuh LLM utk interpretasi (lebih mahal drpd command-matching biasa) — inilah yg jadi alasan model monetisasi berbasis token di bawah, bukan cuma flat-fee per tier.
 
 > **Update keputusan (3 Juli 2026, `docs/llm-telegram-guardrails-brief.md`)**: bagian di atas ("natural language cuma jadi pintu masuk... wajib structured confirmation utk aksi") DIPERKETAT. Keputusan final: aksi finansial (apapun yg menyentuh posisi/uang) **TIDAK tersedia via Telegram sama sekali** di fase ini — bukan cuma perlu confirmation, tapi jalur natural-language TIDAK PERNAH jadi pintu masuk ke aksi sama sekali, bahkan dgn tombol konfirmasi. Kalau nanti ada aksi non-finansial (pause sinyal, ubah preferensi notifikasi), itu WAJIB lewat command terstruktur (`/pause`, `/settings`) yg diparse kode biasa, bukan diinterpretasi LLM. Percakapan bebas LLM di Telegram scope-nya PERSIS: explain/monitoring/tanya-jawab read-only saja (lihat brief bag. 1 tabel peran LLM + bag. 2c). Detail model ancaman, 5-lapis pertahanan (scope-by-construction/input gate/system prompt/output gate/audit), skema binding+conversation memory, dan urutan implementasi lengkap ada di `docs/llm-telegram-guardrails-brief.md`.
+
+> **Update (6 Juli 2026) — Conversational Agent jadi Layanan Lintas-Kanal, bukan cuma Telegram.** Goal bisnis eksplisit: agent jadi **"sahabat" pengguna** — solusi & teman menyelesaikan task sesuai agent yg dipilih, bukan cuma command-responder. Implikasi arsitektur:
+> - **Satu servis conversational agent backend**, dipanggil dari **dua front-end**: Telegram bot (adapter) DAN web chat di dashboard Kinetiq — bukan logic terpisah/terduplikasi per kanal (reuse pola `notification/` generik yg sudah direncanakan di B.1).
+> - **Entitlement/routing wajib berbasis langganan agent**: agent percakapan harus tahu tenant ini langganan agent apa saja (bisa lebih dari satu sekaligus) sebelum menjawab, dan **tidak boleh campur topik** — pengguna langganan trading cuma boleh dilayani soal trading, pengguna langganan agent chatbot-bisnis cuma dilayani soal chatbot-bisnis mereka, dst. Ini gerbang tambahan di atas guardrail keamanan yg sudah ada (bukan pengganti).
+> - **Agent percakapan menjawab dari data yg SUDAH tersimpan/dihitung** (hasil mesin riset trading, state akun via sidecar, dst) — **tidak menghitung ulang strategi/backtest on-the-fly** tiap ada pertanyaan (mesin riset jalan terpisah & berkelanjutan, lihat B.6c).
+> - **Efisiensi biaya OpenRouter (wajib dipikirkan sejak desain `llm-gateway`, bukan optimasi belakangan)**: model tiering (pertanyaan rutin/sederhana → model murah; penalaran kompleks → model lebih mahal, resolve via `llm_config` B.13), cost tracking **per-tenant** (bukan cuma agregat, penting utk margin bisnis SaaS), context/prompt trimming+caching utk pertanyaan berulang.
+> - **Referensi pola siap-pakai**: `ai-perp-bot-core` (Markoviz) sudah punya jembatan serupa (`telegram_bridge.py` — pisah command deterministik dari percakapan bebas) — diadaptasi jadi lintas-kanal & multi-tenant, bukan diambil mentah-mentah (lihat B.3b soal kredensial/eksekusi terkait).
+
+### B.14b Skema Memori Percakapan & Preferensi per-Agent (draft awal, 6 Juli 2026)
+
+Draft awal skema utk mendukung B.14's conversational agent lintas-kanal + entitlement multi-agent. **Belum final** — perlu direvisi begitu ada implementasi nyata pertama (extend skema `telegram_binding`/`conversation_message` yg sudah lebih dulu digambar di `docs/llm-telegram-guardrails-brief.md`, cukup tambah kolom `agent_type` di sana daripada bikin tabel percakapan baru dari nol):
+
+- **`conversation_message`** (extend yg sudah ada di guardrails brief, tambah kolom): `id`, `user_id`, `agent_type` (baru — trading/chatbot-bisnis/dst, kunci entitlement/routing), `channel` (telegram/web/whatsapp), `role` (user/assistant), `content`, `token_count` (utk cost tracking per-tenant, lihat B.14), `created_at`.
+- **`agent_subscription`** (baru): `user_id`, `agent_type`, `status` (aktif/nonaktif), `tier` — sumber kebenaran utk gerbang entitlement/routing yg wajib dicek sebelum agent percakapan menjawab apapun (B.14).
+- **`user_agent_preference`** (baru): `user_id`, `agent_type`, `preferences` (JSONB) — preferensi per user per jenis agent (mis. bahasa, gaya notifikasi), terpisah dari `risk_mandate` (yg tetap jadi sumber kebenaran utk parameter trading).
+- **`knowledge_base`** (baru, utk agent chatbot-bisnis di masa depan — belum dibangun sekarang): `id`, `owner user_id`, sumber dokumen/embeddings, `channel_target` config (WhatsApp/website milik tenant sendiri), `status`. Skema detailnya menyusul sesudah agent trading + web app RBAC live, sesuai urutan aktivasi vertical di A.6.
 
 ### B.15 Model Monetisasi Berbasis Token (mengikuti pola API billing Claude/Anthropic)
 
