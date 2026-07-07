@@ -63,7 +63,29 @@ independently verifiable.
 
 Turn the slices into a Kanban board (To Do → In Progress → Review → Done).
 This becomes the menu an agent picks tasks from, and the basis for the AFK
-phase below.
+phase below. This project's board lives in `docs/kanban.md` — check it
+before opening a new session.
+
+### 2.3 One session = one slice (confirmed 7 July 2026)
+
+Each Kanban card/tracer-bullet slice gets its **own dedicated session** —
+don't fold two unrelated slices into one long session, and don't carry a
+slice's implementation session into the next slice's work. This is what
+makes "independently verifiable" in 2.1 actually true in practice: a slice
+implemented in its own session can be tested end-to-end without depending
+on another slice's in-flight, not-yet-committed state. It also keeps each
+session inside the smart zone (Section 0) instead of accumulating unrelated
+context across slices.
+
+Practical routine for starting a new implementation session on this repo:
+
+1. Open `docs/kanban.md`, pick (or add) the slice to work on.
+2. Read the relevant `docs/prd.md` section(s) the slice references for the
+   actual decisions/schema/constraints — the kanban entry should point to
+   these, not restate them.
+3. Follow the Section 6 checklist below for that slice.
+4. Move the card to Done in `docs/kanban.md` once merged, and add any new
+   follow-on slices it revealed.
 
 ## 3. Execution phase — human-in-the-loop first, then autonomous
 
