@@ -5,6 +5,9 @@ modules), built on an agent-agnostic Platform Core. Full PRD, architecture,
 data model, and roadmap: **`docs/prd.md`** (living doc -- keep it in sync
 whenever a real architecture/infra decision changes, don't let it drift into
 a stale snapshot). Deployment/infra gotchas: **`docs/deployment-runbook.md`**.
+Project convention for how AI-assisted coding sessions on this repo should
+flow (alignment -> planning -> execution -> review): **`docs/ai-coding-workflow.md`**
+-- read it before starting a new feature.
 
 ## Language
 
