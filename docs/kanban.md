@@ -14,6 +14,19 @@ dibuka untuk card tersebut.
 
 ## To Do
 
+- [ ] **[SESI PERTAMA] Audit VM Vultr yang sudah live (Markoviz)** —
+  langkah read-only sebelum service Kinetiq apa pun dipindah: cek
+  resource headroom (CPU/RAM/disk), layout docker-compose/port/network
+  yang sudah dipakai Markoviz, proses non-Docker yang jalan di VM itu.
+  **Jangan restart/stop apa pun tanpa sepengetahuan founder eksplisit.**
+  Hasil audit ini jadi input keputusan slice berikutnya (upgrade plan VM
+  vs mulai subset service kecil). Refs: `docs/vultr-vm-migration-brief.md`.
+- [ ] **Setup docker-compose + Nginx + cron-polling auto-deploy di VM
+  Vultr** — setelah audit di atas selesai: tulis `docker-compose.yml`
+  (layout draf sudah ada di brief, perlu direview founder dulu), config
+  Nginx reverse proxy, dan cron job/systemd timer yang jalankan
+  `auto-deploy.sh` (adaptasi pola `ai-perp-bot-core`). Refs:
+  `docs/vultr-vm-migration-brief.md`.
 - [ ] **Validasi perp/futures untuk pola Markoviz swarm** — pola
   `vibe-trading-ai` sudah tervalidasi untuk spot; jalankan walk-forward/
   PF-net-of-fees/bootstrap-CI dengan tingkat ketelitian yang sama seperti
@@ -48,9 +61,13 @@ dibuka untuk card tersebut.
   apakah ini pola cron yang sudah ada di `vibe-trading-ai`/swarm config,
   atau perilaku reporting baru dari research engine Kinetiq? Refs:
   `docs/prd.md` B.6c.
-- **Migrasi ke Vultr VM** (Railway+Neon → self-hosted) — perlu briefing
-  tersendiri (tech stack, pengganti Postgres PITR/branching, alur deploy).
-  Refs: `docs/prd.md` B.1 revision note.
+- **Domain/subdomain utk service di VM Vultr** — aktifkan `kinetiq.app`
+  sekarang atau tetap IP+port sementara di awal migrasi? Belum
+  diputuskan. Refs: `docs/vultr-vm-migration-brief.md`.
+- **Migrasi kode/logic Markoviz masuk `apps/products/trading/*`** — beda
+  dari migrasi infra (sudah diputuskan, lihat To Do di atas); ini soal
+  kode/logic swarm digabung ke research engine, dikerjakan setelah infra
+  VM siap. Refs: `docs/prd.md` B.6c.
 - **Performa multi-timeframe research engine** — perlu sesi
   riset/implementasi khusus tersendiri. Refs: `docs/prd.md` B.6c.
 
