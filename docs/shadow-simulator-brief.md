@@ -1,4 +1,4 @@
-# Brief: Leverage-Aware Simulator + Shadow Mode (Paper vs Real Divergence Learning)
+# Brief: Leverage-Aware Simulator + Shadow Mode (Belajar dari Divergensi Paper vs Real)
 
 Companion dari `fib-gann-validation-brief.md`. Scope: `trade_simulator.py` diperluas jadi dua kemampuan — (1) leverage/liquidation-aware simulation, (2) shadow mode yang jalan paralel dengan trade uang beneran dan mengukur+mempelajari divergensinya.
 

@@ -1,170 +1,179 @@
-# AI Coding Workflow — Kinetiq Project Convention
+# AI Coding Workflow — Konvensi Proyek Kinetiq
 
-Adapted from Matt Pocock's "Full Walkthrough: Workflow for AI Coding" talk
-(AI Engineer 2026). This is the **pull doc** referenced by `CLAUDE.md` —
-detail lives here, not in `CLAUDE.md` itself, so the always-loaded context
-stays thin (see "Push vs Pull" below). Read this before starting a new
-feature, and re-read the checklist at the bottom before every session.
+Diadaptasi dari talk Matt Pocock "Full Walkthrough: Workflow for AI Coding"
+(AI Engineer 2026). Ini adalah **pull doc** yang dirujuk oleh `CLAUDE.md` —
+detailnya ada di sini, bukan di `CLAUDE.md` itu sendiri, supaya context yang
+selalu ter-load tetap tipis (lihat "Push vs Pull" di bawah). Baca dokumen ini
+sebelum mulai fitur baru, dan baca ulang checklist di bagian bawah sebelum
+setiap sesi.
 
 ## 0. Smart zone vs dumb zone
 
-Every session has a "smart zone" (roughly the first ~100K tokens) where the
-model tracks instructions and project detail precisely. Past that, sessions
-drift into a "dumb zone": more hallucination, forgotten earlier decisions,
-old/new context bleeding together.
+Setiap sesi punya "smart zone" (kira-kira ~100K token pertama) di mana model
+mengikuti instruksi dan detail proyek dengan presisi. Setelah itu, sesi mulai
+melenceng ke "dumb zone": makin sering halusinasi, keputusan-keputusan
+sebelumnya terlupa, context lama dan baru bercampur aduk.
 
-Practical implications for this repo:
+Implikasi praktis untuk repo ini:
 
-- Don't run one Claude Code session for many hours without a reset. Prefer
-  **`/clear` over `/compact`** when switching topics (e.g. moving from
-  "strategy validation" to "shadow simulator" to "multi-agent platform
-  pivot") — auto-summaries are noisy and can misprioritize. This is the
-  **"Memento Principle"**: persist the decisions that matter into a durable
-  file (`docs/prd.md`, a brief, `CLAUDE.md`, an issue) and start a clean
-  session, rather than relying on `/compact` to carry everything forward.
-- Start a **new session per topic**, not a continuation of a long one.
+- Jangan jalankan satu sesi Claude Code berjam-jam tanpa reset. Lebih baik
+  pakai **`/clear` daripada `/compact`** saat berpindah topik (misalnya dari
+  "validasi strategi" ke "shadow simulator" ke "pivot platform multi-agent")
+  — auto-summary itu berisik dan bisa salah memprioritaskan. Ini yang
+  disebut **"Memento Principle"**: simpan keputusan-keputusan penting ke
+  dalam file yang persisten (`docs/prd.md`, sebuah brief, `CLAUDE.md`, sebuah
+  issue) lalu mulai sesi baru yang bersih, alih-alih mengandalkan `/compact`
+  untuk membawa semuanya terus.
+- Mulai **sesi baru per topik**, bukan lanjutan dari sesi panjang.
 
-## 1. Alignment phase — before writing any code
+## 1. Fase alignment — sebelum menulis kode apa pun
 
 ### 1.1 Grill-me first
 
-Before asking an agent to implement anything non-trivial, let the AI
-interview *you* first — scope, edge cases, constraints, definition of
-"done" — rather than jumping straight to a plan. Don't let the agent move
-to planning until the design is actually clear and agreed, even if that
-means several rounds of questions.
+Sebelum meminta agent mengimplementasikan sesuatu yang tidak trivial, biarkan
+AI meng-interview *kamu* dulu — scope, edge case, constraint, definisi
+"selesai" — daripada langsung loncat ke rencana. Jangan biarkan agent
+lanjut ke tahap planning sebelum desainnya benar-benar jelas dan disepakati,
+walaupun itu berarti butuh beberapa putaran tanya-jawab.
 
-### 1.2 PRD as destination, not compiler spec
+### 1.2 PRD sebagai penanda arah, bukan spec yang dikompilasi
 
-`docs/prd.md` is a **destination marker** — direction and key decisions,
-not a precise mechanical spec the agent compiles into code. Don't
-over-polish it: an over-detailed PRD rots faster once implementation
-reveals better decisions. It should capture the problem being solved,
-system constraints, success criteria, and key decisions — not every line
-of behavior. Accept that it will drift out of sync with implementation
-over time; don't chase 100% sync.
+`docs/prd.md` adalah **penanda arah (destination marker)** — arah dan
+keputusan-keputusan kunci, bukan spec mekanis presisi yang dikompilasi
+langsung oleh agent menjadi kode. Jangan terlalu dipoles: PRD yang terlalu
+detail justru lebih cepat basi begitu implementasi mengungkap keputusan yang
+lebih baik. PRD seharusnya menangkap masalah yang sedang diselesaikan,
+constraint sistem, kriteria sukses, dan keputusan-keputusan kunci — bukan
+setiap baris perilaku sistem. Terima bahwa PRD akan makin tidak sinkron
+dengan implementasi seiring waktu; jangan kejar sinkronisasi 100%.
 
-## 2. Planning phase — task breakdown
+## 2. Fase planning — pemecahan task
 
 ### 2.1 Tracer bullets (vertical slices)
 
-Break work into vertical slices that cut through every layer (DB → API →
-UI/output) at small scope, rather than horizontal layers ("all backend
-first, then all frontend"). Each finished slice produces a real,
-end-to-end-testable signal, and slices can be worked on independently
-without agents colliding.
+Pecah pekerjaan menjadi vertical slice yang memotong semua layer (DB → API →
+UI/output) dalam skala kecil, alih-alih layer horizontal ("semua backend
+dulu, baru semua frontend"). Setiap slice yang selesai menghasilkan sinyal
+nyata yang bisa diuji end-to-end, dan slice-slice ini bisa dikerjakan secara
+independen tanpa agent-agent saling bertabrakan.
 
-Example for a trading-vertical feature: not "implement all 7 pillar
-signals," but "Aggressor Flow pillar: raw orderbook data → score → publish
-to Redis → visible in dashboard log" — one slice, but end-to-end and
-independently verifiable.
+Contoh untuk fitur trading-vertical: bukan "implementasikan semua 7 pillar
+signal," tapi "pillar Aggressor Flow: raw orderbook data → score → publish
+ke Redis → terlihat di log dashboard" — satu slice, tapi end-to-end dan bisa
+diverifikasi secara independen.
 
-### 2.2 Kanban from the slices
+### 2.2 Kanban dari slice-slice tersebut
 
-Turn the slices into a Kanban board (To Do → In Progress → Review → Done).
-This becomes the menu an agent picks tasks from, and the basis for the AFK
-phase below. This project's board lives in `docs/kanban.md` — check it
-before opening a new session.
+Ubah slice-slice tadi menjadi papan Kanban (To Do → In Progress → Review →
+Done). Ini menjadi "menu" tempat agent memilih task, dan menjadi dasar untuk
+fase AFK di bawah. Papan proyek ini ada di `docs/kanban.md` — cek dulu
+sebelum membuka sesi baru.
 
-### 2.3 One session = one slice (confirmed 7 July 2026)
+### 2.3 Satu sesi = satu slice (dikonfirmasi 7 Juli 2026)
 
-Each Kanban card/tracer-bullet slice gets its **own dedicated session** —
-don't fold two unrelated slices into one long session, and don't carry a
-slice's implementation session into the next slice's work. This is what
-makes "independently verifiable" in 2.1 actually true in practice: a slice
-implemented in its own session can be tested end-to-end without depending
-on another slice's in-flight, not-yet-committed state. It also keeps each
-session inside the smart zone (Section 0) instead of accumulating unrelated
-context across slices.
+Setiap kartu Kanban/slice tracer-bullet mendapat **sesinya sendiri yang
+dedicated** — jangan gabungkan dua slice yang tidak berkaitan ke dalam satu
+sesi panjang, dan jangan bawa sesi implementasi satu slice ke pekerjaan
+slice berikutnya. Ini yang membuat "bisa diverifikasi secara independen" di
+2.1 benar-benar terwujud dalam praktik: slice yang diimplementasikan dalam
+sesinya sendiri bisa diuji end-to-end tanpa bergantung pada state slice lain
+yang masih in-flight dan belum di-commit. Ini juga menjaga setiap sesi tetap
+berada di dalam smart zone (Bagian 0), alih-alih menumpuk context yang tidak
+saling berkaitan antar slice.
 
-Practical routine for starting a new implementation session on this repo:
+Rutinitas praktis untuk memulai sesi implementasi baru di repo ini:
 
-1. Open `docs/kanban.md`, pick (or add) the slice to work on.
-2. Read the relevant `docs/prd.md` section(s) the slice references for the
-   actual decisions/schema/constraints — the kanban entry should point to
-   these, not restate them.
-3. Follow the Section 6 checklist below for that slice.
-4. Move the card to Done in `docs/kanban.md` once merged, and add any new
-   follow-on slices it revealed.
+1. Buka `docs/kanban.md`, pilih (atau tambahkan) slice yang akan dikerjakan.
+2. Baca bagian `docs/prd.md` terkait yang dirujuk slice tersebut untuk
+   keputusan/schema/constraint yang sebenarnya — entri kanban seharusnya
+   merujuk ke sana, bukan menuliskannya ulang.
+3. Ikuti checklist Bagian 6 di bawah untuk slice tersebut.
+4. Pindahkan kartu ke Done di `docs/kanban.md` setelah di-merge, dan
+   tambahkan slice-slice lanjutan baru yang terungkap darinya.
 
-## 3. Execution phase — human-in-the-loop first, then autonomous
+## 3. Fase eksekusi — human-in-the-loop dulu, baru otonom
 
-### 3.1 TDD as the agent's feedback loop
+### 3.1 TDD sebagai feedback loop agent
 
-Feedback-loop quality is the **ceiling** on agent output quality. Without an
-objective way to know "is this correct," an agent stops at "looks like it
-works" — not necessarily "is correct."
+Kualitas feedback loop adalah **batas atas (ceiling)** dari kualitas output
+agent. Tanpa cara objektif untuk tahu "apakah ini benar," agent akan berhenti
+di titik "kelihatannya berhasil" — belum tentu "memang benar."
 
-Flow: agent picks a task from the Kanban → writes the test first (per the
-slice's spec/acceptance criteria) → implements until the test is green →
-commits. Stay human-in-the-loop during this phase, correct misdirection
-immediately, and **persist every correction** into a rule/skill/`CLAUDE.md`
-entry rather than repeating it verbally every session.
+Alurnya: agent memilih task dari Kanban → menulis test dulu (sesuai
+spec/acceptance criteria slice tersebut) → mengimplementasikan sampai test-nya
+hijau → commit. Tetap human-in-the-loop selama fase ini, koreksi kesalahan
+arah segera, dan **simpan setiap koreksi** ke dalam rule/skill/entri
+`CLAUDE.md`, jangan hanya diulang secara verbal setiap sesi.
 
-For anything touching CODEOWNERS-protected paths (`execution/risk_gate.py`,
-`execution/custody/*`, `packages/db/migrations/`) or strategy-critical
-logic (scoring weights, gate thresholds), stay human-in-the-loop — don't
-promote these to AFK regardless of how routine they start to feel.
+Untuk apa pun yang menyentuh path yang dilindungi CODEOWNERS
+(`execution/risk_gate.py`, `execution/custody/*`, `packages/db/migrations/`)
+atau logika yang kritikal terhadap strategi (scoring weight, gate
+threshold), tetap human-in-the-loop — jangan promosikan ini ke AFK
+sekalipun terasa makin rutin.
 
-### 3.2 AFK / autonomous mode
+### 3.2 Mode AFK / otonom
 
-Only once a pattern is proven consistently correct for a given task type
-(e.g. routine wiring, boilerplate CRUD, replicating an already-validated
-pattern to a new venue/exchange) should it move to autonomous execution —
-running multiple slices without real-time supervision. Curate the Kanban
-first; don't jump to AFK for new architecture exploration.
+Hanya setelah suatu pola terbukti konsisten benar untuk jenis task tertentu
+(misalnya wiring rutin, boilerplate CRUD, mereplikasi pola yang sudah
+tervalidasi ke exchange/venue baru) barulah task itu boleh dipindah ke
+eksekusi otonom — menjalankan banyak slice tanpa supervisi real-time. Kurasi
+Kanban dulu; jangan langsung loncat ke AFK untuk eksplorasi arsitektur baru.
 
-## 4. Review phase — always in a clean session
+## 4. Fase review — selalu di sesi yang bersih
 
-Review agent-written code in a **new, clean session**, not the same one
-used for implementation — the implementation session is full of
-trial-and-error history and isn't a good vantage point for objective
-review. After automated review, still do manual QA yourself — agent review
-doesn't replace actually trying the feature, especially for anything that's
-a matter of feel (UX, timing, signal false-positive rate).
+Review kode hasil tulisan agent di **sesi baru yang bersih**, bukan sesi
+yang sama dengan yang dipakai untuk implementasi — sesi implementasi penuh
+dengan riwayat trial-and-error dan bukan titik pandang yang baik untuk
+review yang objektif. Setelah automated review, tetap lakukan manual QA
+sendiri — review oleh agent tidak menggantikan mencoba fitur itu secara
+langsung, terutama untuk hal-hal yang soal "rasa" (UX, timing, tingkat
+false-positive sinyal).
 
-## 5. Codebase design that agents work well with
+## 5. Desain codebase yang mudah dikerjakan agent
 
-### 5.1 Push vs pull standards
+### 5.1 Standar push vs pull
 
-- **Push** (always active, lives in `CLAUDE.md`): things a reviewer must
-  always obey — style, security constraints, architecture boundaries that
-  must never be crossed.
-- **Pull** (on-demand, lives in a separate skill/doc): guidance only
-  relevant when an implementer actually needs it — e.g. how to use a
-  specific library, a niche pattern. This doc is itself a pull doc.
+- **Push** (selalu aktif, ada di `CLAUDE.md`): hal-hal yang harus selalu
+  dipatuhi reviewer — style, constraint keamanan, batas arsitektur yang
+  tidak boleh dilanggar.
+- **Pull** (on-demand, ada di skill/dokumen terpisah): panduan yang hanya
+  relevan saat implementer benar-benar membutuhkannya — misalnya cara
+  memakai library tertentu, pola yang niche. Dokumen ini sendiri adalah
+  pull doc.
 
-Don't put everything in `CLAUDE.md` — that burns smart-zone budget from the
-start of every session. Keep the mandatory, always-applicable rules there;
-put the rest here or in a dedicated skill.
+Jangan taruh semuanya di `CLAUDE.md` — itu menghabiskan budget smart-zone
+sejak awal setiap sesi. Simpan aturan yang wajib dan selalu berlaku di sana;
+sisanya taruh di sini atau di skill khusus.
 
-### 5.2 Agent-legible software
+### 5.2 Software yang mudah "dibaca" agent (agent-legible)
 
-Code that's easy for a human to refactor is also easy for an agent to work
-in. Deep modules (simple interface, complexity hidden inside) remain the
-right target — agents don't replace the need for good software
-fundamentals, they reward a clean codebase and punish a messy one.
+Kode yang mudah di-refactor manusia juga mudah dikerjakan agent. Deep module
+(interface sederhana, kompleksitas disembunyikan di dalam) tetap jadi target
+yang tepat — agent tidak menggantikan kebutuhan akan fundamental software
+yang baik, agent justru memberi reward pada codebase yang bersih dan
+menghukum yang berantakan.
 
-## 6. Checklist — before starting a new feature
+## 6. Checklist — sebelum memulai fitur baru
 
-1. Start a **new/clean session** — don't continue a long-running one.
-2. Run a "grill-me" round: let the AI interview you until the design is
-   clear.
-3. Write a short PRD entry — problem, constraints, success criteria (don't
-   over-polish).
-4. Break it into tracer bullets (vertical slices) → add to the Kanban.
-5. Execute human-in-the-loop first: agent picks a task → writes a test →
-   implements → commits.
-6. Persist every correction into a rule/skill/`CLAUDE.md` entry, not just a
-   one-off comment.
-7. Once the pattern is stable, move similar tasks to autonomous/AFK mode.
-8. Review in a new session, then do manual QA yourself.
-9. Keep `CLAUDE.md` thin (push rules only); everything else is a pull
+1. Mulai **sesi baru/bersih** — jangan lanjutkan sesi yang sudah panjang.
+2. Jalankan sesi "grill-me": biarkan AI meng-interview kamu sampai desainnya
+   jelas.
+3. Tulis entri PRD singkat — masalah, constraint, kriteria sukses (jangan
+   terlalu dipoles).
+4. Pecah menjadi tracer bullet (vertical slice) → tambahkan ke Kanban.
+5. Eksekusi human-in-the-loop dulu: agent memilih task → menulis test →
+   mengimplementasikan → commit.
+6. Simpan setiap koreksi ke dalam rule/skill/entri `CLAUDE.md`, bukan
+   sekadar komentar sekali pakai.
+7. Setelah polanya stabil, pindahkan task-task serupa ke mode
+   otonom/AFK.
+8. Review di sesi baru, lalu lakukan manual QA sendiri.
+9. Jaga `CLAUDE.md` tetap tipis (hanya push rule); sisanya adalah pull
    doc/skill.
 
-## Source
+## Sumber
 
 Video: Matt Pocock (@mattpocockuk), "Full Walkthrough: Workflow for AI
-Coding," AI Engineer 2026. This document is adapted from a community
-summary of that talk (not a verbatim transcript), tailored to this repo's
-stack (Python/LangGraph + TypeScript + Redis + Postgres + Claude Code).
+Coding," AI Engineer 2026. Dokumen ini diadaptasi dari rangkuman komunitas
+atas talk tersebut (bukan transkrip verbatim), disesuaikan dengan stack repo
+ini (Python/LangGraph + TypeScript + Redis + Postgres + Claude Code).

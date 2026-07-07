@@ -1,267 +1,300 @@
 # Deployment & Infra Runbook (Railway + Neon + GitHub Actions)
 
-Hard-won operational knowledge from getting the first service (`api-gateway`) live.
-Read this before touching `railway.toml`, `.github/workflows/ci.yml`, or anything
-under `packages/db/migrations/` -- every item below cost a real failed deploy or
-CI run to discover, and the failure modes are non-obvious enough to repeat if
-this isn't written down.
+Pengetahuan operasional yang didapat susah payah dari proses membuat service
+pertama (`api-gateway`) live. Baca ini sebelum mengubah `railway.toml`,
+`.github/workflows/ci.yml`, atau apa pun di bawah `packages/db/migrations/` --
+setiap poin di bawah ini butuh satu deploy atau CI run yang gagal beneran
+untuk ditemukan, dan mode kegagalannya cukup tidak jelas sehingga bisa
+terulang lagi kalau tidak ditulis di sini.
 
-See `docs/prd.md` for the product/architecture PRD -- this doc is deployment
-mechanics only.
+Lihat `docs/prd.md` untuk PRD produk/arsitektur -- dokumen ini murni
+mekanik deployment.
 
-## Topology reference
+## Referensi topologi
 
 - Repo: `kinetiq-app`, default branch `main`.
-- Railway project has one service so far (`kinetiq-app`), Root Directory set to
-  **repo root** (empty) in the dashboard (Settings -> Source) -- see Railpack
-  gotcha #7 below for why it's the repo root and not the service subfolder.
-- Neon project's default/primary branch is named **`production`**, not `main`.
-  Git branch names and Neon branch names are two independent naming schemes --
-  don't assume they match.
+- Railway project baru punya satu service (`kinetiq-app`), Root Directory
+  di-set ke **repo root** (kosong) di dashboard (Settings -> Source) --
+  lihat Railpack gotcha #7 di bawah untuk alasan kenapa harus repo root,
+  bukan subfolder service.
+- Branch default/primary di Neon project namanya **`production`**, bukan
+  `main`. Nama branch git dan nama branch Neon itu dua skema penamaan yang
+  independen -- jangan asumsikan keduanya sama.
 
-## Neon gotchas
+## Gotcha Neon
 
-0. **CI's `neon-preview-branch` has never once run a migration against the
-   real persistent `production` Neon branch -- and nothing else was
-   running migrations against it either.** This cost real production
-   downtime: the first genuinely authenticated request that reached a
-   database query in `api-gateway` (`GET /me` with a real Clerk session
-   JWT, well after `FORCE ROW LEVEL SECURITY` and the auto-provision
-   flow were already deployed) crashed with
-   `psycopg.errors.UndefinedTable: relation "platform_user" does not
-   exist`. Every prior deploy had "worked" only because every request
-   tested so far either had no auth token (401 raised before any DB
-   query) or exercised the code via a mocked `dependency_overrides` in a
-   local `TestClient`, never a real query against the real database.
-   `neon-preview-branch` only ever creates a **fresh, ephemeral, per-PR**
-   branch, runs migrations against *that*, and deletes it once the PR
-   closes -- it says nothing about whether `production` (or whatever
-   Neon branch Railway's `DATABASE_URL` actually points to) has ever had
-   `alembic upgrade head` run against it. Passing CI is not the same
-   claim as "the real database is migrated." **Fix**: `railway.toml`'s
-   `startCommand` now runs `(cd packages/db && python -m alembic upgrade
-   head)` before starting `uvicorn`, every deploy (idempotent --
-   alembic tracks applied revisions in `alembic_version`, a no-op once
-   already at head). `alembic` had to be added to the root
-   `requirements.txt` too, since `packages/db/pyproject.toml` (which
-   lists it as a dependency) is never pip-installed by this service, only
-   `PYTHONPATH`-referenced. Any future service with its own migrations
-   needs the same "run migrations as part of startCommand" treatment --
-   don't assume CI passing means the target database is actually
-   migrated.
+0. **`neon-preview-branch` di CI belum pernah sekali pun menjalankan
+   migration terhadap branch Neon `production` yang persisten dan
+   sesungguhnya -- dan tidak ada proses lain juga yang menjalankan
+   migration ke sana.** Ini menyebabkan downtime production sungguhan:
+   request pertama yang benar-benar terautentikasi dan sampai ke query
+   database di `api-gateway` (`GET /me` dengan Clerk session JWT asli,
+   jauh setelah `FORCE ROW LEVEL SECURITY` dan alur auto-provision sudah
+   di-deploy) crash dengan `psycopg.errors.UndefinedTable: relation
+   "platform_user" does not exist`. Setiap deploy sebelumnya "berhasil"
+   hanya karena setiap request yang diuji sejauh itu entah tidak punya
+   auth token sama sekali (401 dilempar sebelum query DB apa pun), atau
+   dijalankan lewat `dependency_overrides` yang di-mock di `TestClient`
+   lokal, tidak pernah query sungguhan ke database sungguhan.
+   `neon-preview-branch` hanya pernah membuat branch **baru, sementara,
+   khusus per-PR**, menjalankan migration ke branch itu saja, lalu
+   menghapusnya begitu PR ditutup -- ini tidak membuktikan apa-apa soal
+   apakah `production` (atau branch Neon mana pun yang benar-benar
+   ditunjuk oleh `DATABASE_URL` di Railway) pernah dijalankan `alembic
+   upgrade head`. Lolos CI itu bukan klaim yang sama dengan "database
+   sungguhan sudah di-migrate." **Perbaikan**: `startCommand` di
+   `railway.toml` sekarang menjalankan `(cd packages/db && python -m
+   alembic upgrade head)` sebelum menyalakan `uvicorn`, di setiap deploy
+   (idempotent -- alembic melacak revision yang sudah diterapkan lewat
+   tabel `alembic_version`, jadi no-op kalau sudah di head). `alembic`
+   juga harus ditambahkan ke `requirements.txt` di root, karena
+   `packages/db/pyproject.toml` (yang mencantumkannya sebagai dependency)
+   tidak pernah di-pip-install oleh service ini, hanya direferensikan
+   lewat `PYTHONPATH`. Service mana pun ke depannya yang punya migration
+   sendiri butuh perlakuan "jalankan migration sebagai bagian dari
+   startCommand" yang sama -- jangan asumsikan CI hijau berarti database
+   target sudah benar-benar termigrasi.
 
-1. **`DATABASE_URL` driver mismatch.** Neon's `create-branch-action` (and
-   Railway) hand out a bare `postgresql://...` connection string. SQLAlchemy
-   defaults a bare `postgresql://` scheme to the `psycopg2` dialect, but this
-   project depends on `psycopg` (v3), so migrations failed with
-   `ModuleNotFoundError: No module named 'psycopg2'` -- and the exact same
-   thing bit `api-gateway/deps.py` independently later, since it's a separate
-   service with its own `create_engine()` call. Fixed once, shared everywhere:
-   `kinetiq_db.engine.normalize_db_url()` forces the `postgresql+psycopg`
-   driver via `make_url(...).set(drivername=...)` regardless of the scheme
-   passed in -- every service that opens a DB connection should call this
-   instead of `create_engine(os.environ["DATABASE_URL"])` directly.
-   Gotcha within the gotcha: use `.render_as_string(hide_password=False)`, not
-   `str(url)` -- the latter masks the password as `***` and silently breaks auth.
+1. **`DATABASE_URL` driver mismatch.** `create-branch-action` milik Neon
+   (dan juga Railway) memberikan connection string `postgresql://...`
+   polos. SQLAlchemy secara default mengarahkan scheme `postgresql://`
+   polos ke dialect `psycopg2`, padahal project ini bergantung pada
+   `psycopg` (v3), sehingga migration gagal dengan `ModuleNotFoundError:
+   No module named 'psycopg2'` -- dan masalah persis yang sama juga
+   muncul terpisah di `api-gateway/deps.py`, karena itu service lain
+   dengan pemanggilan `create_engine()` sendiri. Sudah diperbaiki sekali,
+   dipakai bersama di mana-mana: `kinetiq_db.engine.normalize_db_url()`
+   memaksa driver `postgresql+psycopg` lewat `make_url(...).set(drivername=...)`
+   apa pun scheme yang masuk -- setiap service yang membuka koneksi DB
+   sebaiknya memanggil fungsi ini, bukan langsung
+   `create_engine(os.environ["DATABASE_URL"])`.
+   Gotcha di dalam gotcha: pakai `.render_as_string(hide_password=False)`,
+   bukan `str(url)` -- yang terakhir ini menyamarkan password jadi `***`
+   dan diam-diam merusak proses autentikasi.
 
-2. **CI *can* reach real Neon even when this interactive session can't.** The
-   sandboxed Claude Code session's network policy blocks `console.neon.tech`,
-   but that has zero bearing on GitHub Actions runners, which have normal
-   internet access. Don't assume a migration "can't be tested against real
-   Neon" just because the interactive session can't reach it directly -- open
-   a PR and let `neon-preview-branch` in CI do it.
+2. **CI *bisa* menjangkau Neon sungguhan meski sesi interaktif ini tidak
+   bisa.** Kebijakan jaringan sesi Claude Code yang di-sandbox memblokir
+   `console.neon.tech`, tapi itu tidak berpengaruh sama sekali ke GitHub
+   Actions runner, yang punya akses internet normal. Jangan asumsikan
+   sebuah migration "tidak bisa diuji ke Neon sungguhan" hanya karena
+   sesi interaktif tidak bisa menjangkaunya langsung -- buka PR dan
+   biarkan `neon-preview-branch` di CI yang melakukannya.
 
-3. **`schema-diff-action`'s `base_branch` must be the Neon branch name**
-   (`production`), not the git branch name (`main`). Confirmed by an
-   `##[error]Branch main not found in project` failure.
+3. **`base_branch` di `schema-diff-action` harus diisi nama branch Neon**
+   (`production`), bukan nama branch git (`main`). Ini dikonfirmasi
+   lewat kegagalan `##[error]Branch main not found in project`.
 
-4. **`SET x = :param` doesn't accept bind parameters -- Postgres rejects it
-   with a syntax error at the protocol level** (`SET app.tenant_id = $1` ->
-   `syntax error at or near "$1"`), because `SET` is a utility statement, not
-   a regular DML statement eligible for the extended query protocol's
-   parameter substitution. This had been sitting unnoticed in
-   `api-gateway/deps.py` (`SET app.tenant_id = :tenant_id`) since the tenant
-   auth middleware PR -- it never actually threw, because no real login with
-   a non-null `tenant_id` had gone through it yet (every real request so far
-   either had no token at all, or no tenant assigned). It surfaced the moment
-   RLS policies started actually being queried in a test with a real tenant
-   session. Fix: use `SELECT set_config('app.tenant_id', :tenant_id, false)`
-   instead -- `set_config()` is a regular function call, so normal bind-
-   parameter substitution works. Any future code that sets a Postgres session
-   GUC from a Python variable must use `set_config()`, never string-formatted
-   or parameterized `SET`.
+4. **`SET x = :param` tidak menerima bind parameter -- Postgres akan
+   menolaknya dengan syntax error di level protokol** (`SET
+   app.tenant_id = $1` -> `syntax error at or near "$1"`), karena `SET`
+   adalah utility statement, bukan DML biasa yang bisa memakai
+   substitusi parameter dari extended query protocol. Ini sempat
+   tersembunyi tanpa disadari di `api-gateway/deps.py` (`SET
+   app.tenant_id = :tenant_id`) sejak PR middleware tenant auth --
+   tidak pernah benar-benar error, karena belum ada login sungguhan
+   dengan `tenant_id` non-null yang lewat situ (setiap request
+   sungguhan sejauh itu entah tanpa token sama sekali, atau belum
+   punya tenant). Masalah ini muncul begitu policy RLS mulai benar-benar
+   diquery dalam test dengan session tenant sungguhan. Perbaikan: pakai
+   `SELECT set_config('app.tenant_id', :tenant_id, false)` -- karena
+   `set_config()` adalah pemanggilan fungsi biasa, jadi substitusi bind
+   parameter normal berfungsi. Kode apa pun ke depannya yang men-set
+   GUC session Postgres dari variabel Python wajib pakai `set_config()`,
+   jangan `SET` yang di-string-format atau diparameterkan.
 
-5. **A custom (`app.*`-namespaced) GUC that's never been `SET` in the
-   *current* session can read back as `''` (empty string) via
-   `current_setting(name, true)`, not `NULL`** -- once any session on the
-   server has ever used that GUC name, Postgres registers it as a known
-   placeholder variable, and an unset instance of it in a fresh session then
-   defaults to `''` rather than genuinely missing/`NULL`. This broke a
-   `tenant_id = current_setting('app.tenant_id', true)::uuid` RLS policy
-   expression with `invalid input syntax for type uuid: ""` the first time a
-   session hit it without ever having called `set_config('app.tenant_id', ...)`
-   itself (e.g. a superadmin session, which never sets `app.tenant_id` at
-   all). Fix: `NULLIF(current_setting(name, true), '')::uuid` -- collapses
-   both the never-set-anywhere (`NULL`) and set-elsewhere-but-not-here (`''`)
-   cases to `NULL` before casting, instead of letting either reach the cast
-   directly.
+5. **GUC custom (bernamespace `app.*`) yang belum pernah di-`SET` dalam
+   session yang sedang berjalan bisa terbaca kembali sebagai `''` (string
+   kosong) lewat `current_setting(name, true)`, bukan `NULL`** -- begitu
+   ada session mana pun di server yang pernah memakai nama GUC itu,
+   Postgres mendaftarkannya sebagai placeholder variable yang dikenal,
+   dan instance yang belum di-set di session baru jadi default ke `''`,
+   bukan benar-benar hilang/`NULL`. Ini merusak ekspresi policy RLS
+   `tenant_id = current_setting('app.tenant_id', true)::uuid` dengan
+   error `invalid input syntax for type uuid: ""` pertama kali sebuah
+   session mengenainya tanpa pernah memanggil
+   `set_config('app.tenant_id', ...)` sendiri (misalnya session
+   superadmin, yang memang tidak pernah men-set `app.tenant_id` sama
+   sekali). Perbaikan: `NULLIF(current_setting(name, true), '')::uuid`
+   -- ini menyatukan kasus belum-pernah-di-set-di-mana-pun (`NULL`) dan
+   di-set-di-tempat-lain-tapi-tidak-di-sini (`''`) jadi `NULL` sebelum
+   di-cast, alih-alih membiarkan keduanya langsung masuk ke cast.
 
-## Railway / Railpack gotchas
+## Gotcha Railway / Railpack
 
-1. **`railway.toml` must live at the repo root**, never inside a service's
-   Root Directory. Railway's config-as-code file resolution does not follow
-   the Root Directory setting -- it's always resolved from repo root.
-   Commands *inside* the file (`buildCommand`, `startCommand`) still execute
-   relative to whatever Root Directory is configured in the dashboard, so
-   write paths in the file as if `cwd` is already the service directory.
+1. **`railway.toml` harus ada di repo root**, tidak boleh di dalam Root
+   Directory sebuah service. Resolusi file config-as-code Railway tidak
+   mengikuti setting Root Directory -- selalu diresolve dari repo root.
+   Command *di dalam* file itu (`buildCommand`, `startCommand`) tetap
+   dieksekusi relatif terhadap Root Directory yang dikonfigurasi di
+   dashboard, jadi tulis path di dalam file itu seolah `cwd` sudah ada
+   di direktori service.
 
-2. **Adding a 2nd+ Railway service**: each new service needs its own Root
-   Directory set in the dashboard (Settings -> Source), and if it needs its
-   own `railway.toml`, an explicit Config-as-code path per service (Settings
-   -> Config-as-code) -- this can only be done from the dashboard/GraphQL API,
-   not from a config file itself.
+2. **Menambahkan service Railway ke-2 dan seterusnya**: setiap service
+   baru butuh Root Directory sendiri di dashboard (Settings -> Source),
+   dan kalau butuh `railway.toml` sendiri, butuh path Config-as-code
+   eksplisit per service (Settings -> Config-as-code) -- ini hanya bisa
+   dilakukan dari dashboard/GraphQL API, tidak bisa dari dalam file config.
 
-3. **Don't override `[build] buildCommand` for a Python service unless you
-   have a specific reason to.** Two failure modes were hit here, in order:
-   - With `buildCommand = "pip install -e ."` on a `pyproject.toml` project:
-     the build log showed `pip install` succeed (`Successfully installed
-     ... uvicorn-0.49.0`), but the runtime image still didn't have it
-     (`No module named uvicorn`). The custom command bypasses whatever
-     mechanism Railpack's own native install step uses to persist installed
-     packages from the build stage into the final runtime image.
-   - With no `buildCommand` at all: Railpack's zero-config Python detection
-     recognized a `pyproject.toml`/setuptools project existed but didn't
-     auto-generate an install step for it at all (no Poetry/uv lockfile it
-     natively understands) -- the build log jumped straight from "Detected
-     Python" to "Deploy" with no install step in between, so nothing was ever
-     installed.
-   - **What actually works**: a flat `main.py` + plain `requirements.txt`
-     (no `src/` package layout, no `pyproject.toml`). Railpack has solid
-     native support for `requirements.txt` and correctly persists the
-     install into the runtime image. `main.py` at the service root is
-     importable directly (`python -m uvicorn main:app`) without any install
-     step of its own -- only third-party deps need `requirements.txt`.
-   - If a future service genuinely needs Poetry/uv/a real installable
-     package, verify Railpack's native support for that specific tool
-     *first*, rather than reaching for a custom `buildCommand` override.
+3. **Jangan override `[build] buildCommand` untuk service Python kecuali
+   memang ada alasan spesifik.** Dua mode kegagalan sudah dialami di sini,
+   berurutan:
+   - Dengan `buildCommand = "pip install -e ."` pada project
+     `pyproject.toml`: build log menunjukkan `pip install` sukses
+     (`Successfully installed ... uvicorn-0.49.0`), tapi image runtime
+     tetap tidak punya package itu (`No module named uvicorn`). Command
+     custom ini melewati mekanisme native install step milik Railpack
+     yang seharusnya mempersist package terinstal dari build stage ke
+     image runtime final.
+   - Tanpa `buildCommand` sama sekali: deteksi Python zero-config milik
+     Railpack mengenali bahwa project `pyproject.toml`/setuptools ada,
+     tapi tidak meng-auto-generate install step sama sekali untuknya
+     (tidak ada lockfile Poetry/uv yang dikenali secara native) -- build
+     log langsung lompat dari "Detected Python" ke "Deploy" tanpa install
+     step di antaranya, jadi tidak ada apa pun yang terinstal.
+   - **Yang benar-benar berhasil**: `main.py` flat + `requirements.txt`
+     polos (tanpa layout package `src/`, tanpa `pyproject.toml`). Railpack
+     punya dukungan native yang solid untuk `requirements.txt` dan benar
+     mempersist hasil install ke image runtime. `main.py` di root service
+     langsung bisa diimport (`python -m uvicorn main:app`) tanpa install
+     step sendiri -- hanya dependency pihak ketiga yang butuh
+     `requirements.txt`.
+   - Kalau ke depannya ada service yang benar-benar butuh Poetry/uv/
+     package yang benar-benar installable, verifikasi dukungan native
+     Railpack untuk tool spesifik itu *dulu*, jangan langsung pakai
+     override `buildCommand` custom.
 
-4. **Use `python -m uvicorn ...`, never the bare `uvicorn` binary, in
-   `startCommand`.** Railpack manages Python via `mise`; the console-script
-   shim for `uvicorn` isn't reliably on the `PATH` that the deploy stage's
-   `bash -c` inherits (`uvicorn: command not found` in practice), but
-   `python` itself always resolves. Same logic applies to any other
-   console-script entry point (`gunicorn`, `alembic`, etc.) if one ever needs
-   to run as a Railway start/build command.
+4. **Pakai `python -m uvicorn ...`, jangan binary `uvicorn` polos, di
+   `startCommand`.** Railpack mengelola Python lewat `mise`; shim
+   console-script untuk `uvicorn` tidak selalu ada di `PATH` yang
+   diwariskan `bash -c` di deploy stage (`uvicorn: command not found`
+   pada praktiknya), tapi `python` itu sendiri selalu bisa diresolve.
+   Logika yang sama berlaku untuk entry point console-script lain
+   (`gunicorn`, `alembic`, dll) kalau suatu saat perlu dijalankan sebagai
+   start/build command Railway.
 
-5. **Build Logs vs Deploy Logs show different failure classes -- ask for
-   both when debugging a Railway failure.** Build Logs show whether
-   dependencies installed successfully. Deploy Logs show the actual
-   container's stdout/stderr (crash tracebacks, the real
-   `INFO: Uvicorn running on ...` startup line, and the healthcheck retry
-   attempts). A "Healthcheck failed" banner alone is not enough information --
-   it looks identical whether the app crashed instantly or whether it's a
-   genuine networking/port misconfiguration. Get Deploy Logs before
-   theorizing.
+5. **Build Logs dan Deploy Logs menunjukkan kelas kegagalan yang
+   berbeda -- minta keduanya saat debug kegagalan Railway.** Build Logs
+   menunjukkan apakah dependency berhasil terinstal. Deploy Logs
+   menunjukkan stdout/stderr container sungguhan (traceback crash, baris
+   startup `INFO: Uvicorn running on ...` yang asli, dan percobaan retry
+   healthcheck). Banner "Healthcheck failed" saja tidak cukup informasi --
+   tampilannya identik entah aplikasinya crash instan atau memang ada
+   masalah networking/port yang salah konfigurasi. Ambil Deploy Logs
+   dulu sebelum berteori.
 
-6. **"Unexposed service" / port-ambiguity is a plausible-looking dead end.**
-   There's a real, documented Railway failure mode where an unexposed
-   service's healthcheck fails because Railway can't determine which port to
-   check, fixable by setting an explicit `PORT` variable. This was tried here
-   and did *not* fix the actual problem, because the real cause (bug #3/#4
-   above) was that the process never started at all. Don't stop
-   investigating just because a plausible Railway community fix exists for a
-   similarly-worded symptom -- confirm against Deploy Logs first.
+6. **"Unexposed service" / ambiguitas port adalah jalan buntu yang
+   kelihatannya masuk akal.** Ada mode kegagalan Railway yang nyata dan
+   terdokumentasi di mana healthcheck sebuah unexposed service gagal
+   karena Railway tidak bisa menentukan port mana yang harus dicek, bisa
+   diperbaiki dengan men-set variabel `PORT` eksplisit. Ini sudah dicoba
+   di sini dan *tidak* memperbaiki masalah sebenarnya, karena penyebab
+   aslinya (bug #3/#4 di atas) adalah proses yang memang tidak pernah
+   berhasil start sama sekali. Jangan berhenti menyelidiki hanya karena
+   ada fix komunitas Railway yang kelihatannya masuk akal untuk gejala
+   yang mirip-mirip -- konfirmasi dulu lewat Deploy Logs.
 
-7. **A sibling monorepo package (e.g. `packages/db`, referenced from a
-   service whose Root Directory is a subfolder like
-   `apps/platform-core/api-gateway`) is never reachable, by any method --
-   not via `-e ../../../packages/db` in `requirements.txt` (fails with
-   `ERROR: ../../../packages/db is not a valid editable requirement`), and
-   not via `PYTHONPATH=../../../packages/db/src` in `startCommand` either
-   (deploys fine, then crashes at runtime with `ModuleNotFoundError: No
-   module named 'kinetiq_db'`).** Root cause, confirmed by reproducing the
-   exact traceback locally with *only* the service's own folder present on
-   disk (no monorepo siblings): Railway's "Root Directory" setting scopes
-   the **entire** build *and* runtime context to that one subfolder --
-   sibling directories are never copied in, at any build stage or at
-   runtime. (The original theory here -- that this was just a Docker
-   layer-caching timing issue, fixable by deferring the sibling reference
-   from build-time pip-install to runtime-time `PYTHONPATH` -- was wrong.
-   It's not a timing issue, the sibling directory categorically does not
-   exist in that container, ever.) This matches how "root directory"/
-   "working directory" scoping works on most PaaS platforms generally, not
-   a Railpack-specific quirk.
-   **Fix**: change the service's Root Directory in the Railway dashboard
-   (Settings -> Source) to the **repo root** (empty), not the service
-   subfolder. Move the service's `requirements.txt` to the **repo root**
-   too, so Railpack's zero-config Python detection still fires natively
-   (no custom `[build] buildCommand` needed -- see gotcha #3 above for why
-   that's worth avoiding). Then in `startCommand`, set `PYTHONPATH` to
-   include *both* the sibling package's source dir and the service's own
-   folder (relative to repo root now, e.g.
+7. **Sibling package di monorepo (mis. `packages/db`, direferensikan
+   dari service yang Root Directory-nya adalah subfolder seperti
+   `apps/platform-core/api-gateway`) tidak pernah bisa dijangkau, dengan
+   cara apa pun -- bukan lewat `-e ../../../packages/db` di
+   `requirements.txt` (gagal dengan `ERROR: ../../../packages/db is not
+   a valid editable requirement`), dan bukan juga lewat
+   `PYTHONPATH=../../../packages/db/src` di `startCommand` (ter-deploy
+   dengan mulus, lalu crash saat runtime dengan `ModuleNotFoundError: No
+   module named 'kinetiq_db'`).** Root cause-nya, dikonfirmasi dengan
+   mereproduksi traceback yang persis sama secara lokal dengan *hanya*
+   folder service itu sendiri yang ada di disk (tanpa sibling monorepo
+   lain): setting "Root Directory" di Railway membatasi **seluruh**
+   konteks build *dan* runtime ke satu subfolder itu saja -- direktori
+   sibling tidak pernah ikut ter-copy, di stage build mana pun atau saat
+   runtime. (Teori awal di sini -- bahwa ini cuma masalah timing Docker
+   layer-caching, yang bisa diperbaiki dengan menunda referensi sibling
+   dari pip-install saat build-time ke `PYTHONPATH` saat runtime-time --
+   ternyata salah. Ini bukan soal timing, direktori sibling itu memang
+   secara kategoris tidak ada di container tersebut, selamanya.) Ini
+   sesuai dengan cara kerja scoping "root directory"/"working directory"
+   di kebanyakan platform PaaS secara umum, bukan quirk khusus Railpack.
+   **Perbaikan**: ubah Root Directory service itu di Railway dashboard
+   (Settings -> Source) ke **repo root** (kosong), bukan subfolder
+   service. Pindahkan `requirements.txt` service itu ke **repo root**
+   juga, supaya deteksi Python zero-config milik Railpack tetap memicu
+   secara native (tidak perlu `[build] buildCommand` custom -- lihat
+   gotcha #3 di atas untuk alasan kenapa itu sebaiknya dihindari).
+   Lalu di `startCommand`, set `PYTHONPATH` untuk mencakup *baik*
+   direktori source package sibling *maupun* folder service itu sendiri
+   (relatif terhadap repo root sekarang, mis.
    `PYTHONPATH=packages/db/src:apps/platform-core/api-gateway python -m
-   uvicorn main:app ...`) -- the service folder needs to be on
-   `PYTHONPATH` explicitly now too, since `main.py` is no longer
-   automatically on `sys.path`/cwd once Root Directory is the repo root.
-   Verify this by reproducing the container's actual file layout locally
-   (copy *just* the service folder to an empty temp dir and run from
-   there) before trusting any "should work" theory about Railway's build
-   context -- that's what caught this bug's wrong first fix.
-   Any future service that needs to reuse `packages/db` (or any other
-   shared package) should use this Root-Directory-at-repo-root + combined
-   `PYTHONPATH` pattern, not an editable pip install and not a
-   subfolder-relative `PYTHONPATH`. Only one `railway.toml` and one root
-   `requirements.txt` can exist at repo root, so a second Python service
-   with this same need will require a different solution (e.g. a
-   dedicated Railpack config or its own repo-root marker file scheme) --
-   don't copy this pattern blindly for service #2.
+   uvicorn main:app ...`) -- folder service itu perlu eksplisit ada di
+   `PYTHONPATH` sekarang juga, karena `main.py` tidak lagi otomatis ada
+   di `sys.path`/cwd begitu Root Directory adalah repo root. Verifikasi
+   ini dengan mereproduksi layout file container yang sebenarnya secara
+   lokal (copy *hanya* folder service ke temp dir kosong dan jalankan
+   dari situ) sebelum mempercayai teori "seharusnya berhasil" apa pun
+   soal build context Railway -- itulah yang menangkap fix pertama yang
+   salah untuk bug ini.
+   Service mana pun ke depannya yang perlu memakai ulang `packages/db`
+   (atau shared package lainnya) sebaiknya pakai pola
+   Root-Directory-di-repo-root + `PYTHONPATH` gabungan ini, bukan
+   editable pip install dan bukan `PYTHONPATH` yang relatif terhadap
+   subfolder. Hanya bisa ada satu `railway.toml` dan satu
+   `requirements.txt` root di repo root, jadi service Python kedua yang
+   punya kebutuhan sama akan butuh solusi berbeda (mis. Railpack config
+   khusus atau skema marker file repo-root sendiri) -- jangan asal
+   copy-paste pola ini untuk service #2.
 
-8. **The "different solution" gotcha #7 flagged for a 2nd Python service
-   turned out to be: merge its deps into the SAME repo-root `requirements.txt`,
-   don't invent a second one.** Concretely hit adding
-   `apps/products/trading/ingestion/worker.py` as its own Railway service
-   (3 Juli 2026): it needs `packages/db` too, so per gotcha #7 its Root
-   Directory must *also* be repo root -- but Railpack's zero-config Python
-   detection only ever reads ONE `requirements.txt`, at repo root, per
-   Root-Directory-at-repo-root service. Two services both rooted at repo
-   root can't each bring their own differently-named requirements file
-   without a custom `[build] buildCommand` (which reopens gotcha #3's
-   "installs in the build log, never reaches the runtime image" failure
-   class -- not worth risking for something this avoidable). **Fix**: added
-   `worker.py`'s only real extra deps (`ccxt`, `requests` -- `sqlalchemy`/
-   `psycopg[binary]` were already there for api-gateway) straight into the
-   existing root `requirements.txt`, so both services install from the one
-   file Railpack already detects natively. The service's OWN `railway.<name>.toml`
-   (e.g. `railway.ingestion-worker.toml`) still needs an explicit
-   Config-as-code path set in that service's dashboard Settings
-   (Railway only auto-discovers a file literally named `railway.toml`) --
-   that part of gotcha #2 still applies, only the requirements-file part
-   needed a different answer than "give it its own file."
-   **Also applies to worker-type (non-web) services**: no `PORT`/
-   `healthcheckPath` is relevant since there's no HTTP server to probe --
-   Railway supervises the process itself; pick "worker"/"background" as the
-   service type in the dashboard if it asks, and set `restartPolicyType =
-   "always"` so a crash gets retried rather than left dead.
-   **VERIFIED against the real platform (3 Juli 2026, founder's first deploy
-   attempt)** -- worked correctly first try, no fixes needed: `ingestion-worker`
-   service (Root Directory = repo root, Config-as-code = `railway.ingestion-worker.toml`)
-   built and deployed successfully, Deploy Logs showed the full expected
-   sequence (`backfill starting: 365 days back` -> 4x `backfill OK (8760
-   candles ...)` for binance+bybit x BTC/ETH -> `backfill done -- entering
-   live poll loop` -> one funding_rate+ohlcv poll cycle per instrument, all
-   `(ccxt)` -> `sleeping 2718s until next 1h close`). This is also the
-   first-ever real-network verification of Bybit anywhere in this repo's
-   history (previously mocked-only, see `apps/products/trading/ingestion/README.md`) --
-   it worked without any fix needed. Confirms the merged-root-requirements.txt
-   + separately-named-toml + explicit-Config-as-code-path pattern this gotcha
-   describes is sound, not just theoretically reasoned.
+8. **"Solusi berbeda" yang diflag gotcha #7 untuk service Python ke-2
+   ternyata: gabungkan dependency-nya ke `requirements.txt` root yang
+   SAMA, jangan bikin file baru.** Konkretnya ditemui saat menambahkan
+   `apps/products/trading/ingestion/worker.py` sebagai service Railway
+   sendiri (3 Juli 2026): dia juga butuh `packages/db`, jadi sesuai
+   gotcha #7 Root Directory-nya *juga* harus repo root -- tapi deteksi
+   Python zero-config milik Railpack hanya pernah membaca SATU
+   `requirements.txt`, di repo root, per service yang
+   Root-Directory-nya-di-repo-root. Dua service yang sama-sama berakar
+   di repo root tidak bisa masing-masing membawa file requirements
+   dengan nama berbeda tanpa `[build] buildCommand` custom (yang
+   membuka kembali kelas kegagalan gotcha #3 "terinstal di build log,
+   tidak pernah sampai ke image runtime" -- tidak sepadan risikonya untuk
+   hal yang sebenarnya bisa dihindari). **Perbaikan**: menambahkan
+   dependency ekstra `worker.py` yang benar-benar dipakai (`ccxt`,
+   `requests` -- `sqlalchemy`/`psycopg[binary]` sudah ada duluan untuk
+   api-gateway) langsung ke `requirements.txt` root yang sudah ada,
+   supaya kedua service sama-sama install dari satu file yang sudah
+   dideteksi Railpack secara native. `railway.<name>.toml` milik service
+   itu sendiri (mis. `railway.ingestion-worker.toml`) tetap butuh path
+   Config-as-code eksplisit yang di-set di Settings dashboard service itu
+   (Railway hanya auto-discover file yang namanya literally
+   `railway.toml`) -- bagian gotcha #2 itu tetap berlaku, hanya bagian
+   file requirements yang butuh jawaban berbeda dari "kasih file
+   sendiri."
+   **Berlaku juga untuk service tipe worker (non-web)**: tidak ada
+   `PORT`/`healthcheckPath` yang relevan karena tidak ada HTTP server
+   yang diprobe -- Railway mengawasi prosesnya sendiri; pilih
+   "worker"/"background" sebagai tipe service di dashboard kalau
+   ditanya, dan set `restartPolicyType = "always"` supaya kalau crash
+   akan di-retry, bukan dibiarkan mati.
+   **TERVERIFIKASI ke platform sungguhan (3 Juli 2026, percobaan deploy
+   pertama founder)** -- berhasil dengan benar di percobaan pertama,
+   tanpa perlu perbaikan apa pun: service `ingestion-worker` (Root
+   Directory = repo root, Config-as-code = `railway.ingestion-worker.toml`)
+   berhasil dibangun dan di-deploy, Deploy Logs menunjukkan urutan yang
+   diharapkan secara lengkap (`backfill starting: 365 days back` -> 4x
+   `backfill OK (8760 candles ...)` untuk binance+bybit x BTC/ETH ->
+   `backfill done -- entering live poll loop` -> satu siklus poll
+   funding_rate+ohlcv per instrument, semuanya `(ccxt)` -> `sleeping
+   2718s until next 1h close`). Ini juga verifikasi real-network pertama
+   untuk Bybit di seluruh sejarah repo ini (sebelumnya cuma di-mock,
+   lihat `apps/products/trading/ingestion/README.md`) -- berhasil tanpa
+   perlu fix apa pun. Ini mengonfirmasi pola merged-root-requirements.txt
+   + toml-bernama-terpisah + path-Config-as-code-eksplisit yang
+   dijelaskan gotcha ini memang solid, bukan sekadar teori di atas kertas.
 
-## Railway status & logs via GraphQL — `tools/railway_logs.py` (no dashboard, no screenshots)
+## Status & log Railway lewat GraphQL -- `tools/railway_logs.py` (tanpa dashboard, tanpa screenshot)
 
-Every "get BOTH Build Logs and Deploy Logs" step above used to mean the
-founder opening the Railway dashboard and screenshotting. Both are now one
-command away from any environment with `RAILWAY_TOKEN` set (verified
-against the real project, 2026-07-04):
+Dulu setiap langkah "ambil KEDUA Build Logs dan Deploy Logs" di atas
+berarti founder harus buka dashboard Railway dan screenshot. Sekarang
+keduanya cukup satu command saja dari environment mana pun yang punya
+`RAILWAY_TOKEN` ter-set (terverifikasi ke project sungguhan, 2026-07-04):
 
 ```
 python tools/railway_logs.py                              # latest deployment per service
@@ -269,155 +302,179 @@ python tools/railway_logs.py --service api-gateway --logs both
 python tools/railway_logs.py --deployment-id <uuid> --logs deploy --limit 300
 ```
 
-API facts learned by probing (encoded in the script, repeated here so
-nobody re-discovers them the hard way):
+Fakta API yang dipelajari lewat trial-and-error (sudah tertanam di
+script, diulang di sini supaya tidak ada yang menemukannya ulang
+dengan cara susah):
 
-- Endpoint: `POST https://backboard.railway.com/graphql/v2`. For a
-  **Project Token** the auth header is **`Project-Access-Token: <token>`**
-  -- `Authorization: Bearer` is for personal/team tokens and does NOT work
-  with a project token.
-- **Cloudflare rejects Python's default urllib User-Agent** with
-  HTTP 403 body `error code: 1010`. Any explicit `User-Agent` header
-  passes. This is not an auth failure -- don't rotate the token over it
-  (curl works out of the box because its default UA passes).
-- A Project Token is scoped to one project+environment and **cannot read
-  `project(id: ...)`** (plain 403). What it CAN read is enough:
-  `projectToken` (returns its own projectId/environmentId -- no need to
-  hardcode them), `deployments(input: {projectId, environmentId})`,
-  `buildLogs(deploymentId, limit)`, `deploymentLogs(deploymentId, limit)`.
-  Service names are discovered via the deployments list.
-- **`deploymentLogs` severity reflects the stream, not the meaning**:
-  anything the container writes to stderr comes back `severity: "error"`
-  -- uvicorn and alembic write their normal INFO lines to stderr, so a
-  wall of severity=error INFO lines is a HEALTHY deploy. Read the message
-  text. Build logs embed ANSI color codes (the script strips them by
-  default; `--raw` keeps them).
+- Endpoint: `POST https://backboard.railway.com/graphql/v2`. Untuk
+  **Project Token**, header auth-nya adalah **`Project-Access-Token:
+  <token>`** -- `Authorization: Bearer` itu untuk personal/team token
+  dan TIDAK berfungsi dengan project token.
+- **Cloudflare menolak User-Agent default Python's urllib** dengan
+  HTTP 403 body `error code: 1010`. Header `User-Agent` eksplisit apa
+  pun lolos. Ini bukan kegagalan auth -- jangan rotate token gara-gara
+  ini (curl langsung berfungsi out of the box karena default UA-nya
+  lolos).
+- Project Token itu di-scope ke satu project+environment dan **tidak
+  bisa membaca `project(id: ...)`** (403 polos). Yang BISA dibaca sudah
+  cukup: `projectToken` (mengembalikan projectId/environmentId-nya
+  sendiri -- tidak perlu hardcode), `deployments(input: {projectId,
+  environmentId})`, `buildLogs(deploymentId, limit)`,
+  `deploymentLogs(deploymentId, limit)`. Nama service ditemukan lewat
+  daftar deployments.
+- **Severity di `deploymentLogs` mencerminkan stream-nya, bukan
+  maknanya**: apa pun yang ditulis container ke stderr kembali sebagai
+  `severity: "error"` -- uvicorn dan alembic menulis baris INFO normal
+  mereka ke stderr, jadi deretan baris INFO dengan severity=error itu
+  adalah deploy yang SEHAT. Baca teks pesannya. Build logs menyisipkan
+  kode warna ANSI (script secara default menghapusnya; `--raw`
+  mempertahankannya).
 
-## Row-Level Security (RLS) gotchas (`packages/db/migrations/versions/0002_add_rls_policies.py`)
+## Gotcha Row-Level Security (RLS) (`packages/db/migrations/versions/0002_add_rls_policies.py`)
 
-1. **`FORCE ROW LEVEL SECURITY` is required, not optional, given today's
-   connection setup.** Postgres exempts a table's *owner* from RLS entirely
-   unless `FORCE` is also set. The app's `DATABASE_URL` currently connects as
-   the same role that owns every table (no separate least-privilege app role
-   exists yet) -- without `FORCE`, every policy added here would be a
-   complete no-op against the app's own queries, while still looking "on" in
-   `\d <table>`. `FORCE` only affects DML (SELECT/INSERT/UPDATE/DELETE);
-   migrations are DDL and are unaffected by it.
+1. **`FORCE ROW LEVEL SECURITY` wajib, bukan opsional, dengan setup
+   koneksi hari ini.** Postgres mengecualikan *owner* sebuah tabel dari
+   RLS sepenuhnya kecuali `FORCE` juga di-set. `DATABASE_URL` aplikasi
+   saat ini konek sebagai role yang sama dengan yang memiliki (owner)
+   setiap tabel (belum ada role app dengan least-privilege terpisah) --
+   tanpa `FORCE`, setiap policy yang ditambahkan di sini akan jadi
+   no-op total terhadap query aplikasi sendiri, sambil tetap kelihatan
+   "aktif" di `\d <table>`. `FORCE` hanya memengaruhi DML
+   (SELECT/INSERT/UPDATE/DELETE); migration itu DDL dan tidak
+   terpengaruh olehnya.
 
-2. **`platform_user` intentionally has no RLS policy**, even though it has a
-   `tenant_id` column. `api-gateway/deps.py`'s `get_current_user()` looks a
-   caller up by `clerk_user_id` *before* any `tenant_id` is known -- that
-   lookup is how it discovers the tenant in the first place. A tenant-scoped
-   policy on `platform_user` would make every login's own self-lookup
-   invisible to itself (RLS denies by default when the session var isn't set
-   yet), breaking auth for every user on every request. If a real need for
-   restricting `platform_user` visibility ever comes up, it isn't this simple
-   `tenant_id = ...` pattern.
+2. **`platform_user` sengaja tidak punya policy RLS**, meskipun punya
+   kolom `tenant_id`. `get_current_user()` di `api-gateway/deps.py`
+   mencari caller lewat `clerk_user_id` *sebelum* `tenant_id` diketahui
+   -- lookup itu sendiri adalah cara tenant-nya ditemukan pertama kali.
+   Policy tenant-scoped di `platform_user` akan membuat lookup diri
+   sendiri saat login jadi tidak terlihat oleh dirinya sendiri (RLS
+   menolak secara default kalau session var belum di-set), sehingga
+   merusak auth untuk setiap user di setiap request. Kalau suatu saat
+   memang ada kebutuhan nyata membatasi visibilitas `platform_user`,
+   itu bukan pola `tenant_id = ...` yang sesederhana ini.
 
-3. **`llm_config` needs a different policy shape than the other tenant
-   tables**: `tenant_id IS NULL OR tenant_id = current_setting(...)`, not a
-   strict match. Its `NULL` `tenant_id` rows are `scope='global'`/`'product'`
-   shared config (Section B.13's tenant->product->global resolution
-   hierarchy), not "nobody's data" -- a strict policy would make every tenant
-   session blind to the global/product defaults it's supposed to fall back
-   to.
+3. **`llm_config` butuh bentuk policy yang berbeda dari tabel tenant
+   lainnya**: `tenant_id IS NULL OR tenant_id = current_setting(...)`,
+   bukan strict match. Baris `tenant_id` yang `NULL` di situ adalah
+   config `scope='global'`/`'product'` yang dishare (hierarki resolusi
+   tenant->product->global di Section B.13), bukan "data milik tidak
+   ada siapa-siapa" -- policy strict akan membuat setiap session tenant
+   buta terhadap default global/product yang seharusnya jadi fallback-nya.
 
-4. **Manual `psql`/admin inserts against RLS-protected tables need
-   `SELECT set_config('app.is_superadmin', 'true', false);` run first in the
-   same session**, or they'll be rejected by the policy's `WITH CHECK`
-   clause (e.g. bootstrapping the very first superadmin/tenant rows, before
-   any app code has run to set session context). This isn't a workaround --
-   it's the intended admin escape hatch, same mechanism the app itself uses.
+4. **Insert manual lewat `psql`/admin ke tabel yang diproteksi RLS
+   butuh `SELECT set_config('app.is_superadmin', 'true', false);`
+   dijalankan dulu di session yang sama**, atau akan ditolak oleh
+   klausa `WITH CHECK` policy tersebut (mis. saat bootstrapping
+   baris superadmin/tenant paling pertama, sebelum ada kode aplikasi
+   yang jalan untuk men-set session context). Ini bukan workaround --
+   ini memang escape hatch admin yang disengaja, mekanisme yang sama
+   yang dipakai aplikasi sendiri.
 
-5. **How this was actually verified locally** (worth reusing for any future
-   RLS policy work, since testing as the `postgres` superuser role proves
-   nothing -- Postgres superusers bypass RLS unconditionally, full stop,
-   regardless of `FORCE`): create a dedicated non-superuser role, reassign
-   table ownership to it (`ALTER TABLE ... OWNER TO ...`), connect as that
-   role, and confirm (a) a fresh connection with no session vars set at all
-   sees zero rows (fails closed), (b) a tenant-scoped session only sees its
-   own rows, (c) a cross-tenant `INSERT` is rejected, and (d)
-   `app.is_superadmin = 'true'` sees everything. This exact sequence is what
-   caught both gotchas #4 and #5 in the Neon gotchas section above -- they
-   only appear once you exercise a *second*, previously-unused session
-   (e.g. a fresh superadmin session that never called `set_config` itself).
+5. **Bagaimana ini sebenarnya diverifikasi secara lokal** (layak dipakai
+   ulang untuk pekerjaan policy RLS mana pun ke depannya, karena testing
+   sebagai role superuser `postgres` tidak membuktikan apa-apa --
+   superuser Postgres bypass RLS tanpa syarat, titik, terlepas dari
+   `FORCE`): buat role non-superuser khusus, alihkan ownership tabel ke
+   role itu (`ALTER TABLE ... OWNER TO ...`), konek sebagai role itu,
+   dan konfirmasi (a) koneksi baru tanpa session var apa pun yang
+   di-set melihat nol baris (fail closed), (b) session tenant-scoped
+   hanya melihat baris miliknya sendiri, (c) `INSERT` lintas tenant
+   ditolak, dan (d) `app.is_superadmin = 'true'` melihat semuanya.
+   Urutan persis ini yang menangkap gotcha #4 dan #5 di bagian gotcha
+   Neon di atas -- keduanya baru muncul begitu kita menjalankan session
+   *kedua* yang belum pernah dipakai sebelumnya (mis. session superadmin
+   baru yang tidak pernah memanggil `set_config` sendiri).
 
-## Append-only `order_audit_log` (`packages/db/migrations/versions/0003_order_audit_log_append_only.py`)
+## `order_audit_log` append-only (`packages/db/migrations/versions/0003_order_audit_log_append_only.py`)
 
-**`REVOKE UPDATE, DELETE ON order_audit_log FROM <role>` would be a silent
-no-op**, for the exact same reason `FORCE ROW LEVEL SECURITY` was required in
-0002: Postgres object owners always retain full privileges on objects they
-own, regardless of any `GRANT`/`REVOKE` -- and unlike RLS, there's no `FORCE`
-equivalent for privileges to override that. The app's `DATABASE_URL` role
-owns `order_audit_log`, so a plain `REVOKE` would look like it did something
-but change nothing.
+**`REVOKE UPDATE, DELETE ON order_audit_log FROM <role>` akan jadi
+no-op diam-diam**, dengan alasan persis sama kenapa `FORCE ROW LEVEL
+SECURITY` wajib di migration 0002: object owner di Postgres selalu
+mempertahankan hak penuh atas object yang mereka miliki, terlepas dari
+`GRANT`/`REVOKE` apa pun -- dan tidak seperti RLS, tidak ada padanan
+`FORCE` untuk privilege yang bisa meng-override itu. Role
+`DATABASE_URL` aplikasi adalah owner dari `order_audit_log`, jadi
+`REVOKE` polos akan kelihatan seperti melakukan sesuatu padahal tidak
+mengubah apa-apa.
 
-**Fix used instead: a `BEFORE UPDATE OR DELETE` trigger that unconditionally
-raises an exception.** Triggers fire regardless of role or ownership -- there
-is no owner exemption, no `is_superadmin` bypass, nothing. Verified locally
-by connecting as the `postgres` superuser (owner of the table) and
-confirming both `UPDATE` and `DELETE` are rejected with `order_audit_log is
-append-only: <OP> is not allowed`, while a normal `INSERT` still succeeds.
-This is intentional, not a gap to fix later: an audit trail that any role
-(including the most trusted one) can edit through the normal app path isn't
-actually an audit trail. If a genuine correction is ever needed, it's a new
-compensating row, not an edit to history -- and if a real emergency schema
-fix is ever needed, that's a deliberate, separately-auditable
+**Perbaikan yang dipakai sebagai gantinya: trigger `BEFORE UPDATE OR
+DELETE` yang unconditionally melempar exception.** Trigger tetap
+jalan terlepas dari role atau ownership -- tidak ada pengecualian
+owner, tidak ada bypass `is_superadmin`, tidak ada apa-apa. Sudah
+diverifikasi secara lokal dengan konek sebagai superuser `postgres`
+(owner tabel itu) dan mengonfirmasi baik `UPDATE` maupun `DELETE`
+ditolak dengan pesan `order_audit_log is append-only: <OP> is not
+allowed`, sementara `INSERT` normal tetap berhasil. Ini memang
+disengaja, bukan celah yang perlu diperbaiki nanti: audit trail yang
+bisa diedit lewat jalur aplikasi normal oleh role mana pun (termasuk
+yang paling dipercaya sekalipun) sebenarnya bukan audit trail. Kalau
+suatu saat memang butuh koreksi sungguhan, itu jadi baris kompensasi
+baru, bukan edit ke histori -- dan kalau memang ada kebutuhan darurat
+perbaikan schema, itu harus lewat
 `ALTER TABLE order_audit_log DISABLE TRIGGER order_audit_log_append_only`
-by a DBA, not something any session variable can quietly opt out of.
+yang disengaja dan diaudit terpisah oleh DBA, bukan sesuatu yang bisa
+di-opt-out diam-diam lewat session variable mana pun.
 
-If a future table needs the same "insert-only, no edits/deletes ever"
-guarantee, reach for this same trigger pattern directly -- don't reach for
-`REVOKE` first and rediscover this the hard way.
+Kalau ke depannya ada tabel lain yang butuh jaminan "insert-only, tidak
+boleh diedit/dihapus sama sekali" yang sama, langsung pakai pola trigger
+ini -- jangan coba `REVOKE` dulu dan menemukan ulang hal ini dengan cara
+susah.
 
-## GitHub push-to-`main` workaround (situational, not evergreen)
+## Workaround push-to-`main` GitHub (situasional, bukan berlaku selamanya)
 
-Earlier in this project, this session's git relay returned a persistent 503
-on direct pushes to `main` (apparently scoped to the session's *original*
-branch name, before it got renamed to `main` on GitHub). The workaround: push
-to the old branch name (which the relay still accepted), then open a PR from
-that branch into `main` and merge via the GitHub API. If a future session
-hits `git push origin <local>:main` failing with a 503 while `git ls-remote`
-(read-only) works fine, this is the pattern to reach for -- it's a session/
-relay quirk, not a real permissions problem.
+Sebelumnya di project ini, git relay sesi ini mengembalikan 503 yang
+persisten pada push langsung ke `main` (kelihatannya di-scope ke nama
+branch *asli* sesi ini, sebelum di-rename jadi `main` di GitHub).
+Workaround-nya: push ke nama branch lama (yang masih diterima relay),
+lalu buka PR dari branch itu ke `main` dan merge lewat GitHub API. Kalau
+suatu sesi ke depannya mengalami `git push origin <local>:main` gagal
+dengan 503 sementara `git ls-remote` (read-only) berfungsi normal, ini
+pola yang harus dipakai -- ini quirk sesi/relay, bukan masalah
+permission yang sesungguhnya.
 
-## Manual deploy/migrate scripts (GitHub Actions minutes exhausted, 5 Juli 2026)
+## Script manual deploy/migrate (jatah menit GitHub Actions habis, 5 Juli 2026)
 
-`scripts/manual-deploy-railway.sh <service>` and `scripts/manual-migrate-
-neon.sh` -- for use from any local machine (MobaXterm on Windows, Termux on
-Android, or a regular laptop shell) when GitHub Actions is unavailable
-(e.g. the account's monthly included Actions minutes are exhausted --
-Settings -> Billing -> "Metered usage" shows this). Both are thin wrappers
-around the Railway CLI / Alembic, documented with one-time setup steps in
-their own header comments -- read those before first use, not reproduced
-here to avoid the two copies drifting.
+`scripts/manual-deploy-railway.sh <service>` dan `scripts/manual-migrate-
+neon.sh` -- untuk dipakai dari mesin lokal mana pun (MobaXterm di
+Windows, Termux di Android, atau shell laptop biasa) saat GitHub
+Actions tidak tersedia (mis. jatah menit Actions bulanan akun sudah
+habis -- terlihat di Settings -> Billing -> "Metered usage"). Keduanya
+adalah wrapper tipis di sekitar Railway CLI / Alembic, sudah
+didokumentasikan dengan langkah setup satu kali di comment header
+masing-masing -- baca itu dulu sebelum pemakaian pertama, tidak
+direproduksi di sini supaya kedua salinan tidak saling melenceng.
 
-Important: Railway's own deploy is a **native GitHub integration**
-(Settings -> Source in the Railway dashboard), not a GitHub Actions
-workflow -- it already auto-deploys on every push to `main` regardless of
-Actions quota/status. These scripts exist for deploying *without* pushing
-to `main` first (local/uncommitted changes, or a feature branch), or as a
-manual trigger if the native webhook itself ever stalls -- not because
-normal merges to `main` are blocked by Actions quota.
+Penting: deploy Railway sendiri itu **integrasi GitHub native**
+(Settings -> Source di dashboard Railway), bukan workflow GitHub
+Actions -- ini sudah auto-deploy di setiap push ke `main` terlepas dari
+kuota/status Actions. Script-script ini ada untuk deploy *tanpa* harus
+push ke `main` dulu (perubahan lokal/belum di-commit, atau feature
+branch), atau sebagai trigger manual kalau native webhook-nya sendiri
+suatu saat macet -- bukan karena merge normal ke `main` diblokir oleh
+kuota Actions.
 
-If GitHub Actions minutes are exhausted for the rest of a billing cycle
-and a self-hosted runner isn't set up yet, PR merges can still proceed
-without a green CI check via manual review + local `pytest`/`ruff check`
-(the same checks CI would run) -- this is a documented, deliberate
-exception for that specific situation, not a general license to skip CI.
+Kalau jatah menit GitHub Actions habis untuk sisa siklus billing dan
+self-hosted runner belum di-setup, merge PR tetap bisa lanjut tanpa
+green check CI lewat manual review + `pytest`/`ruff check` lokal (cek
+yang sama yang akan dijalankan CI) -- ini pengecualian yang
+terdokumentasi dan disengaja untuk situasi spesifik itu, bukan lisensi
+umum untuk skip CI.
 
-## Verification checklist before pushing an infra/config change
+## Checklist verifikasi sebelum push perubahan infra/config
 
-- **Simulate Railpack exactly, don't just run the app locally the easy way.**
-  A fresh venv + `pip install -r requirements.txt` (not `-e .`, not reusing an
-  existing dev venv with leftover packages) + the *exact* declared
-  `startCommand`, then `curl` the healthcheck path. This is what caught the
-  "works locally, fails on Railway" class of bugs above before they were
-  ever pushed.
-- Validate config file syntax locally before pushing:
-  `python3 -c "import tomllib; tomllib.load(open('railway.toml','rb'))"` for
-  TOML, similarly for any YAML changes to `.github/workflows/*.yml`.
-- Check CI (`lint` + `neon-preview-branch`) green on the PR before merging --
-  `neon-preview-branch` is the only thing that exercises real Neon
-  connectivity, so a PR is the actual integration test for DB changes, not
-  local Postgres alone.
+- **Simulasikan Railpack persis, jangan cuma jalankan aplikasi secara
+  lokal dengan cara gampang.** venv baru + `pip install -r
+  requirements.txt` (bukan `-e .`, bukan pakai ulang venv dev yang
+  sudah ada dengan package sisa) + `startCommand` yang dideklarasikan
+  *persis*, lalu `curl` ke healthcheck path-nya. Ini yang menangkap
+  kelas bug "berhasil lokal, gagal di Railway" di atas sebelum sempat
+  ter-push.
+- Validasi syntax file config secara lokal sebelum push:
+  `python3 -c "import tomllib; tomllib.load(open('railway.toml','rb'))"`
+  untuk TOML, serupa untuk perubahan YAML apa pun di
+  `.github/workflows/*.yml`.
+- Cek CI (`lint` + `neon-preview-branch`) hijau di PR sebelum merge --
+  `neon-preview-branch` adalah satu-satunya yang menguji konektivitas
+  Neon sungguhan, jadi PR adalah integration test sesungguhnya untuk
+  perubahan DB, bukan Postgres lokal saja.
