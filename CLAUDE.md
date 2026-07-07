@@ -14,13 +14,18 @@ flow (alignment -> planning -> execution -> review): **`docs/ai-coding-workflow.
 Respond to the user in **Bahasa Indonesia** by default -- the founder's working
 language across this whole project (chat, PRD, design briefs). This does NOT
 apply to anything checked into the repo as code or engineering artifact: code,
-comments, docstrings, commit messages, PR titles/descriptions, and CLAUDE.md/
-`docs/deployment-runbook.md` itself stay in **English**, matching the existing
-codebase convention (every `.py`/`.ts`/`.yml` file and every commit so far).
-`docs/prd.md` and `docs/fib-gann-validation-brief.md` are the exception --
-those are already written in Indonesian (mixed with English technical terms
-where that's how the founder actually writes/thinks), keep new edits to them
-in that same style rather than switching to English.
+comments, docstrings, commit messages, PR titles/descriptions, and CLAUDE.md
+itself stay in **English**, matching the existing codebase convention (every
+`.py`/`.ts`/`.yml` file and every commit so far).
+
+**Everything under `docs/*.md` is Indonesian** (decision, 7 July 2026 --
+previously only `docs/prd.md` and `docs/fib-gann-validation-brief.md` were
+the exception, now extended to every doc in that folder including
+`docs/deployment-runbook.md`), mixed with English technical terms where
+that's how the founder actually writes/thinks (variable/function/table
+names, jargon like "walk-forward"/"bootstrap CI", numbers/stats stay
+as-is -- only the narrative/explanation is translated). Write new docs in
+Indonesian directly; don't draft in English and translate after.
 
 ## Before touching Railway, Neon, or CI config
 
