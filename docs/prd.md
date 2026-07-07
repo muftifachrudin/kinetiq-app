@@ -242,13 +242,15 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 
 | Area | Keputusan | Alasan |
 |---|---|---|
-| Compute | Railway (multi-service, multi-tenant aware) | fixed constraint user |
-| DB utama | Neon Postgres (serverless, branching) | fixed constraint user |
+| Compute | **VM Vultr** (self-hosted, docker-compose, VM yang sama dgn Markoviz/`ai-perp-bot-core` yang sudah live) — **revisi final 7 Juli 2026**, sebelumnya Railway | lihat `docs/vultr-vm-migration-brief.md`; scope bisnis lebih besar (multi-produk) jadi alasan migrasi, Railway ditinggalkan bukan krn masalah teknis |
+| DB utama | Neon Postgres (serverless, branching) — **TETAP dipakai, tidak ikut migrasi Vultr** | fixed constraint user; compute pindah, DB tidak — testing tetap pakai pola `neon-preview-branch` branch-per-PR yang sudah jadi kebiasaan |
+| Reverse proxy | **Nginx** (routing + HTTPS/Let's Encrypt utk semua service di VM) | keputusan brief migrasi Vultr, lihat `docs/vultr-vm-migration-brief.md` |
+| Deploy | **cron-polling auto-deploy** (pola `ai-perp-bot-core/scripts/auto-deploy.sh` — VM cek `main` berkala, auto pull+redeploy) | sengaja lepas dari ketergantungan kuota GitHub Actions (lihat `docs/deployment-runbook.md`); CI/test tetap boleh via Actions, ini cuma jalur deploy |
 | Multi-tenancy | Row-level: `tenant_id`/`account_id` di semua tabel domain (bukan DB-per-tenant — terlalu mahal di Neon utk skala awal), Postgres RLS policy per tenant sbg defense-in-depth | pola standar SaaS row-level multi-tenant, biaya lebih rendah drpd DB terpisah per user |
 | Auth & Billing | Auth: Clerk (key sudah di-setup di Railway). Billing: **dual-provider Midtrans (fiat IDR) + XIDR/StraitsX (stablecoin regulated, IDRX sbg backup)** utk MVP, arsitektur `payment_provider` dinamis/pluggable — lihat B.16 | **Revisi ke-3** (Stripe→Paddle→Midtrans+IDRX→Midtrans+XIDR): krn target pasar sementara Indonesia & bisnis belum berbadan hukum (belum PT/CV), Xendit **tidak bisa dipakai dulu** (wajib legal entity). Midtrans jadi jalur utama pelanggan (verifikasi KTP, 1-3 hari), XIDR/StraitsX dipilih drpd IDRX krn lebih regulated & tetap terima tipe "Sole Trader" (KTP+NPWP, tanpa PT) — detail lengkap di B.16 |
 | Platform Core vs Product Vertical | Pisahkan `apps/platform-core/*` (tenant, auth, billing, agent-registry, LLM gateway, notification — agent-agnostic) dari `apps/products/trading/*` (spesifik trading) | visi bisnis user: trading = vertical pertama, agent exam/chatbot/content-creator/task menyusul sbg vertical baru yang reuse Platform Core (lihat A.6) |
 | Time-series | Native Postgres range-partitioning by time (manual, dikelola Inngest) + TimescaleDB (Apache-2, tanpa compression) opsional | Neon dukung timescaledb sejak PG18 (Feb 2026) tapi tanpa compression/tiering — partitioning manual jadi primary bet (terverifikasi) |
-| Orchestration | **Inngest self-hosted di Railway** | self-hosting resmi sejak Inngest 1.0 (terverifikasi), event-driven step function pas utk pola ingest→trigger; dievaluasi vs Trigger.dev/Temporal Cloud/custom-queue-di-Neon dan ditolak (lihat plan versi sebelumnya utk detail — Neon PgBouncer transaction-mode tidak support LISTEN/NOTIFY) |
+| Orchestration | **Inngest self-hosted** (container di VM Vultr, sebelumnya di Railway) | self-hosting resmi sejak Inngest 1.0 (terverifikasi), event-driven step function pas utk pola ingest→trigger; dievaluasi vs Trigger.dev/Temporal Cloud/custom-queue-di-Neon dan ditolak (lihat plan versi sebelumnya utk detail — Neon PgBouncer transaction-mode tidak support LISTEN/NOTIFY) |
 | LLM Observability | **Langfuse Cloud** (bukan self-host) utk MVP | self-host Langfuse butuh 6 container, beban ops besar drpd benefit di tahap ini |
 | CEX data/exec | CCXT + CCXT Pro (WS) unified, native WS fallback per exchange utk liquidation feed | 100+ exchange, minim maintenance |
 | DEX data/exec | Native SDK per protokol: Hyperliquid, dYdX v4, GMX, Vertex, Drift (perp); Meteora DLMM SDK (LP); Solana/EVM new-pair listener (meme-sniper) | tidak ada unifikasi matang utk on-chain |
@@ -257,11 +259,11 @@ Ini prinsip "generalize the boring 20%, spesialisasi yang 80% karakteristik prod
 | Interface MVP | Telegram bot (Python, signal tier) — **hybrid conversational** (natural language utk monitoring, structured confirm/tombol wajib utk aksi nyata) | latency rendah, effort kecil, akses darimana saja; conversational krn positioning "agent" bukan "bot command" (lihat B.14) |
 | Interface lanjutan | Web dashboard (Next.js + shadcn/ui, + billing/plan management) → Mobile app | dashboard utk riset/backtest visual + subscription management |
 | UI/UX & Branding | shadcn/ui + Tailwind (bukan fase desain Figma terpisah), branding minimal bertema "kinetic" dulu | prioritas kecepatan solo-founder ke MVP drpd investasi desain penuh di awal (lihat B.14) |
-| Custody | Non-custodial per-tenant: API key trade-only/no-withdraw (CEX), agent-wallet/session-key (DEX), envelope encryption per-tenant (data key unik per tenant, master key di KMS/Railway secret) | dikonfirmasi user; isolasi per-tenant mencegah satu key bocor berdampak ke tenant lain |
+| Custody | Non-custodial per-tenant: API key trade-only/no-withdraw (CEX), agent-wallet/session-key (DEX), envelope encryption per-tenant (data key unik per tenant, master key di KMS/env file per-service di VM — permission ketat `chmod 600`, lihat `docs/vultr-vm-migration-brief.md`) | dikonfirmasi user; isolasi per-tenant mencegah satu key bocor berdampak ke tenant lain |
 | LLM Provider | **OpenRouter** sbg provider utama (satu API key, akses banyak model/vendor sekaligus) diakses lewat `platform-core/llm-gateway`, dgn adapter interface tetap provider-agnostic (bisa tambah direct OpenAI/Anthropic/DeepSeek API key nanti tanpa ubah kontrak) | dikonfirmasi user (paket all-in-one OpenRouter), plus jaga fleksibilitas kalau nanti mau direct API utk model tertentu (lebih murah/cepat) |
 | Role & Access | 3 level: **superadmin** (founder, bypass billing, pakai resource sendiri, kontrol penuh konfigurasi platform) — **admin** (mengatur LLM/model per agent & per tier, feature flag, monitoring — bisa didelegasikan ke tim nanti) — **tenant/customer** (subscriber biasa, akses sesuai plan yg dibayar) | wajib disebut eksplisit oleh user; jadi dasar `llm_config` dinamis per agent (lihat B.13) |
 
-> **REVISI SEDANG DIBAHAS (6 Juli 2026) — Compute & DB baris di atas TIDAK LAGI final.** Founder berencana migrasi penuh dari Railway+Neon ke **VM Vultr** krn scope bisnis sekarang lebih besar (multi-agent platform, bukan cuma trading). Ini keputusan besar dgn briefing terpisah (belum ditulis di sesi ini) yg wajib mencakup: tech stack final utk multi-produk, opsi replikasi PITR/branching Neon di Postgres self-hosted (utk tetap dapat ephemeral-branch-per-PR testing yg sudah jadi kebiasaan CI proyek ini), dan penyesuaian workflow deploy (docker-compose + auto-deploy, referensi pola `ai-perp-bot-core/VM-DEPLOY.md`). **Jangan asumsikan Railway/Neon sbg keputusan final** sampai briefing migrasi itu selesai & disepakati.
+> **REVISI FINAL (7 Juli 2026) — migrasi compute Railway → VM Vultr sudah disepakati**, menggantikan catatan "sedang dibahas" tanggal 6 Juli. Keputusan lengkap (topologi VM sama dgn Markoviz, satu environment production tanpa VM staging terpisah, deploy via cron-polling `auto-deploy.sh`, reverse proxy Nginx, DB Neon TIDAK ikut migrasi) ada di **`docs/vultr-vm-migration-brief.md`** — baca itu sebelum menyentuh infra apa pun. Baris tabel B.1 di atas sudah mencerminkan keputusan ini. Detail layout docker-compose & domain/subdomain masih draf yg perlu direview founder sebelum slice implementasi pertama (audit VM yang sudah live) dibuka — lihat `docs/kanban.md`.
 
 ### B.2 Struktur Direktori (Platform Core generik + Trading sbg product vertical pertama)
 
@@ -306,7 +308,7 @@ agent-trading-perp/
 │   ├── schemas/                    # Pydantic + Zod
 │   ├── db/                         # SQLAlchemy models + Alembic (tenant_id + product_key di semua tabel domain)
 │   └── config/                     # plan-tier config (feature flags per product+tier)
-├── infra/{railway/, neon/, docker-compose.local.yml}
+├── infra/{vultr/, neon/, docker-compose.yml, docker-compose.local.yml}
 ├── docs/{architecture.md, data-model.md, security-guardrails.md, prd.md, adr/}
 └── .github/workflows/
 ```
@@ -474,9 +476,9 @@ Sudah diverifikasi via riset terkini (bukan asumsi lama): **CCXT Pro sudah digab
 
 | Komponen | MVP (Fase 0-3, low traffic) | Growth (Fase 4-7, live trading + meme-sniper) |
 |---|---|---|
-| Railway (compute multi-service: api, ingestion, agent-orchestrator, execution, inngest, telegram-bot, dashboard) | Pro plan $20/bln + usage ≈ **$50-100/bln** | Usage naik seiring service & traffic ≈ **$150-400/bln** |
+| VM Vultr (compute multi-service: api, ingestion, agent-orchestrator, execution, inngest, telegram-bot, dashboard — **revisi 7 Juli 2026**, VM yang sama dgn Markoviz, lihat `docs/vultr-vm-migration-brief.md`) | Biaya plan VM Vultr aktual (**belum diverifikasi di sini** — perlu dicek langsung ke akun Vultr founder, krn VM ini sudah ada/sunk cost dari Markoviz; biaya inkremental Kinetiq mungkin $0 kalau headroom cukup, atau naik plan kalau perlu upgrade — lihat item audit di brief migrasi) | Kemungkinan upgrade plan VM seiring traffic/service bertambah, presisi menyusul stlh audit VM |
 | Neon Postgres | Launch plan usage-based (compute $0.106/CU-hr, storage $0.35/GB-bln, tanpa minimum bulanan) ≈ **$10-30/bln** | Scale plan ($0.222/CU-hr, SLA 99.95%) seiring volume time-series naik ≈ **$100-300/bln** |
-| Inngest self-host | Hanya compute (masuk Railway di atas) + optional Redis addon ≈ **$0-15/bln** | sama, naik sedikit seiring service | **$10-30/bln** |
+| Inngest self-host | Hanya compute (masuk VM Vultr di atas) + optional Redis addon ≈ **$0-15/bln** | sama, naik sedikit seiring service | **$10-30/bln** |
 | Langfuse | Hobby (gratis, 50rb unit/bln) ≈ **$0** | Core $29/bln atau Pro $199/bln (kalau butuh retensi lebih lama/compliance) | **$29-199/bln** |
 | Data derivatif | CCXT + native WS + Coinalyze + CoinGecko (gratis) **+ CoinGlass Hobbyist** (internal/founder-only, Fase 0-2) ≈ **$29/bln** | **Wajib naik ke CoinGlass Standard sebelum Fase 3** (Hobbyist personal-use-only per ToS, tidak boleh dipakai layani pelanggan bayar — lihat B.11) ≈ **$299/bln**, naik ke Professional kalau volume Fase 6 (meme-sniper) butuh rate limit lebih tinggi |
 | Auth (Clerk) | Free tier ≈ **$0** | Paid tier seiring MAU naik ≈ **$25-100/bln** |
@@ -526,7 +528,7 @@ CREATE TABLE llm_config (
 | Job orchestration | TypeScript — Inngest functions |
 | Web dashboard | TypeScript — Next.js + React + Tailwind + **shadcn/ui** |
 | Database | PostgreSQL (Neon) |
-| Infra-as-code | YAML (GitHub Actions), Railway config |
+| Infra-as-code | YAML (GitHub Actions, utk CI/test), docker-compose (VM Vultr, lihat `docs/vultr-vm-migration-brief.md`) |
 | **Telegram bot** | **Python** (`python-telegram-bot`) — keputusan baru, lihat di bawah |
 
 **Telegram — tidak perlu Telegram Premium/Business**: terverifikasi, Bot API Telegram 100% gratis, tanpa tier berbayar utk fungsi dasar (kirim/terima pesan, inline button). Rate limit default (1 pesan/detik per chat, ~30 pesan/detik broadcast) jauh di atas kebutuhan Kinetiq di skala MVP. Opsi "paid broadcast" (Telegram Stars) cuma relevan kalau nanti broadcast >30 pesan/detik — bukan kebutuhan sekarang.
@@ -656,14 +658,14 @@ MCP relevan lewat **dua arah**, keduanya bernilai tapi tidak blocking MVP:
 
 **Rekomendasi**: masukkan sbg **Fase 2-3** (paralel dgn strategy engine), BUKAN prasyarat Fase 0/1 — MCP server internal cukup tipis untuk dibangun setelah skill registry (agent-orchestrator/skills) sudah stabil, supaya tidak dobel-desain kontrak tool sebelum bentuknya matang.
 
-### C.3 CI/CD & Otomasi (GitHub Actions + Neon branching + Railway)
+### C.3 CI/CD & Otomasi (GitHub Actions + Neon branching + VM Vultr)
 
-Terverifikasi via riset: Neon & Railway **sama-sama punya dukungan resmi** utk pola yang diminta user:
+> **Revisi 7 Juli 2026**: baris "Railway" di bawah ini digantikan VM Vultr + cron-polling `auto-deploy.sh` (keputusan final, lihat `docs/vultr-vm-migration-brief.md`) — bagian Neon branching TETAP berlaku apa adanya, DB tidak ikut migrasi.
 
 - **Neon**: GitHub Action resmi `neondatabase/create-branch-action` bikin **branch Neon terisolasi per PR** otomatis (data+schema copy-on-write, tanpa biaya storage penuh), `schema-diff-action` posting diff skema sbg komentar PR (review migrasi jadi visual), `delete-branch-action` otomatis cleanup saat PR ditutup. Alur: PR dibuka → branch Neon baru → Alembic migration jalan ke branch itu → test integration jalan ke branch terisolasi → PR closed/merged → branch dihapus (atau di-merge ke branch `main` Neon kalau PR merge ke `main` git).
-- **Railway**: auto-deploy native saat push ke branch yang di-trigger (biasanya `main`) via GitHub integration bawaan (tanpa Action tambahan), plus `Railway Deploy Action`/CLI (pakai Project Token) utk preview-environment per-PR kalau mau staging terpisah per-fitur.
+- **VM Vultr**: **cron-polling auto-deploy** (bukan lagi auto-deploy native Railway) — VM cek `main` secara berkala & `git pull` + rebuild/restart container kalau ada commit baru, pola diadopsi dari `ai-perp-bot-core/scripts/auto-deploy.sh` yang sudah terbukti live. Sengaja lepas dari ketergantungan GitHub Actions utk jalur deploy (lihat `docs/deployment-runbook.md` soal kuota Actions yang pernah habis).
 - **Auto-merge ke `main`**: direkomendasikan pakai **GitHub native auto-merge** (`gh pr merge --auto`) yang otomatis merge begitu semua **required status check** hijau (lint, type-check, unit+integration test thd Neon preview branch, migration dry-run) — **DENGAN PENGECUALIAN**: PR yang menyentuh path sensitif (`apps/products/trading/execution/risk_gate.py`, `apps/products/trading/execution/custody/*`, migration yang mengubah tabel `risk_mandate`/`tenant_credential`) **wajib manual review**, tidak boleh auto-merge murni — ini garis merah krn menyangkut uang riil & custody, otomasi penuh di titik ini terlalu berisiko meski secara teknis bisa.
-- Implementasi: `.github/workflows/ci.yml` (lint+test+migration-dry-run pakai Neon branch), `.github/workflows/deploy.yml` (trigger dari Railway auto-deploy, tidak perlu Action manual kalau pakai integrasi native), branch protection rule di GitHub utk wajibkan check + CODEOWNERS review khusus path sensitif di atas.
+- Implementasi: `.github/workflows/ci.yml` (lint+test+migration-dry-run pakai Neon branch, tidak berubah), cron job/systemd timer di VM Vultr yang jalanin `auto-deploy.sh` (menggantikan `.github/workflows/deploy.yml` yang sebelumnya mengandalkan integrasi native Railway), branch protection rule di GitHub utk wajibkan check + CODEOWNERS review khusus path sensitif di atas.
 
 ### C.4 Ide Nama Bisnis (brainstorm, perlu keputusan Anda)
 

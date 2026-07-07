@@ -29,6 +29,14 @@ Indonesian directly; don't draft in English and translate after.
 
 ## Before touching Railway, Neon, or CI config
 
+**Compute is migrating from Railway to a Vultr VM** (decided 7 July 2026,
+see `docs/vultr-vm-migration-brief.md` and `docs/prd.md` B.1) -- Neon stays
+as the DB, only compute moves. The Railway-specific notes below are
+historical/reference until that migration actually lands; don't assume
+Railway is still the live target for new infra work without checking the
+migration brief and `docs/kanban.md` first. The Neon-specific notes remain
+fully valid regardless.
+
 Read `docs/deployment-runbook.md` first. The short version of what's in there:
 
 - `railway.toml` must live at **repo root**, never inside a service's Root

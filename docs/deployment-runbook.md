@@ -10,6 +10,15 @@ terulang lagi kalau tidak ditulis di sini.
 Lihat `docs/prd.md` untuk PRD produk/arsitektur -- dokumen ini murni
 mekanik deployment.
 
+> **Status (7 Juli 2026): compute sedang migrasi dari Railway ke VM
+> Vultr** (keputusan final, lihat `docs/vultr-vm-migration-brief.md`).
+> Neon TETAP dipakai sbg DB -- semua gotcha Neon di bawah ini masih
+> berlaku penuh. Gotcha Railway/Railpack di bawah ini jadi **historis**
+> (referensi kejadian nyata yang sudah terverifikasi selama Railway masih
+> jadi compute aktif) begitu migrasi selesai -- jangan asumsikan
+> `railway.toml`/Railway masih jadi target deploy aktif tanpa cek brief
+> migrasi & `docs/kanban.md` dulu.
+
 ## Referensi topologi
 
 - Repo: `kinetiq-app`, default branch `main`.
