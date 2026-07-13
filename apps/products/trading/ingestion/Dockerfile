@@ -38,6 +38,13 @@ COPY apps/products/trading/agent-orchestrator /app/apps/products/trading/agent-o
 RUN pip install --no-cache-dir -r /app/apps/products/trading/ingestion/requirements.txt
 
 ENV PYTHONPATH=/app/packages/db/src:/app/apps/products/trading/ingestion
+# Without this, Python fully buffers stdout when it isn't a TTY (always true
+# under Docker) -- worker.py's print()-based progress logging would sit in
+# an internal buffer and never reach `docker logs`/Coolify's log viewer
+# until the buffer filled or the process exited. Caught via a real deploy:
+# the container ran (and, per Coolify's app status, was even fine on some
+# health axis) but its log output was completely empty.
+ENV PYTHONUNBUFFERED=1
 WORKDIR /app/apps/products/trading/ingestion
 
 # Coolify's own restart policy (application Advanced settings) handles the
