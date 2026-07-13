@@ -1,7 +1,8 @@
 # Packages: DB
 
 SQLAlchemy models (`src/kinetiq_db/models.py`) + Alembic migrations (`migrations/`) -- source of truth
-schema (tenant/RLS, time-series derivatif, trading domain). See `docs/prd.md` Section B.3/B.6b/B.13.
+schema (time-series derivatif, trading domain). Single-operator, no tenant/RLS layer as of migration
+`0009` (see below) -- see `docs/prd.md` for the current data model.
 
 Verified end-to-end (upgrade -> downgrade -> upgrade) against local PostgreSQL 16 on 2026-07-01:
 32 objects created (25 regular tables + 7 range-partitioned tables, each with a `_default` catch-all
@@ -47,6 +48,14 @@ per-PR Neon branch, so it had never actually proven that `production` (the real 
 `DATABASE_URL` points to) was migrated -- and it wasn't. `platform_user` didn't exist there at all until
 this was fixed; every prior deploy "worked" only because no request had reached a real DB query with a
 real auth token yet. See `docs/deployment-runbook.md` Neon gotcha #0 for the full incident writeup.
+
+**Platform-core / multi-tenancy dropped entirely** as of `0009_drop_platform_core_and_tenancy.py`
+(2026-07-13): Kinetiq narrowed scope to a single-operator agentic trading system (`apps/platform-core/*`
+deleted in the same change). RLS, `tenant_isolation` policies, and `tenant_id` are gone from every
+trading table; `tenant`/`platform_user`/`llm_config`/`token_package`/`tenant_token_ledger` are dropped;
+`tenant_credential` is renamed to `credential`. The RLS/append-only-log/auto-migrate paragraphs above
+are kept as historical record of what was true through migration 0006-0008, not current behavior --
+`order_audit_log`'s append-only trigger (0003) is unaffected and still enforced.
 
 Still not done: pgvector setup (Section C.1).
 

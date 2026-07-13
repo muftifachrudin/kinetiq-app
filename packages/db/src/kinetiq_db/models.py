@@ -1,14 +1,15 @@
 """SQLAlchemy models — source of truth schema for Kinetiq.
 
-Mirrors docs/prd.md Section B.3 (data model), B.13 (role/LLM config),
-and B.6b (trader profile). Time-series tables (funding_rate,
-open_interest, price_basis, orderbook_snapshot, liquidation_event,
-market_sentiment, ohlcv) are range-partitioned by `ts` — see
+Kinetiq is a single-operator agentic trading system (no multi-tenant
+platform-core layer — see migration 0009, which dropped `tenant`/
+`platform_user`/`llm_config`/`token_package`/`tenant_token_ledger` and
+stripped `tenant_id` from every trading table). Mirrors docs/prd.md's
+data-model section. Time-series tables (funding_rate, open_interest,
+price_basis, orderbook_snapshot, liquidation_event, market_sentiment,
+ohlcv) are range-partitioned by `ts` — see
 migrations/versions/0001_initial_schema.py for the partition DDL and
 infra/neon/partitioning/ for the ongoing partition-rollover job.
 """
-
-import uuid
 
 from sqlalchemy import (
     BigInteger,
@@ -25,114 +26,12 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
     pass
-
-
-# --- Platform Core (agent-agnostic) ---------------------------------------
-
-
-class Tenant(Base):
-    """A paying customer account (or the founder's superadmin tenant)."""
-
-    __tablename__ = "tenant"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(Text, unique=True, nullable=False)
-    plan_tier = Column(Text, nullable=False, server_default="signal_only")
-    payment_provider = Column(Text)  # 'midtrans' (MVP), 'idrx', 'xendit'/'paddle' (fase lanjutan)
-    payment_customer_id = Column(Text)
-    payment_subscription_status = Column(Text)
-    token_package_id = Column(Integer, ForeignKey("token_package.id"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        CheckConstraint(
-            "plan_tier in ('signal_only','auto_execute','meme_addon','dlmm_addon')",
-            name="ck_tenant_plan_tier",
-        ),
-    )
-
-
-class PlatformUser(Base):
-    """Login identity. role='tenant' links to a paying Tenant via tenant_id;
-    superadmin/admin are platform operators and may have tenant_id NULL."""
-
-    __tablename__ = "platform_user"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=True)
-    clerk_user_id = Column(Text, unique=True, nullable=False)
-    email = Column(Text, unique=True, nullable=False)
-    role = Column(Text, nullable=False, server_default="tenant")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        CheckConstraint("role in ('superadmin','admin','tenant')", name="ck_platform_user_role"),
-    )
-
-
-class LlmConfig(Base):
-    """Dynamic per-agent LLM routing, resolved tenant -> product -> global."""
-
-    __tablename__ = "llm_config"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    scope = Column(Text, nullable=False)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=True)
-    product_key = Column(Text, nullable=True)
-    agent_skill_key = Column(Text, nullable=False)
-    provider = Column(Text, nullable=False, server_default="openrouter")
-    model = Column(Text, nullable=False)
-    params = Column(JSONB)
-    updated_by = Column(UUID(as_uuid=True), ForeignKey("platform_user.id"))
-    updated_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        CheckConstraint("scope in ('global','product','tenant')", name="ck_llm_config_scope"),
-    )
-
-
-class TokenPackage(Base):
-    """Admin-configurable token package/top-up (Section B.15) — dynamic, not hardcoded."""
-
-    __tablename__ = "token_package"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    package_key = Column(Text, unique=True, nullable=False)
-    name = Column(Text, nullable=False)
-    monthly_token_allowance = Column(BigInteger, nullable=False)
-    price_usd = Column(Numeric(10, 2), nullable=False)
-    discount_pct = Column(Numeric(5, 2), server_default="0")
-    is_addon_topup = Column(Boolean, server_default="false")
-    is_active = Column(Boolean, server_default="true")
-    updated_by = Column(UUID(as_uuid=True), ForeignKey("platform_user.id"))
-    updated_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-class TenantTokenLedger(Base):
-    """Append-only token usage/topup ledger (Section B.15) — same pattern as OrderAuditLog."""
-
-    __tablename__ = "tenant_token_ledger"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
-    ts = Column(DateTime(timezone=True), server_default=func.now())
-    delta_tokens = Column(BigInteger, nullable=False)
-    reason = Column(Text, nullable=False)
-    agent_skill_key = Column(Text)
-    balance_after = Column(BigInteger, nullable=False)
-
-    __table_args__ = (
-        CheckConstraint(
-            "reason in ('monthly_reset','consumption','topup_purchase','admin_adjustment')",
-            name="ck_tenant_token_ledger_reason",
-        ),
-    )
 
 
 # --- Trading vertical: dimensions ------------------------------------------
@@ -282,7 +181,6 @@ class Strategy(Base):
     __tablename__ = "strategy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     name = Column(Text, nullable=False)
     type = Column(Text, nullable=False)
     params = Column(JSONB, nullable=False)
@@ -294,7 +192,6 @@ class PortfolioTarget(Base):
     __tablename__ = "portfolio_target"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     strategy_id = Column(Integer, ForeignKey("strategy.id"), nullable=False)
     computed_at = Column(DateTime(timezone=True), nullable=False)
     instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
@@ -307,7 +204,6 @@ class Position(Base):
     __tablename__ = "position"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     account_id = Column(Integer, nullable=False)
     venue_id = Column(SmallInteger, ForeignKey("venue.id"), nullable=False)
     instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
@@ -329,7 +225,6 @@ class OrderAuditLog(Base):
     __tablename__ = "order_audit_log"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     ts = Column(DateTime(timezone=True), server_default=func.now())
     account_id = Column(Integer, nullable=False)
     actor = Column(Text, nullable=False)
@@ -342,7 +237,6 @@ class OrderAuditLog(Base):
 class RiskMandate(Base):
     __tablename__ = "risk_mandate"
 
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), primary_key=True)
     account_id = Column(Integer, primary_key=True)
     max_leverage = Column(Numeric(6, 3), server_default="3")
     max_position_notional_usd = Column(Numeric(24, 4))
@@ -362,14 +256,13 @@ class RiskMandate(Base):
     __table_args__ = (CheckConstraint("default_margin_mode in ('cross', 'isolated')", name="ck_risk_mandate_default_margin_mode"),)
 
 
-class TenantCredential(Base):
-    """Envelope-encrypted per-tenant API key / agent-wallet. Never store a
+class Credential(Base):
+    """Envelope-encrypted operator API key / agent-wallet. Never store a
     raw secret here — encrypted_payload + data_key_encrypted only."""
 
-    __tablename__ = "tenant_credential"
+    __tablename__ = "credential"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     venue_id = Column(SmallInteger, ForeignKey("venue.id"), nullable=False)
     credential_type = Column(Text, nullable=False)
     encrypted_payload = Column(LargeBinary, nullable=False)
@@ -379,7 +272,7 @@ class TenantCredential(Base):
     __table_args__ = (
         CheckConstraint(
             "credential_type in ('api_key_trade_only','agent_wallet')",
-            name="ck_tenant_credential_type",
+            name="ck_credential_type",
         ),
     )
 
@@ -407,7 +300,6 @@ class DlmmPosition(Base):
     __tablename__ = "dlmm_position"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     pool_address = Column(Text, nullable=False)
     lower_bin = Column(Integer)
     upper_bin = Column(Integer)
@@ -489,7 +381,6 @@ class TradeAnnotation(Base):
     __tablename__ = "trade_annotation"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
     instrument_id = Column(Integer, ForeignKey("instrument.id"), nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False)
     swing_ref = Column(JSONB)

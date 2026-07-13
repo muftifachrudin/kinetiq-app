@@ -34,12 +34,13 @@ straight from the funding_rate/open_interest tables (a natural bump to
 config-v2, tracked alongside that work, not invented speculatively now).
 
 PreTradeCard (F7a, position_sizing.py) is built here against REPRESENTATIVE,
-illustrative account parameters, NOT a real tenant/mandate -- there is no
-tenant in Shadow Tahap 1 at all (signal has no tenant_id, same as ohlcv/
-funding_rate, per the Signal model's own docstring). This mirrors what a
-typical default RiskMandate row would compute, for descriptive/context
-purposes in factor_scores only -- never a real trading decision, and never
-read back into anything that gates or sizes a real order.
+illustrative account parameters, NOT a real mandate -- Kinetiq is
+single-operator with no tenant concept at all (migration 0009; signal has
+no tenant_id either, same as ohlcv/funding_rate, per the Signal model's own
+docstring). This mirrors what a typical default RiskMandate row would
+compute, for descriptive/context purposes in factor_scores only -- never a
+real trading decision, and never read back into anything that gates or
+sizes a real order.
 """
 
 import dataclasses

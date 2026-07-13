@@ -33,7 +33,7 @@ def test_parse_ts_accepts_non_utc_offset():
 
 def test_build_row_minimal_required_fields_only():
     args = lta.build_parser().parse_args(
-        ["--venue", "binance", "--symbol", "BTC/USDT:USDT", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short", "--tenant-id", "x"]
+        ["--venue", "binance", "--symbol", "BTC/USDT:USDT", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short"]
     )
     row = lta.build_row(args)
     assert row["ts"] == datetime.datetime(2026, 7, 3, 14, 0, 0, tzinfo=UTC)
@@ -47,7 +47,6 @@ def test_build_row_all_fields_populated():
     args = lta.build_parser().parse_args(
         [
             "--venue", "binance", "--symbol", "BTC/USDT:USDT", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short",
-            "--tenant-id", "x",
             "--fib-level", "0.618", "--gann-angle", "1x1", "--rationale", "test note",
             "--swing-ref", '{"pivot_price": 60000, "pivot_index": 91}',
             "--leverage", "10", "--margin-mode", "isolated",
@@ -73,29 +72,14 @@ def test_build_row_all_fields_populated():
 def test_build_parser_rejects_invalid_margin_mode():
     with pytest.raises(SystemExit):
         lta.build_parser().parse_args(
-            ["--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short", "--tenant-id", "x", "--margin-mode", "bogus"]
+            ["--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short", "--margin-mode", "bogus"]
         )
 
 
 def test_build_parser_rejects_invalid_exit_reason_real():
     with pytest.raises(SystemExit):
         lta.build_parser().parse_args(
-            ["--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short", "--tenant-id", "x", "--exit-reason-real", "bogus"]
-        )
-
-
-def test_build_parser_requires_exactly_one_tenant_identifier():
-    with pytest.raises(SystemExit):
-        lta.build_parser().parse_args(["--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short"])
-
-
-def test_build_parser_rejects_both_tenant_flags_together():
-    with pytest.raises(SystemExit):
-        lta.build_parser().parse_args(
-            [
-                "--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short",
-                "--tenant-id", "x", "--tenant-email", "y",
-            ]
+            ["--venue", "b", "--symbol", "s", "--ts", "2026-07-03T14:00:00+00:00", "--action", "short", "--exit-reason-real", "bogus"]
         )
 
 
@@ -106,10 +90,10 @@ def test_main_dry_run_does_not_touch_the_db(capsys):
     exit_code = lta.main(
         [
             "--dry-run", "--venue", "binance", "--symbol", "BTC/USDT:USDT", "--ts", "2026-07-03T14:00:00+00:00",
-            "--action", "short", "--tenant-email", "founder@example.com",
+            "--action", "short",
         ]
     )
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out
-    assert "founder@example.com" in out
+    assert "BTC/USDT:USDT" in out

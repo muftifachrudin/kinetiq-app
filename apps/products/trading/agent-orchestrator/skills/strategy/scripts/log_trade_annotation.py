@@ -7,7 +7,6 @@ existing at all -- brief Section 5's cold start is explicit: "sebelum ada
 
 Usage:
     python3 scripts/log_trade_annotation.py \\
-        --tenant-email founder@example.com \\
         --venue binance --symbol "BTC/USDT:USDT" \\
         --ts 2026-07-03T14:00:00+00:00 --action short \\
         --leverage 10 --margin-mode isolated \\
@@ -17,30 +16,25 @@ Usage:
 Drop --dry-run once the printed preview looks right -- it's the only
 thing standing between a typo and a real INSERT.
 
-Every field is optional except tenant/instrument/ts/action (the table's
-own NOT NULL columns, unchanged since migration 0001) -- a real trade
-logged before its fib/gann analysis context is fully written up is still
-valid data, same as the brief's own point that a signal without a real
-trade behind it stays valid too. No signal_id linkage yet (see migration
-0005's docstring) -- this script logs one annotation row, it does not
-pair it to a specific generated signal.
+Every field is optional except instrument/ts/action (the table's own NOT
+NULL columns) -- a real trade logged before its fib/gann analysis context
+is fully written up is still valid data, same as the brief's own point
+that a signal without a real trade behind it stays valid too. No
+signal_id linkage yet (see migration 0005's docstring) -- this script
+logs one annotation row, it does not pair it to a specific generated
+signal.
 
-RLS note: trade_annotation is FORCE ROW LEVEL SECURITY'd (docs/prd.md
-Section B.4) -- an INSERT is rejected by the WITH CHECK clause unless
-app.tenant_id is set to the row's own tenant_id first in the same
-session (SELECT set_config(...), never a bare SET with a bind parameter,
-per docs/deployment-runbook.md's RLS gotchas). This script does that
-before inserting; skipping it is what a raw `psql` INSERT would silently
-get wrong.
+Kinetiq is single-operator (migration 0009 dropped tenant_id/RLS from
+trade_annotation along with the rest of the platform-core multi-tenant
+layer) -- there is no tenant context to resolve or set_config before
+inserting anymore.
 
 Not pytest-covered end-to-end (needs a real DATABASE_URL and writes to a
 real table, same as data_loader.py/ingest.py) -- the pure parsing/
 validation pieces (parse_ts, build_row, build_parser) are unit tested,
-and the actual INSERT + RLS enforcement was verified against a real
-local Postgres 16 with every migration applied (0001-0005) and a
-non-superuser role (RLS is a no-op for superusers, same caveat as every
-other RLS verification this session) -- see docs/fib-gann-validation-
-brief.md Section 19.
+and the actual INSERT was verified against a real local Postgres 16 with
+every migration applied -- see docs/fib-gann-validation-brief.md
+Section 19.
 
 kinetiq_db/sqlalchemy are imported lazily, inside the functions that
 actually touch the DB, not at module level: CI's `test` job deliberately
@@ -67,8 +61,8 @@ def parse_ts(value: str) -> datetime.datetime:
 
 
 def build_row(args: argparse.Namespace) -> dict:
-    """Pure -- builds every column EXCEPT tenant_id/instrument_id, which
-    need a DB lookup and are added by the caller after this."""
+    """Pure -- builds every column EXCEPT instrument_id, which needs a DB
+    lookup and is added by the caller after this."""
     return {
         "ts": parse_ts(args.ts),
         "swing_ref": json.loads(args.swing_ref) if args.swing_ref else None,
@@ -84,18 +78,6 @@ def build_row(args: argparse.Namespace) -> dict:
         "funding_paid_usd": args.funding_paid_usd,
         "exit_reason_real": args.exit_reason_real,
     }
-
-
-def resolve_tenant_id(session, tenant_id: str | None, tenant_email: str | None):
-    if tenant_id:
-        return tenant_id
-    from kinetiq_db.models import Tenant
-    from sqlalchemy import select
-
-    row = session.execute(select(Tenant.id).where(Tenant.email == tenant_email)).first()
-    if row is None:
-        raise SystemExit(f"no tenant found with email {tenant_email!r}")
-    return row.id
 
 
 def resolve_instrument_id(session, venue: str, symbol: str) -> int:
@@ -115,10 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--ts", required=True, help="ISO 8601, must include a UTC offset")
     parser.add_argument("--action", required=True, help="e.g. long/short -- not DB-constrained, but that's the existing convention")
-
-    tenant_group = parser.add_mutually_exclusive_group(required=True)
-    tenant_group.add_argument("--tenant-id")
-    tenant_group.add_argument("--tenant-email")
 
     parser.add_argument("--fib-level", type=float)
     parser.add_argument("--gann-angle")
@@ -142,26 +120,21 @@ def main(argv: list[str] | None = None) -> int:
     row = build_row(args)
 
     if args.dry_run:
-        preview = {**row, "venue": args.venue, "symbol": args.symbol, "tenant_id": args.tenant_id, "tenant_email": args.tenant_email}
-        print("DRY RUN -- would insert (tenant/instrument not resolved, no DB touched):")
+        preview = {**row, "venue": args.venue, "symbol": args.symbol}
+        print("DRY RUN -- would insert (instrument not resolved, no DB touched):")
         print(json.dumps(preview, indent=2, default=str))
         return 0
 
     from kinetiq_db.engine import normalize_db_url
     from kinetiq_db.models import TradeAnnotation
-    from sqlalchemy import create_engine, func, insert, select
+    from sqlalchemy import create_engine, insert
     from sqlalchemy.orm import Session
 
     engine = create_engine(normalize_db_url(os.environ["DATABASE_URL"]))
     with Session(engine) as session, session.begin():
-        tenant_id = resolve_tenant_id(session, args.tenant_id, args.tenant_email)
         instrument_id = resolve_instrument_id(session, args.venue, args.symbol)
-        # SELECT set_config(...), never a bare SET with a bind parameter --
-        # docs/deployment-runbook.md's RLS gotchas explain why the latter
-        # is a Postgres syntax error, not just bad style.
-        session.execute(select(func.set_config("app.tenant_id", str(tenant_id), False)))
         new_id = session.execute(
-            insert(TradeAnnotation).values(tenant_id=tenant_id, instrument_id=instrument_id, **row).returning(TradeAnnotation.id)
+            insert(TradeAnnotation).values(instrument_id=instrument_id, **row).returning(TradeAnnotation.id)
         ).scalar_one()
 
     print(f"inserted trade_annotation id={new_id}")

@@ -1,5 +1,20 @@
 # Briefing Migrasi Compute: Railway -> VM Vultr (7 Juli 2026)
 
+> **SUPERSEDED (13 Juli 2026)**: keputusan deploy mekanisme di bawah ini
+> (docker-compose + Nginx + cron-polling auto-deploy manual) **diganti
+> Coolify self-hosted** di VM Vultr yang sama -- Coolify sudah terinstal
+> lebih dulu di VM ini (di luar sesi ini) dan lebih matang dari rencana
+> cron-polling manual (native git-webhook auto-deploy, Traefik reverse
+> proxy bawaan, API untuk provisioning/env var/log). Lihat
+> `docs/deployment-runbook.md` (Gotcha Coolify) untuk cara kerja yang
+> sekarang berlaku. Brief ini TETAP disimpan sbg catatan sejarah audit VM
+> (topologi/kapasitas Markoviz, keputusan "VM yang sama, bukan VM baru")
+> -- yang sudah tidak berlaku CUMA bagian mekanisme deploy (docker-compose/
+> Nginx/cron-polling), bukan keputusan topologi VM-nya. Konteks "multi-
+> produk sejak awal" di paragraf di bawah juga sudah tidak berlaku --
+> scope Kinetiq dipangkas ke single-operator trading system 13 Juli 2026
+> (`apps/platform-core/*` dihapus, lihat `CLAUDE.md`).
+
 Keputusan hasil sesi grill-me (mengikuti `docs/ai-coding-workflow.md` Section
 1.1) sebelum implementasi apa pun dimulai. Ini **sesi pertama** yang harus
 dikerjakan sebelum slice lain di `docs/kanban.md` -- semua service baru
@@ -7,7 +22,7 @@ dikerjakan sebelum slice lain di `docs/kanban.md` -- semua service baru
 infrastruktur ini, jadi keputusan di sini jadi fondasi buat kerja
 berikutnya. Skalanya disesuaikan utk **multi-produk sejak awal** (bukan
 cuma trading), krn ini yg jadi alasan migrasi ini terjadi sekarang (lihat
-`docs/prd.md` A.6/B.6c/B.14c).
+`docs/prd.md` A.6/B.6c/B.14c) -- **catatan historis, lihat banner di atas.**
 
 ## Keputusan yang sudah disepakati founder
 
