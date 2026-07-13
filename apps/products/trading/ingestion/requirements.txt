@@ -1,7 +1,6 @@
 # For local dev (`pip install -r` this file to work on ingestion alone).
-# The actual Railway worker service (railway.ingestion-worker.toml) installs
-# from the repo-root requirements.txt instead, which includes these same
-# packages -- see that file's comment for why.
+# The Coolify-deployed ingestion worker (apps/products/trading/ingestion/
+# Dockerfile) installs from this same file directly.
 ccxt>=4.4
 requests>=2.31
 sqlalchemy>=2.0

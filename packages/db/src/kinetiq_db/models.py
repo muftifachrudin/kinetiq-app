@@ -277,6 +277,32 @@ class Credential(Base):
     )
 
 
+# --- On-chain intel (collect-only, not wired into signal/confidence) ------
+
+
+class OnchainExchangeFlow(Base):
+    """USD in/outflow of an asset between a tracked entity (e.g. a CEX) and
+    the rest of the chain, per data point from an on-chain intel vendor
+    (Arkham). Collect-only -- no FK into instrument/venue, not read by
+    anything in the signal pipeline yet (see migration 0010's docstring).
+
+    Composite PK (no surrogate id), matching funding_rate/ohlcv/
+    open_interest's convention -- required for db.merge() to upsert
+    idempotently in ingest_onchain.py."""
+
+    __tablename__ = "onchain_exchange_flow"
+
+    source = Column(Text, primary_key=True, server_default="arkham")
+    entity = Column(Text, primary_key=True)
+    chain = Column(Text, primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    inflow_usd = Column(Numeric(24, 4))
+    outflow_usd = Column(Numeric(24, 4))
+    cumulative_inflow_usd = Column(Numeric(24, 4))
+    cumulative_outflow_usd = Column(Numeric(24, 4))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 # --- Meme-sniper (V2) -------------------------------------------------------
 
 
