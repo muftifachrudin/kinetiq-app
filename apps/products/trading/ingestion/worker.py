@@ -18,8 +18,9 @@ needed at all, so the actual gap was capability (ingest.py couldn't page
 through history) and scheduling (nothing kept running it), not a data
 vendor limitation.
 
-Deployed as ITS OWN Railway service (see railway.ingestion-worker.toml at
-repo root) -- ingest.py itself stays a plain library module + one-shot CLI
+Deployed as ITS OWN Coolify application (see Dockerfile in this directory,
+which replaced railway.ingestion-worker.toml 1:1 when compute moved off
+Railway) -- ingest.py itself stays a plain library module + one-shot CLI
 unchanged in its own right, this just orchestrates it on a loop. Founder
 chose this over a GitHub Actions cron or running it manually/locally,
 explicitly for true always-on polling rather than a delayed/periodic catch-

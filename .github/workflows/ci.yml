@@ -122,6 +122,7 @@ jobs:
 # manual review on risk_gate.py, execution/custody/, and DB migrations, so
 # auto-merge can never silently touch those paths.
 #
-# Railway deploy is intentionally NOT an Action here: connect the GitHub
-# repo directly in each Railway service's Settings -> Source for native
-# auto-deploy on push to main (no secret needed for that basic flow).
+# Deploy is intentionally NOT an Action here: each Coolify application is
+# connected directly to this GitHub repo (git-based deploy source) for
+# native auto-deploy on push to main via Coolify's own webhook -- same
+# shape as the old Railway setup this replaced, just a different host.

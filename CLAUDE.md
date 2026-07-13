@@ -1,8 +1,13 @@
 # Kinetiq
 
-Multi-agent AI trading SaaS (perp/spot MVP, meme-sniper & DLMM as later
-modules), built on an agent-agnostic Platform Core. Full PRD, architecture,
-data model, and roadmap: **`docs/prd.md`** (living doc -- keep it in sync
+Single-operator agentic trading system (BTC perp first) -- deterministic
+signal modules -> arbiter -> risk hard gate -> shadow trading -> live canary,
+with strict OOS walk-forward validation gates. No multi-tenant SaaS layer:
+`apps/platform-core/*` (billing, agent-registry, api-gateway, etc.) and the
+DB's tenant/RLS layer were dropped 13 July 2026 (migration
+`0009_drop_platform_core_and_tenancy.py`) when scope narrowed from a
+multi-vertical SaaS to this single focus. Full PRD, architecture, data
+model, and roadmap: **`docs/prd.md`** (living doc -- keep it in sync
 whenever a real architecture/infra decision changes, don't let it drift into
 a stale snapshot). Deployment/infra gotchas: **`docs/deployment-runbook.md`**.
 Project convention for how AI-assisted coding sessions on this repo should
@@ -27,37 +32,32 @@ names, jargon like "walk-forward"/"bootstrap CI", numbers/stats stay
 as-is -- only the narrative/explanation is translated). Write new docs in
 Indonesian directly; don't draft in English and translate after.
 
-## Before touching Railway, Neon, or CI config
+## Before touching Coolify, Neon, or CI config
 
-**Compute is migrating from Railway to a Vultr VM** (decided 7 July 2026,
-see `docs/vultr-vm-migration-brief.md` and `docs/prd.md` B.1) -- Neon stays
-as the DB, only compute moves. The Railway-specific notes below are
-historical/reference until that migration actually lands; don't assume
-Railway is still the live target for new infra work without checking the
-migration brief and `docs/kanban.md` first. The Neon-specific notes remain
-fully valid regardless.
+**Compute runs on self-hosted Coolify** on a Vultr VM (migrated off Railway
+13 July 2026 -- `docs/vultr-vm-migration-brief.md` has the history, superseded
+by the Coolify decision; Railway is gone, not a fallback). Neon stays as the
+DB, unchanged by this move. The same VM also runs Markoviz
+(`ai-perp-bot-core`) live, **unmanaged by Coolify** (its own docker-compose,
+internal-only ports) -- never assume a Coolify-side change is isolated from
+it without checking `docker ps` on the host first; don't restart/stop
+anything on that VM without the founder's explicit sign-off.
 
 Read `docs/deployment-runbook.md` first. The short version of what's in there:
 
-- `railway.toml` must live at **repo root**, never inside a service's Root
-  Directory -- Railway's config-as-code resolution ignores Root Directory,
-  though commands inside the file still execute relative to it.
-- Don't override `[build] buildCommand` for a Python service on Railway.
-  Railpack has solid native install-step support for plain `requirements.txt`
-  projects, not for bare `pyproject.toml`/setuptools ones (no Poetry/uv) --
-  use a flat `main.py` + `requirements.txt`, not a `src/`-layout package.
-- Use `python -m uvicorn ...` (or `python -m <tool>` generally) in
-  `startCommand`, never a bare console-script binary -- Railpack's
-  mise-managed Python doesn't reliably put shims on the deploy stage's PATH.
+- Coolify deploys are **Docker-build based, not Railpack/buildpack** -- every
+  deployable service needs its own `Dockerfile` (none existed under Railway;
+  Railpack's zero-config Python detection has no Coolify equivalent worth
+  relying on). A service that needs the sibling `packages/db` package must
+  `COPY` it into its own image explicitly -- there is no repo-root
+  Root-Directory workaround like Railway's.
 - Neon's default/primary branch is named **`production`**, not `main` --
   don't assume git and Neon branch names match (`schema-diff-action`'s
   `base_branch` needs the Neon name).
-- `DATABASE_URL` from Neon/Railway is a bare `postgresql://` URL; SQLAlchemy
-  will default that to `psycopg2` unless forced to `psycopg` (v3). Every
-  service must call `kinetiq_db.engine.normalize_db_url()` rather than
-  `create_engine(os.environ["DATABASE_URL"])` directly -- this bit two
-  separate services (`packages/db/migrations/env.py` and
-  `apps/platform-core/api-gateway/deps.py`) before it was made shared.
+- `DATABASE_URL` from Neon is a bare `postgresql://` URL; SQLAlchemy will
+  default that to `psycopg2` unless forced to `psycopg` (v3). Every service
+  must call `kinetiq_db.engine.normalize_db_url()` rather than
+  `create_engine(os.environ["DATABASE_URL"])` directly.
 - This session's sandbox may not be able to reach `console.neon.tech`
   directly, but GitHub Actions runners always can -- a PR is the real
   integration test for DB/migration changes, not "can I curl it from here."
@@ -65,58 +65,31 @@ Read `docs/deployment-runbook.md` first. The short version of what's in there:
   migrated.** `neon-preview-branch` only ever runs against a fresh,
   ephemeral, per-PR branch that gets deleted when the PR closes -- it says
   nothing about whether `alembic upgrade head` has ever run against
-  whatever branch Railway's `DATABASE_URL` actually points to. This bit
-  production for real: `platform_user` (and every other table) never
-  existed there at all until `railway.toml`'s `startCommand` was changed
-  to run `(cd packages/db && python -m alembic upgrade head)` before
-  `uvicorn` starts, every deploy. Every prior deploy "worked" only because
-  no request had yet reached a real DB query with a real auth token.
-- When a Railway deploy fails, get **both** Build Logs (dependency install
-  success/failure) and Deploy Logs (actual container stdout, crash traces,
-  healthcheck attempts) -- they show different failure classes and a
-  healthcheck failure looks identical whether the app crashed instantly or
-  it's a real networking issue.
-- A service whose Railway Root Directory is a subfolder (e.g.
-  `apps/platform-core/api-gateway`) can **never** reach a sibling directory
-  like `packages/db` -- not via `-e ../../../packages/db` in
-  `requirements.txt`, not via a subfolder-relative `PYTHONPATH` either.
-  Root Directory scopes the entire build+runtime context to that one
-  subfolder; siblings are never copied in, period. Fix: set Root Directory
-  to the **repo root**, move `requirements.txt` to repo root too (so
-  Railpack's zero-config Python detection still fires), and set
-  `PYTHONPATH` in `startCommand` to include both the sibling package's
-  source dir and the service's own folder (see `railway.toml`).
-- Never `SET x = :param` with a bind parameter -- Postgres rejects it as a
-  syntax error (`SET` isn't DML, no extended-protocol parameter support).
-  Use `SELECT set_config('x', :param, false)` instead. Also: an `app.*`
-  custom GUC that's never been set *in the current session* can read back
-  as `''` rather than `NULL` via `current_setting(name, true)` once any
-  session anywhere has used that GUC name -- wrap with
-  `NULLIF(current_setting(...), '')` before casting. Full RLS gotchas
-  (including why `FORCE ROW LEVEL SECURITY` is required and why
-  `platform_user` has no RLS policy) are in `docs/deployment-runbook.md`.
-- Don't use `REVOKE UPDATE, DELETE ...` to make a table append-only if the
-  app's role owns that table -- object owners always retain full privileges
-  regardless of GRANT/REVOKE (no `FORCE`-like override exists for this,
-  unlike RLS). Use a `BEFORE UPDATE OR DELETE` trigger that raises instead --
-  it enforces even against the owner. See `order_audit_log`'s trigger in
-  migration 0003 and `docs/deployment-runbook.md`.
+  whatever branch the live service's `DATABASE_URL` actually points to.
+  Run migrations as an explicit deploy step (entrypoint/startCommand),
+  never assume a prior manual run covers the next deploy.
+- Kinetiq is single-operator: there is no tenant/RLS layer anymore (dropped
+  in migration `0009`). `order_audit_log` is still append-only, but via a
+  `BEFORE UPDATE OR DELETE` trigger (migration 0003) that enforces even
+  against the table owner -- `REVOKE UPDATE, DELETE` alone would be a no-op
+  for an owning role, which is why the trigger exists instead.
 
 ## Before pushing any infra/config change
 
 Simulate the actual deploy platform locally, don't just run the app the easy
-way: for a Railway/Railpack Python service, use a **fresh venv** +
-`pip install -r requirements.txt` (not an existing dev venv, not an editable
-install) + the exact declared `startCommand`, then hit the healthcheck path.
-Validate TOML/YAML syntax locally (`python3 -c "import tomllib; ..."`) before
-pushing. This is what catches "works locally, fails on the real platform"
-bugs before a deploy cycle burns time on it.
+way: for a Coolify-deployed service, build the exact `Dockerfile` locally
+(`docker build` from repo root, matching Coolify's build context) and run the
+resulting image with the same env vars/command, then hit the healthcheck
+path -- not just a bare `python main.py` in a dev venv. Validate TOML/YAML
+syntax locally (`python3 -c "import tomllib; ..."`) before pushing. This is
+what catches "works locally, fails on the real platform" bugs before a
+deploy cycle burns time on it.
 
 ## Repo conventions
 
 - `packages/db` is schema source of truth (SQLAlchemy + Alembic) --
-  `docs/prd.md` Section B.3/B.6b/B.13 describes the model, but the code is
-  authoritative for actual column names/types.
+  `docs/prd.md` describes the model, but the code is authoritative for
+  actual column names/types.
 - Path-sensitive files (`execution/risk_gate.py`, `execution/custody/*`,
   `packages/db/migrations/`) require manual review -- enforced by
   `.github/CODEOWNERS`, don't rely on CI auto-merge for these.
