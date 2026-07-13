@@ -13,12 +13,27 @@
 # particular --backfill-*-since-days values), same PYTHONPATH shape, same
 # ingestion/requirements.txt (NOT the repo-root requirements.txt, which was
 # only a Railpack single-file-detection workaround that Docker doesn't need).
+#
+# apps/products/trading/agent-orchestrator is ALSO copied, as a sibling of
+# ingestion inside the image: signal_loop.py (--no-signals is NOT passed
+# below, so this path is live) does its own sys.path.insert() at import time
+# for agent-orchestrator/skills/strategy and
+# agent-orchestrator/validation/fib_gann_backtest (fib_gann_timing,
+# position_sizing, market_structure, htf_bias, derivatives_context,
+# signal_runner, trade_simulator) relative to "../agent-orchestrator" from
+# ingestion's own directory -- caught by an actual Coolify deploy attempt
+# (ModuleNotFoundError: fib_gann_timing), not assumed to work from reading
+# the code alone. None of that import chain touches
+# fit_weights.py/gated_campaign.py (the only two files under
+# agent-orchestrator that need numpy/pandas/sklearn), so this doesn't pull
+# those heavier deps into the image.
 FROM python:3.11-slim
 
 WORKDIR /app
 
 COPY packages/db /app/packages/db
 COPY apps/products/trading/ingestion /app/apps/products/trading/ingestion
+COPY apps/products/trading/agent-orchestrator /app/apps/products/trading/agent-orchestrator
 
 RUN pip install --no-cache-dir -r /app/apps/products/trading/ingestion/requirements.txt
 
