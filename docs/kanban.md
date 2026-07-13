@@ -22,12 +22,6 @@ sudah tidak relevan.
 
 ## To Do
 
-- [ ] **Tentukan siapa yang menjalankan migrasi Alembic ke production di
-  setup Coolify baru** — dulu `api-gateway`'s Railway `startCommand` yang
-  jalankan `alembic upgrade head` tiap deploy; `api-gateway` sekarang
-  dihapus dan tidak ada penggantinya. Sampai diputuskan, migrasi ke
-  production jalan manual lewat `scripts/manual-migrate-neon.sh`. Refs:
-  `docs/deployment-runbook.md` (bagian "gap terbuka").
 - [ ] **Validasi perp/futures untuk pola Markoviz swarm** — pola
   `vibe-trading-ai` sudah tervalidasi untuk spot; jalankan walk-forward/
   PF-net-of-fees/bootstrap-CI dengan tingkat ketelitian yang sama seperti
@@ -61,9 +55,6 @@ sudah tidak relevan.
   apakah ini pola cron yang sudah ada di `vibe-trading-ai`/swarm config,
   atau perilaku reporting baru dari research engine Kinetiq (mis. weekly
   attribution report ala ENGGANG Fase 3)? Refs: `docs/prd.md`.
-- **Domain/subdomain utk service di Coolify** — Coolify auto-generate
-  domain `*.sslip.io` per aplikasi; aktifkan `kinetiq.app` custom domain
-  sekarang atau tetap sslip.io sementara? Belum diputuskan.
 - **Migrasi kode/logic Markoviz masuk `apps/products/trading/*`** — beda
   dari migrasi infra (sudah selesai, Markoviz tetap jalan sbg proses
   Docker-nya sendiri di VM yang sama, unmanaged Coolify); ini soal
@@ -84,6 +75,23 @@ sudah tidak relevan.
   Coolify self-hosted yang sudah terinstal di VM yang sama. Dockerfile-
   based deploy, terverifikasi live: menulis `funding_rate`/`ohlcv` nyata
   ke production Neon. 13 Juli 2026.
+- [x] **Migration-runner Coolify** (`kinetiq-migration-runner` + Scheduled
+  Task `alembic upgrade head` tiap 10 menit) — menutup gap sejak
+  `api-gateway` dihapus. Standalone resource, sengaja tidak ditempel ke
+  service lain (supaya tidak hilang lagi kalau service itu suatu saat
+  dihapus/diganti — persis bug yang lagi ditutup ini). Terverifikasi:
+  cron fire pertama sukses connect ke production Neon asli. 13 Juli 2026.
+- [x] **On-chain BTC exchange flow ingestion (Arkham Intel API)** —
+  tabel `onchain_exchange_flow` (collect-only, belum di-wire ke
+  signal/confidence), 5 entity default (binance/coinbase/okx/bybit/
+  kraken), histori harian penuh sejak 2012-2018. Data real transaksi
+  on-chain (bukan data sintetis) -- tapi tetap perlu divalidasi
+  korelasinya ke pergerakan harga sebelum dipakai sbg faktor sinyal,
+  sama seperti faktor lain (lihat catatan `ConfluenceWeights`). Refs:
+  `docs/prd.md`. 13 Juli 2026.
+- [x] **Domain Coolify: pakai `*.sslip.io` bawaan dulu** (keputusan
+  founder, 13 Juli 2026) — `kinetiq.app` custom domain ditunda, bukan
+  dibatalkan.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
 sesi masing-masing, bukan lewat board ini.)
