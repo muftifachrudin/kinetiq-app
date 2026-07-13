@@ -3,18 +3,19 @@
 # bypassing GitHub Actions entirely -- for use from MobaXterm/Termux when
 # GitHub Actions is unavailable (quota exhausted, etc).
 #
-# NOTE this does NOT replace the automatic migration that already runs on
-# every Railway deploy (railway.toml's startCommand runs
-# `alembic upgrade head` before uvicorn starts, every single deploy --
-# docs/deployment-runbook.md). This script is for running a migration
-# standalone, e.g. to apply/test a new migration BEFORE deploying the code
-# that depends on it, or to troubleshoot without a full app deploy.
+# NOTE: there is currently NO automatic migration runner in the Coolify
+# setup (api-gateway, which used to run `alembic upgrade head` in its
+# Railway startCommand before every deploy, was deleted when Kinetiq
+# narrowed scope to single-operator -- see docs/deployment-runbook.md's
+# "gap terbuka" note). Until a replacement exists, THIS SCRIPT is the way
+# any new migration actually reaches production -- run it manually after
+# merging a migration, don't assume anything else will do it for you.
 #
 # One-time setup: export DATABASE_URL_MIGRATIONS in your shell profile
 # (~/.bashrc or ~/.zshrc on that machine -- NEVER commit this value to
 # git). This must be the neondb_owner connection string (has DDL rights),
-# NOT the app's least-privilege kinetiq_app role -- get it from Railway's
-# Variables tab (api-gateway service) or the Neon console. Example:
+# NOT the app's least-privilege kinetiq_app role -- get it from the Neon
+# console. Example:
 #   export DATABASE_URL_MIGRATIONS="postgresql://neondb_owner:...@...neon.tech/dbname"
 #
 # Usage (from repo root):

@@ -1,31 +1,53 @@
-# Deployment & Infra Runbook (Railway + Neon + GitHub Actions)
+# Deployment & Infra Runbook (Coolify + Neon + GitHub Actions)
 
-Pengetahuan operasional yang didapat susah payah dari proses membuat service
-pertama (`api-gateway`) live. Baca ini sebelum mengubah `railway.toml`,
-`.github/workflows/ci.yml`, atau apa pun di bawah `packages/db/migrations/` --
-setiap poin di bawah ini butuh satu deploy atau CI run yang gagal beneran
+Pengetahuan operasional dari proses membuat service pertama live -- awalnya
+di Railway (`api-gateway`, sekarang dihapus), sekarang di Coolify self-hosted
+(VM Vultr). Baca ini sebelum mengubah Dockerfile mana pun, config Coolify,
+`.github/workflows/ci.yml`, atau apa pun di bawah `packages/db/migrations/`
+-- setiap poin di bawah ini butuh satu deploy atau CI run yang gagal beneran
 untuk ditemukan, dan mode kegagalannya cukup tidak jelas sehingga bisa
 terulang lagi kalau tidak ditulis di sini.
 
 Lihat `docs/prd.md` untuk PRD produk/arsitektur -- dokumen ini murni
 mekanik deployment.
 
-> **Status (7 Juli 2026): compute sedang migrasi dari Railway ke VM
-> Vultr** (keputusan final, lihat `docs/vultr-vm-migration-brief.md`).
-> Neon TETAP dipakai sbg DB -- semua gotcha Neon di bawah ini masih
-> berlaku penuh. Gotcha Railway/Railpack di bawah ini jadi **historis**
-> (referensi kejadian nyata yang sudah terverifikasi selama Railway masih
-> jadi compute aktif) begitu migrasi selesai -- jangan asumsikan
-> `railway.toml`/Railway masih jadi target deploy aktif tanpa cek brief
-> migrasi & `docs/kanban.md` dulu.
+> **Status (13 Juli 2026): migrasi Railway -> Coolify SELESAI**, sekaligus
+> dengan pemangkasan scope ke single-operator (`apps/platform-core/*`
+> dihapus, lihat `CLAUDE.md`). Neon TETAP dipakai sbg DB -- semua gotcha
+> Neon di bawah ini masih berlaku penuh. Gotcha Railway/Railpack di bawah
+> ini sekarang **historis murni** (referensi kejadian nyata yang sudah
+> terverifikasi selama Railway masih jadi compute aktif, Juli 2026) --
+> `railway.toml`/`railway.ingestion-worker.toml` sudah dihapus dari repo,
+> jangan diasumsikan masih relevan sbg target deploy aktif. Gotcha Coolify
+> (di bawah, sebelum bagian Railway) adalah yang berlaku sekarang.
+>
+> **Gap terbuka yang sengaja belum diselesaikan**: dulu migrasi Alembic
+> jalan otomatis tiap deploy lewat `api-gateway`'s Railway `startCommand`
+> (`alembic upgrade head` sebelum `uvicorn` start). `api-gateway` sekarang
+> dihapus, dan Dockerfile `apps/products/trading/ingestion` (satu-satunya
+> service yang sudah live di Coolify saat ini) TIDAK menjalankan migrasi
+> apa pun -- dia cuma background worker CEX polling, bukan tempat yang
+> tepat utk memegang tanggung jawab DDL. Belum ada pengganti "siapa yang
+> jalankan `alembic upgrade head` ke production tiap ada migration baru"
+> di setup Coolify ini. Sampai ada keputusan (mis. service dedicated kecil,
+> atau post-deployment command Coolify di salah satu app), migrasi ke
+> production HARUS dijalankan manual lewat `scripts/manual-migrate-neon.sh`
+> setelah tiap migration baru di-merge -- jangan asumsikan ada proses
+> otomatis yang menjalankannya.
 
 ## Referensi topologi
 
 - Repo: `kinetiq-app`, default branch `main`.
-- Railway project baru punya satu service (`kinetiq-app`), Root Directory
-  di-set ke **repo root** (kosong) di dashboard (Settings -> Source) --
-  lihat Railpack gotcha #7 di bawah untuk alasan kenapa harus repo root,
-  bukan subfolder service.
+- Coolify self-hosted di VM Vultr yang sama yang menjalankan Markoviz
+  (`ai-perp-bot-core`, live, TIDAK dikelola Coolify -- container Docker-nya
+  sendiri, port internal-only, jangan pernah restart/stop tanpa
+  sepengetahuan founder eksplisit). Project Coolify `kinetiq`, environment
+  `production`, satu server (`localhost` -- itu Coolify host itu sendiri).
+- Setiap service jadi satu Coolify **Application**, build pack
+  `dockerfile`, Base Directory = repo root (`/`), Dockerfile Location =
+  path Dockerfile relatif ke repo root (mis.
+  `/apps/products/trading/ingestion/Dockerfile`) -- lihat gotcha Coolify
+  #1 di bawah untuk kenapa ini wajib repo root, bukan subfolder.
 - Branch default/primary di Neon project namanya **`production`**, bukan
   `main`. Nama branch git dan nama branch Neon itu dua skema penamaan yang
   independen -- jangan asumsikan keduanya sama.
@@ -128,7 +150,67 @@ mekanik deployment.
    di-set-di-tempat-lain-tapi-tidak-di-sini (`''`) jadi `NULL` sebelum
    di-cast, alih-alih membiarkan keduanya langsung masuk ke cast.
 
-## Gotcha Railway / Railpack
+## Gotcha Coolify
+
+Ditemukan lewat deploy sungguhan pertama ke Coolify (13 Juli 2026,
+`kinetiq-ingestion-worker`), bukan dari baca dokumentasi Coolify saja --
+2 dari 3 gotcha di bawah baru ketauan setelah container jalan tapi salah.
+
+1. **Base Directory HARUS repo root (`/`), bukan folder service** --
+   padanan Docker dari masalah "Root Directory" Railway (gotcha Railway #7
+   di bawah), versi Docker-nya: `COPY` di Dockerfile tidak pernah bisa
+   menjangkau apa pun di luar build context, dan build context Coolify =
+   Base Directory. Service mana pun yang butuh sibling package
+   (`packages/db`, atau modul lain di monorepo) WAJIB Base Directory = repo
+   root + Dockerfile Location berupa path relatif ke repo root (lihat
+   `apps/products/trading/ingestion/Dockerfile`, yang `COPY packages/db`
+   DAN `COPY apps/products/trading/agent-orchestrator` sebagai sibling
+   eksplisit -- yang kedua ketauan cuma dari deploy gagal beneran dengan
+   `ModuleNotFoundError: fib_gann_timing`, bukan dari baca kode
+   `signal_loop.py` saja, karena sys.path-nya relatif dan tidak jelas
+   sekilas modul mana yang benar-benar perlu di-`COPY`).
+
+2. **Field `git_repository` di API `/applications/public` butuh URL penuh**
+   (`https://github.com/<owner>/<repo>`), BUKAN bentuk pendek
+   `<owner>/<repo>` -- meskipun beberapa app lain yang sudah ada di
+   instance Coolify yang sama menyimpan bentuk pendek itu (app yang
+   terhubung lewat GitHub App/Source terdaftar, jalur API yang berbeda).
+   Validasi API menolak eksplisit dengan pesan "must start with https://,
+   http://, git://, or git@" kalau salah format.
+
+3. **`PYTHONUNBUFFERED=1` wajib di-set untuk service Python apa pun yang
+   logging-nya lewat `print()`/stdout biasa.** Tanpa ini, Python
+   full-buffer stdout begitu bukan TTY (selalu begitu di Docker) --
+   container Coolify berjalan sehat (build sukses, status `running`),
+   tapi log-nya kosong total sampai buffer penuh atau proses exit. Ini
+   BUKAN masalah Coolify -- ini perilaku default Python di container mana
+   pun -- tapi baru kelihatan dampaknya begitu benar-benar deploy proses
+   long-running yang loggingnya berkala (kebalikan dari script pendek yang
+   exit cepat, di mana buffer keburu di-flush saat proses selesai).
+
+4. **Trigger deploy lewat API**: `GET /api/v1/deploy?uuid=<application_uuid>`
+   (bukan POST) mengembalikan `deployment_uuid`, poll statusnya via
+   `GET /api/v1/deployments/{deployment_uuid}` sampai `status` jadi
+   `finished`/`failed`. Env var di-set lewat
+   `POST /api/v1/applications/{uuid}/envs` (`is_literal: true` supaya
+   karakter spesial di value seperti `!`/`&` tidak diinterpretasi ulang;
+   `is_shown_once: true` supaya value tidak balik ditampilkan plaintext di
+   UI setelah di-set).
+
+5. **Dua endpoint log yang bentuknya beda, jangan tertukar** (padanan
+   "Build Logs vs Deploy Logs" Railway di bawah, tapi shape response-nya
+   beda total): `GET /api/v1/applications/{uuid}/logs` mengembalikan satu
+   string log container (tail runtime stdout/stderr) di field `logs`.
+   `GET /api/v1/deployments/applications/{uuid}` mengembalikan daftar
+   deployment, masing-masing dengan field `logs`-nya SENDIRI berupa STRING
+   berisi JSON-encoded array `{output, type, timestamp}` (bukan array
+   langsung -- perlu `json.loads()` dua kali berturut-turut: sekali untuk
+   response HTTP-nya, sekali lagi untuk field `logs` di dalamnya). Yang
+   pertama untuk "apakah proses ini sehat sekarang", yang kedua untuk
+   "kenapa build/deploy terakhir gagal". `tools/coolify_logs.py`
+   membungkus keduanya (`--logs container` / `--logs build`).
+
+## Gotcha Railway / Railpack (historis -- Railway sudah tidak dipakai)
 
 1. **`railway.toml` harus ada di repo root**, tidak boleh di dalam Root
    Directory sebuah service. Resolusi file config-as-code Railway tidak
@@ -298,7 +380,7 @@ mekanik deployment.
    + toml-bernama-terpisah + path-Config-as-code-eksplisit yang
    dijelaskan gotcha ini memang solid, bukan sekadar teori di atas kertas.
 
-## Status & log Railway lewat GraphQL -- `tools/railway_logs.py` (tanpa dashboard, tanpa screenshot)
+## Status & log Railway lewat GraphQL (historis -- diganti `tools/coolify_logs.py`, lihat Gotcha Coolify #5 di atas)
 
 Dulu setiap langkah "ambil KEDUA Build Logs dan Deploy Logs" di atas
 berarti founder harus buka dashboard Railway dan screenshot. Sekarang
@@ -339,7 +421,14 @@ dengan cara susah):
   kode warna ANSI (script secara default menghapusnya; `--raw`
   mempertahankannya).
 
-## Gotcha Row-Level Security (RLS) (`packages/db/migrations/versions/0002_add_rls_policies.py`)
+## Gotcha Row-Level Security (RLS) (historis -- RLS dihapus total 13 Juli 2026, migration `0009_drop_platform_core_and_tenancy.py`)
+
+Kinetiq sekarang single-operator (tidak ada konsep tenant sama sekali) --
+RLS, `tenant_isolation` policy, dan `tenant_id` sudah dihapus dari semua
+tabel trading. Bagian ini dipertahankan sbg catatan sejarah kenapa
+desainnya dulu seperti ini (dan sbg referensi kalau suatu saat konsep
+multi-user perlu dihidupkan lagi), bukan panduan operasional yang masih
+berlaku hari ini.
 
 1. **`FORCE ROW LEVEL SECURITY` wajib, bukan opsional, dengan setup
    koneksi hari ini.** Postgres mengecualikan *owner* sebuah tabel dari
@@ -444,24 +533,27 @@ permission yang sesungguhnya.
 
 ## Script manual deploy/migrate (jatah menit GitHub Actions habis, 5 Juli 2026)
 
-`scripts/manual-deploy-railway.sh <service>` dan `scripts/manual-migrate-
-neon.sh` -- untuk dipakai dari mesin lokal mana pun (MobaXterm di
+`scripts/manual-deploy-coolify.sh <application-uuid>` dan `scripts/manual-
+migrate-neon.sh` -- untuk dipakai dari mesin lokal mana pun (MobaXterm di
 Windows, Termux di Android, atau shell laptop biasa) saat GitHub
 Actions tidak tersedia (mis. jatah menit Actions bulanan akun sudah
 habis -- terlihat di Settings -> Billing -> "Metered usage"). Keduanya
-adalah wrapper tipis di sekitar Railway CLI / Alembic, sudah
+adalah wrapper tipis di sekitar Coolify API / Alembic, sudah
 didokumentasikan dengan langkah setup satu kali di comment header
 masing-masing -- baca itu dulu sebelum pemakaian pertama, tidak
 direproduksi di sini supaya kedua salinan tidak saling melenceng.
+(`scripts/manual-deploy-railway.sh` yang lama sudah dihapus bersamaan
+dengan migrasi ke Coolify.)
 
-Penting: deploy Railway sendiri itu **integrasi GitHub native**
-(Settings -> Source di dashboard Railway), bukan workflow GitHub
-Actions -- ini sudah auto-deploy di setiap push ke `main` terlepas dari
-kuota/status Actions. Script-script ini ada untuk deploy *tanpa* harus
-push ke `main` dulu (perubahan lokal/belum di-commit, atau feature
-branch), atau sebagai trigger manual kalau native webhook-nya sendiri
-suatu saat macet -- bukan karena merge normal ke `main` diblokir oleh
-kuota Actions.
+Penting: deploy Coolify sendiri itu **integrasi GitHub native** (git
+source per-application, webhook Coolify), bukan workflow GitHub Actions --
+ini sudah auto-deploy di setiap push ke branch yang dikonfigurasi terlepas
+dari kuota/status Actions. Script ini ada untuk deploy *tanpa* harus push
+ke git dulu, atau sebagai trigger manual kalau webhook-nya sendiri suatu
+saat macet -- bukan karena merge normal diblokir oleh kuota Actions.
+Lihat juga catatan "gap terbuka" di atas soal migrasi -- `manual-migrate-
+neon.sh` bukan cuma fallback saat Actions habis kuota, itu SATU-SATUNYA
+jalur migrasi ke production saat ini.
 
 Kalau jatah menit GitHub Actions habis untuk sisa siklus billing dan
 self-hosted runner belum di-setup, merge PR tetap bisa lanjut tanpa
@@ -472,18 +564,27 @@ umum untuk skip CI.
 
 ## Checklist verifikasi sebelum push perubahan infra/config
 
-- **Simulasikan Railpack persis, jangan cuma jalankan aplikasi secara
-  lokal dengan cara gampang.** venv baru + `pip install -r
-  requirements.txt` (bukan `-e .`, bukan pakai ulang venv dev yang
-  sudah ada dengan package sisa) + `startCommand` yang dideklarasikan
-  *persis*, lalu `curl` ke healthcheck path-nya. Ini yang menangkap
-  kelas bug "berhasil lokal, gagal di Railway" di atas sebelum sempat
-  ter-push.
+- **Build Dockerfile-nya persis (`docker build` dari repo root, base
+  directory yang sama seperti build context Coolify), jangan cuma
+  jalankan aplikasi secara lokal dengan cara gampang.** Kalau `docker`
+  tidak tersedia di environment kerja (mis. sandbox bersarang), minimal:
+  install dependency persis dari file requirements yang sama ke venv
+  baru (bukan `-e .`, bukan pakai ulang venv dev dengan package sisa),
+  konfirmasi CLI/entrypoint jalan dengan argumen persis yang ada di
+  `CMD` Dockerfile (`--help` cukup untuk menangkap typo nama argumen),
+  lalu deploy sungguhan ke Coolify dan CEK LOG CONTAINER-NYA (bukan cuma
+  status "running") sebelum menganggap selesai -- dua bug nyata migrasi
+  Coolify (missing sibling-module `COPY`, stdout ter-buffer) baru
+  ketauan dari langkah terakhir ini, bukan dari langkah manapun sebelum
+  deploy sungguhan.
 - Validasi syntax file config secara lokal sebelum push:
-  `python3 -c "import tomllib; tomllib.load(open('railway.toml','rb'))"`
-  untuk TOML, serupa untuk perubahan YAML apa pun di
-  `.github/workflows/*.yml`.
+  `python3 -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"`
+  untuk TOML mana pun yang masih ada di repo, serupa untuk perubahan YAML
+  apa pun di `.github/workflows/*.yml`, dan `docker build` itu sendiri
+  sudah memvalidasi syntax Dockerfile (tidak perlu linter terpisah).
 - Cek CI (`lint` + `neon-preview-branch`) hijau di PR sebelum merge --
   `neon-preview-branch` adalah satu-satunya yang menguji konektivitas
   Neon sungguhan, jadi PR adalah integration test sesungguhnya untuk
-  perubahan DB, bukan Postgres lokal saja.
+  perubahan DB, bukan Postgres lokal saja. **Ingat**: ini TIDAK menguji
+  production sungguhan (lihat gap migrasi di atas) -- migration baru
+  masih butuh `scripts/manual-migrate-neon.sh` manual setelah merge.

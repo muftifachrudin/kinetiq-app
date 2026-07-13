@@ -18,7 +18,7 @@ Implikasi praktis untuk repo ini:
 
 - Jangan jalankan satu sesi Claude Code berjam-jam tanpa reset. Lebih baik
   pakai **`/clear` daripada `/compact`** saat berpindah topik (misalnya dari
-  "validasi strategi" ke "shadow simulator" ke "pivot platform multi-agent")
+  "validasi strategi" ke "shadow simulator" ke "migrasi infra Coolify")
   — auto-summary itu berisik dan bisa salah memprioritaskan. Ini yang
   disebut **"Memento Principle"**: simpan keputusan-keputusan penting ke
   dalam file yang persisten (`docs/prd.md`, sebuah brief, `CLAUDE.md`, sebuah
