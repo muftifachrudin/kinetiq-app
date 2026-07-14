@@ -1,0 +1,170 @@
+[
+  {
+    "series": "binance_BTC",
+    "gate_name": "no_gate",
+    "total_signals": 1142,
+    "total_kept": 1096,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.9202446937407812,
+    "pooled_pf_net_ci90": [
+      0.8029934936493233,
+      1.0460628446814306
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "volatility_regime_only",
+    "total_signals": 1142,
+    "total_kept": 1015,
+    "total_windows": 35,
+    "windows_passing_pf": 5,
+    "promoted": false,
+    "pooled_pf_net": 0.880763569730415,
+    "pooled_pf_net_ci90": [
+      0.7685182770226682,
+      1.008450317941961
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_risk_memory_only",
+    "total_signals": 1142,
+    "total_kept": 118,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.8334283245530492,
+    "pooled_pf_net_ci90": [
+      0.5479080186058989,
+      1.2614583554345902
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "no_gate",
+    "total_signals": 1134,
+    "total_kept": 1087,
+    "total_windows": 35,
+    "windows_passing_pf": 8,
+    "promoted": false,
+    "pooled_pf_net": 0.9381203628583676,
+    "pooled_pf_net_ci90": [
+      0.8272685995824217,
+      1.0662699932949573
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "volatility_regime_only",
+    "total_signals": 1134,
+    "total_kept": 1005,
+    "total_windows": 35,
+    "windows_passing_pf": 7,
+    "promoted": false,
+    "pooled_pf_net": 0.9040829739808772,
+    "pooled_pf_net_ci90": [
+      0.7882887495037134,
+      1.034511046982168
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_risk_memory_only",
+    "total_signals": 1134,
+    "total_kept": 139,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.7281239038768328,
+    "pooled_pf_net_ci90": [
+      0.48210392039875716,
+      1.038362042432376
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "no_gate",
+    "total_signals": 1153,
+    "total_kept": 1107,
+    "total_windows": 35,
+    "windows_passing_pf": 10,
+    "promoted": false,
+    "pooled_pf_net": 1.0390646911972816,
+    "pooled_pf_net_ci90": [
+      0.9163543023834205,
+      1.1908324454716592
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "volatility_regime_only",
+    "total_signals": 1153,
+    "total_kept": 1012,
+    "total_windows": 35,
+    "windows_passing_pf": 11,
+    "promoted": false,
+    "pooled_pf_net": 1.025611637582074,
+    "pooled_pf_net_ci90": [
+      0.8993677876826186,
+      1.167895484140391
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_risk_memory_only",
+    "total_signals": 1153,
+    "total_kept": 76,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.9262717755946839,
+    "pooled_pf_net_ci90": [
+      0.5152677075187131,
+      1.5774674832926445
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "no_gate",
+    "total_signals": 1155,
+    "total_kept": 1108,
+    "total_windows": 35,
+    "windows_passing_pf": 10,
+    "promoted": false,
+    "pooled_pf_net": 1.0458416069327074,
+    "pooled_pf_net_ci90": [
+      0.9162860895987677,
+      1.193214296194006
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "volatility_regime_only",
+    "total_signals": 1155,
+    "total_kept": 1014,
+    "total_windows": 35,
+    "windows_passing_pf": 10,
+    "promoted": false,
+    "pooled_pf_net": 1.0266353502932402,
+    "pooled_pf_net_ci90": [
+      0.8974730981629561,
+      1.1760680752673751
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_risk_memory_only",
+    "total_signals": 1155,
+    "total_kept": 79,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.7189957130267743,
+    "pooled_pf_net_ci90": [
+      0.392161148652802,
+      1.1861342705683238
+    ]
+  }
+]
