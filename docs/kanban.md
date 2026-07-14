@@ -33,19 +33,21 @@ sudah tidak relevan.
   Kinetiq (read-only monitor, 5-layer guardrails); ini bukan sekadar port
   langsung, tapi benar-benar redesign. Refs: `docs/prd.md`
   (bagian shadow trading / Telegram monitor).
-- [ ] **Risk Hard Gate — regime gate + kNN risk memory** — 2 dari 4
-  sub-gate ENGGANG di `docs/prd.md` masih belum bisa dibangun bertanggung
-  jawab: regime gate (FREEZE/RISK_OFF) belum ada classifier-nya sama
-  sekali (`market_regime.py` belum ada), dan kNN risk memory belum ada
-  spec apapun (belum ada feature list/distance metric/k value/threshold
-  veto di dokumen manapun) plus histori trade real (`trade_annotation`)
-  masih terlalu sedikit untuk membangun "kemiripan ke historical losses"
-  yang berarti. Masing-masing butuh sesi desain terpisah dulu sebelum
-  jadi slice implementasi. Juga belum ada: daily-loss-limit/drawdown
+- [ ] **Risk Hard Gate — implementasi regime gate + kNN risk memory
+  per `docs/regime-gate-knn-risk-memory-brief.md`** (desain selesai 14
+  Juli 2026) — brief sudah menjawab classifier/feature/distance-metric/
+  adoption-bar untuk keduanya, reuse infrastruktur `gated_campaign.py`
+  (causal regime + harness promosi) dan `fit_weights.py` (corpus 2.679
+  trade + feature vector). Yang masih perlu sesi implementasi terpisah:
+  (1) tulis `GateConfig` field baru + jalankan validasi walk-forward
+  nyata (belum ada angka PF/promoted sungguhan), (2) baru porting ke
+  `skills/strategy/market_regime.py`/`risk_memory.py` KALAU lolos ambang
+  adopsi masing-masing. Juga belum ada: daily-loss-limit/drawdown
   (`Position`/`OrderAuditLog` belum tracking running-PnL) dan
   correlation-based exposure cap (butuh multi-position tracking, sudah
-  dideferred ke F7b di `margin-mode-brief.md`). Path CODEOWNERS-protected,
-  wajib human-in-the-loop penuh.
+  dideferred ke F7b di `margin-mode-brief.md`) — 2 sub-gate ini beda
+  kelas masalah, tetap di luar scope brief di atas. Path CODEOWNERS-
+  protected, wajib human-in-the-loop penuh begitu masuk implementasi.
 - [ ] **Arbiter / meta-model v2 per-regime** — `agent-orchestrator/graphs/`
   masih kosong; baseline yang ada sekarang cuma logistic meta-model lama
   (sudah dikonfirmasi anti-prediktif, lihat `CLAUDE.md`). Refs:
@@ -111,6 +113,16 @@ sudah tidak relevan.
   ethos proyek ini. Regime gate + kNN risk memory + daily-loss + exposure
   cap sengaja TIDAK termasuk di sini (lihat card To Do di atas). Path
   CODEOWNERS-protected, PR wajib human-in-the-loop review. 13 Juli 2026.
+- [x] **Desain regime gate + kNN risk memory** (`docs/regime-gate-knn-
+  risk-memory-brief.md`) — brief lengkap: pemisahan tegas regime-direction
+  gate (sudah ada, sudah GAGAL kriteria promosi 34% vs ambang 66,66%) vs
+  regime gate PRD (volatilitas FREEZE/RISK_OFF, baru didesain);
+  classifier causal + fallback OI-fuel; kNN atas corpus 2.679 trade
+  simulasi (bukan 276 baris `trade_annotation` yang terlalu tipis);
+  jalur validasi reuse `gated_campaign.py`/`fit_weights.py`; jalur ke
+  produksi eksplisit setelah lolos adopsi. Docs-only, belum ada kode/
+  validasi nyata — itu jadi card implementasi terpisah di To Do. 14 Juli
+  2026.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
 sesi masing-masing, bukan lewat board ini.)
