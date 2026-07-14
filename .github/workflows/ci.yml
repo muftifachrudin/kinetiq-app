@@ -22,7 +22,7 @@ jobs:
       - name: Install packages/db + packages/backtest-core + ruff
         run: pip install -e packages/db -e packages/backtest-core ruff
       - name: Ruff check
-        run: ruff check packages/db/src packages/db/migrations packages/backtest-core/src packages/backtest-core/tests apps/products/trading/agent-orchestrator apps/products/trading/ingestion
+        run: ruff check packages/db/src packages/db/migrations packages/backtest-core/src packages/backtest-core/tests apps/products/trading/agent-orchestrator apps/products/trading/ingestion apps/products/trading/execution
 
   test:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
         # dependency, so it isn't pulled in by the -e install above.
         run: pip install -e "packages/backtest-core[dev]" pytest pyyaml
       - name: Run tests
-        run: pytest packages/backtest-core/tests apps/products/trading/agent-orchestrator/tests
+        run: pytest packages/backtest-core/tests apps/products/trading/agent-orchestrator/tests apps/products/trading/execution/tests
 
   # Separate job (not folded into `test` above) because it needs a genuinely
   # different dependency set: ccxt/requests/sqlalchemy/psycopg + packages/db

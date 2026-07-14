@@ -22,12 +22,6 @@ sudah tidak relevan.
 
 ## To Do
 
-- [ ] **Tentukan siapa yang menjalankan migrasi Alembic ke production di
-  setup Coolify baru** — dulu `api-gateway`'s Railway `startCommand` yang
-  jalankan `alembic upgrade head` tiap deploy; `api-gateway` sekarang
-  dihapus dan tidak ada penggantinya. Sampai diputuskan, migrasi ke
-  production jalan manual lewat `scripts/manual-migrate-neon.sh`. Refs:
-  `docs/deployment-runbook.md` (bagian "gap terbuka").
 - [ ] **Validasi perp/futures untuk pola Markoviz swarm** — pola
   `vibe-trading-ai` sudah tervalidasi untuk spot; jalankan walk-forward/
   PF-net-of-fees/bootstrap-CI dengan tingkat ketelitian yang sama seperti
@@ -39,11 +33,19 @@ sudah tidak relevan.
   Kinetiq (read-only monitor, 5-layer guardrails); ini bukan sekadar port
   langsung, tapi benar-benar redesign. Refs: `docs/prd.md`
   (bagian shadow trading / Telegram monitor).
-- [ ] **Risk Hard Gate berlapis** — `apps/products/trading/execution/`
-  masih skeleton (`custody/.gitkeep` doang); belum ada `risk.config.ts`
-  atau gate berlapis (regime gate, kNN risk memory, R:R gate, exposure
-  caps) sesuai arsitektur ENGGANG di `docs/prd.md`. Path CODEOWNERS-
-  protected, wajib human-in-the-loop penuh.
+- [ ] **Risk Hard Gate — regime gate + kNN risk memory** — 2 dari 4
+  sub-gate ENGGANG di `docs/prd.md` masih belum bisa dibangun bertanggung
+  jawab: regime gate (FREEZE/RISK_OFF) belum ada classifier-nya sama
+  sekali (`market_regime.py` belum ada), dan kNN risk memory belum ada
+  spec apapun (belum ada feature list/distance metric/k value/threshold
+  veto di dokumen manapun) plus histori trade real (`trade_annotation`)
+  masih terlalu sedikit untuk membangun "kemiripan ke historical losses"
+  yang berarti. Masing-masing butuh sesi desain terpisah dulu sebelum
+  jadi slice implementasi. Juga belum ada: daily-loss-limit/drawdown
+  (`Position`/`OrderAuditLog` belum tracking running-PnL) dan
+  correlation-based exposure cap (butuh multi-position tracking, sudah
+  dideferred ke F7b di `margin-mode-brief.md`). Path CODEOWNERS-protected,
+  wajib human-in-the-loop penuh.
 - [ ] **Arbiter / meta-model v2 per-regime** — `agent-orchestrator/graphs/`
   masih kosong; baseline yang ada sekarang cuma logistic meta-model lama
   (sudah dikonfirmasi anti-prediktif, lihat `CLAUDE.md`). Refs:
@@ -61,9 +63,6 @@ sudah tidak relevan.
   apakah ini pola cron yang sudah ada di `vibe-trading-ai`/swarm config,
   atau perilaku reporting baru dari research engine Kinetiq (mis. weekly
   attribution report ala ENGGANG Fase 3)? Refs: `docs/prd.md`.
-- **Domain/subdomain utk service di Coolify** — Coolify auto-generate
-  domain `*.sslip.io` per aplikasi; aktifkan `kinetiq.app` custom domain
-  sekarang atau tetap sslip.io sementara? Belum diputuskan.
 - **Migrasi kode/logic Markoviz masuk `apps/products/trading/*`** — beda
   dari migrasi infra (sudah selesai, Markoviz tetap jalan sbg proses
   Docker-nya sendiri di VM yang sama, unmanaged Coolify); ini soal
@@ -84,6 +83,34 @@ sudah tidak relevan.
   Coolify self-hosted yang sudah terinstal di VM yang sama. Dockerfile-
   based deploy, terverifikasi live: menulis `funding_rate`/`ohlcv` nyata
   ke production Neon. 13 Juli 2026.
+- [x] **Migration-runner Coolify** (`kinetiq-migration-runner` + Scheduled
+  Task `alembic upgrade head` tiap 10 menit) — menutup gap sejak
+  `api-gateway` dihapus. Standalone resource, sengaja tidak ditempel ke
+  service lain (supaya tidak hilang lagi kalau service itu suatu saat
+  dihapus/diganti — persis bug yang lagi ditutup ini). Terverifikasi:
+  cron fire pertama sukses connect ke production Neon asli. 13 Juli 2026.
+- [x] **On-chain BTC exchange flow ingestion (Arkham Intel API)** —
+  tabel `onchain_exchange_flow` (collect-only, belum di-wire ke
+  signal/confidence), 5 entity default (binance/coinbase/okx/bybit/
+  kraken), histori harian penuh sejak 2012-2018. Data real transaksi
+  on-chain (bukan data sintetis) -- tapi tetap perlu divalidasi
+  korelasinya ke pergerakan harga sebelum dipakai sbg faktor sinyal,
+  sama seperti faktor lain (lihat catatan `ConfluenceWeights`). Refs:
+  `docs/prd.md`. 13 Juli 2026.
+- [x] **Domain Coolify: pakai `*.sslip.io` bawaan dulu** (keputusan
+  founder, 13 Juli 2026) — `kinetiq.app` custom domain ditunda, bukan
+  dibatalkan.
+- [x] **Risk Hard Gate v1** (`apps/products/trading/execution/risk_gate.py`)
+  — kill-switch, symbol-universe permission, dan defensive re-check
+  R:R/entry-validity (invariant yang sebenarnya sudah dijamin
+  `generate_signals()`, dicek ulang di sini sebagai "trust but verify" di
+  jalur safety-critical). Pure function, DB-free, tidak import tipe
+  `Signal`/`ExitPlan` dari `agent-orchestrator` (tidak ada precedent
+  cross-app import di repo ini) — pakai `RiskMandateSnapshot` sendiri.
+  Semua rejection dikumpulkan (tidak fail-fast), sesuai audit-transparency
+  ethos proyek ini. Regime gate + kNN risk memory + daily-loss + exposure
+  cap sengaja TIDAK termasuk di sini (lihat card To Do di atas). Path
+  CODEOWNERS-protected, PR wajib human-in-the-loop review. 13 Juli 2026.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
 sesi masing-masing, bukan lewat board ini.)

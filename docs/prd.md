@@ -91,9 +91,9 @@ Sharpe 5-8 yang sering muncul di paper riset adalah artefak window pendek, **buk
 **Integrasi Markoviz (keputusan 6-7 Juli 2026) — digabung ke mesin riset yang sama, bukan strategi terpisah** (lihat §6 "Yang Direuse vs Dibangun Baru" utk peta lengkap): swarm 4-agent Markoviz (`funding_basis_analyst`/`liquidation_analyst`/`flow_analyst`/`desk_risk_manager`, bobot funding 35%/liquidation 25%/flow 40%) akan diuji ulang lewat disiplin fitting yang sama (kriteria adopsi median AUC>0.55, korelasi OOS>0) — **tidak diasumsikan benar cuma karena sudah live**, krn funding/OI sudah terbukti empiris jadi indikator regime-volatilitas, bukan prediktor arah (temuan F4/derivatives_context di atas). Dua catatan wajib sebelum integrasi penuh: (a) UI Telegram Markoviz saat ini belum layak dipakai langsung, perlu didesain ulang; (b) validasi Kinetiq sejauh ini 100% di perp, swarm Markoviz (historisnya juga perp) tetap wajib lolos uji walk-forward sendiri di perp sebelum dipercaya, **jangan asumsikan pola apa pun otomatis valid tanpa gate yang sama**.
 
 **Gap yang masih terbuka:**
-- Risk hard gate berlapis (regime FREEZE/RISK_OFF, kNN risk memory veto, exposure caps) belum dibangun sbg satu modul terpadu — yang ada baru R:R gate ≥1.5 & `_entry_is_valid()`.
+- Risk hard gate: `execution/risk_gate.py` (v1, 13 Juli 2026) sudah ADA — kill-switch, symbol-universe permission, dan defensive re-check R:R/entry-validity. Regime gate (FREEZE/RISK_OFF) dan kNN risk memory veto masih BELUM dibangun — bukan cuma belum diimplementasi, tapi memang belum ada desain sama sekali (belum ada classifier/feature-list/distance-metric/threshold di dokumen manapun); daily-loss-limit & correlation-based exposure cap juga belum (butuh running-PnL tracking & multi-position tracking yang belum ada). Masing-masing perlu sesi desain terpisah sebelum jadi slice implementasi.
 - Arbiter (meta-model per-regime + LLM arbiter opsional) belum dibangun — `fit_weights.py` baru fitting bobot confidence, bukan orkestrasi antar-modul.
-- `graphs/` (LangGraph) masih kosong, belum disambung ke apa pun; `execution/` (risk_gate.py, custody/) masih skeleton.
+- `graphs/` (LangGraph) masih kosong, belum disambung ke apa pun; `execution/` sudah punya `risk_gate.py` (v1), tapi order/position adapter (CCXT unified + native DEX signing) dan `custody/` masih skeleton.
 - Shadow trading (60 hari live-paper, fidelity score) & live canary belum dimulai — prasyarat Fase 1-2 (§6) belum lolos gate.
 - Native fallback Binance/Bybit belum dites via jaringan asli (field-shape baru dari dokumentasi publik).
 - pgvector, Telegram monitor read-only 5-layer guardrail — sudah ada spesifikasi lengkap (`docs/llm-telegram-guardrails-brief.md`) tapi belum diimplementasi kode.
@@ -120,11 +120,11 @@ Sharpe 5-8 yang sering muncul di paper riset adalah artefak window pendek, **buk
   - Meta-model per-regime (fit_weights.py, logistic elastic-net, refit per window) — ADA tapi BELUM lolos kriteria adopsi (AUC OOS 0.522)
   - LLM Arbiter (opsional, read-only explain/narrasi — TIDAK PERNAH menghasilkan order) — BELUM dibangun
         ▼
-[Layer 3 — Risk Hard Gate]  ← veto berlapis, deterministik, BELUM disatukan jadi 1 modul
-  1. Regime gate (FREEZE/RISK_OFF → no-trade) — belum ada
-  2. kNN risk memory (veto/size-down berbasis kemiripan histori rugi) — belum ada
-  3. R:R gate ≥1.5 — ADA (`passes_risk_reward_gate()`)
-  4. Exposure caps (leverage, korelasi, daily loss, cooldown) — sebagian di `risk_mandate` table, belum jadi gate runtime
+[Layer 3 — Risk Hard Gate]  ← veto berlapis, deterministik
+  1. Regime gate (FREEZE/RISK_OFF → no-trade) — belum ada, belum ada desain (butuh sesi tersendiri)
+  2. kNN risk memory (veto/size-down berbasis kemiripan histori rugi) — belum ada, belum ada desain (butuh sesi tersendiri)
+  3. R:R gate ≥1.5 + kill-switch + symbol-universe permission — ADA (`execution/risk_gate.py` v1, `passes_risk_reward_gate()`)
+  4. Exposure caps (leverage, korelasi, daily loss, cooldown) — leverage/notional sudah di `position_sizing.py` (downstream, bukan gate); korelasi/daily-loss/cooldown belum jadi gate runtime (butuh running-PnL & multi-position tracking dulu)
         ▼
 [Layer 4 — Execution & Shadow]
   - Shadow simulator (fidelity score, divergence attribution) — sebagian (`shadow_pair.py`), belum ada live signal writer
@@ -187,13 +187,13 @@ Tidak ada `tenant`/`platform_user`/`llm_config`/`token_package`/`tenant_token_le
 **Tujuan**: Layer 1 lengkap, tervalidasi per-modul. **Status: SEBAGIAN BESAR SELESAI** — fib/gann/market-structure/level-strength/htf-bias/session-bias/duration/post-stop semua sudah diimplementasi & diverifikasi thd data production (§2). **Belum**: pruning formal 7-pillar MARKOVIZ berdasarkan IC (nunggu integrasi §2 "Integrasi Markoviz" selesai diuji ulang), per-module validation harness formal (accuracy≥55% OOS ATAU IC signifikan p<0.05, tanpa bias arah) belum dijalankan sbg gate eksplisit per modul — exit gate ini masih longgar dibanding definisi ENGGANG.
 
 ### Fase 2 — Arbiter + Risk Hard Gate
-**Tujuan**: dari sinyal jadi keputusan ter-gate. **Status: PARSIAL.** `fit_weights.py` (meta-model per-regime, refit per window) sudah ada tapi median AUC OOS 0.522 — **exit gate PF net ≥1.0 di ≥4/6 window BELUM diverifikasi lolos** (run pertama 2/10 window; kombinasi HTF+R:R band masih hipotesis in-sample). Risk hard gate berlapis (regime gate, kNN risk memory veto, exposure caps di satu `risk.config`) **belum dibangun sbg modul terpadu** — baru R:R gate + entry-validity check. LLM Arbiter opsional (feature-flag OFF default, dibandingkan A/B vs meta-model murni) belum dibangun. Baseline harness (vs buy-and-hold, vs MARKOVIZ logistic lama) sebagian ada lewat `metrics.py`.
+**Tujuan**: dari sinyal jadi keputusan ter-gate. **Status: PARSIAL.** `fit_weights.py` (meta-model per-regime, refit per window) sudah ada tapi median AUC OOS 0.522 — **exit gate PF net ≥1.0 di ≥4/6 window BELUM diverifikasi lolos** (run pertama 2/10 window; kombinasi HTF+R:R band masih hipotesis in-sample). Risk hard gate: `execution/risk_gate.py` v1 (13 Juli 2026) sudah ADA — kill-switch, symbol-universe permission, defensive re-check R:R/entry-validity, pure function & DB-free. Regime gate, kNN risk memory veto, dan exposure caps runtime (korelasi/daily-loss/cooldown) **belum dibangun** — 2 yang pertama belum ada desain sama sekali (butuh sesi tersendiri sebelum jadi slice), bukan cuma belum diimplementasi. LLM Arbiter opsional (feature-flag OFF default, dibandingkan A/B vs meta-model murni) belum dibangun. Baseline harness (vs buy-and-hold, vs MARKOVIZ logistic lama) sebagian ada lewat `metrics.py`.
 
 ### Fase 3 — Shadow Trading (minimal 60 hari kalender)
 **Tujuan**: bukti sistem hidup di data live sama dgn backtest. **Status: BELUM DIMULAI** — prasyarat (Fase 2 lolos gate PF≥1.0 di ≥4/6 window) belum terpenuhi. Building block yang sudah ada: `shadow_pair.py` (pairing + divergence attribution parsial, 6 komponen), leverage/liquidation-aware simulator. **Belum ada**: live signal writer ke tabel `signal` (F7), Telegram monitor read-only, weekly attribution report otomatis.
 
 ### Fase 4 — Live Canary (minimal 90 hari)
-**Tujuan**: live dgn blast radius minimal. **Status: BELUM DIMULAI.** Kill-switch otomatis (DD 20%→flat, daily loss limit, anomaly detector, heartbeat monitor) belum dibangun; `execution/` (risk_gate.py, custody/) masih skeleton kosong. `position_sizing.py` (F7a, PreTradeCard) sudah ada sbg building block paralel.
+**Tujuan**: live dgn blast radius minimal. **Status: BELUM DIMULAI.** Kill-switch MANUAL (`RiskMandateSnapshot.kill_switch_active`, dicek `execution/risk_gate.py` v1) sudah ADA; kill-switch OTOMATIS (DD 20%→flat, daily loss limit, anomaly detector, heartbeat monitor) belum dibangun — butuh running-PnL tracking dulu. `execution/custody/` (order/position adapter, key vault) masih skeleton kosong. `position_sizing.py` (F7a, PreTradeCard) sudah ada sbg building block paralel.
 
 ### Fase 5 — Fine-Tuning Loop (kontinu, mulai Fase 3)
 Ritme operasional, bukan fase terpisah: mingguan (attribution → hypothesis baru), bulanan (retrain walk-forward, weight update lewat backtest gate dulu), per-kuartal (review regime classifier, pillar pruning, evaluasi eksperimen riset). **Status: pola sudah dipraktikkan secara informal** (tiap temuan deep-dive langsung dicatat & diuji ulang — lihat riwayat panjang di §2 dan `docs/fib-gann-validation-brief.md`), tapi belum diotomasi sbg cadence terjadwal.
@@ -236,7 +236,8 @@ Verification plan tambahan yang tetap berlaku (dari rencana sebelumnya, minus it
 | `fit_weights.py` (fitting confidence per window) | ♻️ Ada, belum lolos kriteria adopsi (AUC 0.522) |
 | Swarm 4-agent Markoviz (funding/liquidation/flow) | ♻️ Digabung ke mesin riset yang sama, WAJIB diuji ulang lewat fitting yang sama sebelum dipercaya arah trade — funding/OI terbukti indikator regime, bukan prediktor arah |
 | Logistic/GBM meta-model Markoviz | ♻️ Jadi baseline pembanding (bukan reuse kode langsung — beda fitur/label/model, lihat §2), diganti per-regime v2 (`fit_weights.py`) |
-| Risk hard gate berlapis (regime/kNN/exposure) | 🆕 Belum dibangun |
+| Risk hard gate v1 (kill-switch, symbol-universe, R:R re-check) — `execution/risk_gate.py` | ✅ Selesai (13 Juli 2026) |
+| Risk hard gate — regime gate, kNN risk memory, exposure caps runtime | 🆕 Belum dibangun, belum ada desain |
 | Arbiter (meta-model orkestrasi + LLM arbiter opsional) | 🆕 Belum dibangun |
 | Kill-switch & live canary infra | 🆕 Belum dibangun |
 | Shadow simulator penuh (fidelity score, live signal writer) | 🆕 Sebagian (`shadow_pair.py`), belum lengkap |
