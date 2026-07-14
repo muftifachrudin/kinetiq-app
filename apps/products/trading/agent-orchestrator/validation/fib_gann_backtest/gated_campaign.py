@@ -101,6 +101,37 @@ below and metrics.weighted_profit_factor() for how "PF tertimbang-size"
 is computed net of fees/funding (SimulatedTrade.net_return_pct is already
 both).
 
+VOLATILITY REGIME GATE (docs/regime-gate-knn-risk-memory-brief.md Section
+2-3): a NEW causal classifier, deliberately NOT the same "regime" concept
+as REGIME-DIRECTION GATE above (brief Section 1 spells out why "regime"
+means two different things in this codebase) -- this one classifies
+FREEZE/RISK_OFF/NORMAL from realized volatility's own trailing percentile
+rank, not price drift/direction. FREEZE vetoes every signal regardless of
+direction (GateConfig.use_volatility_regime_gate); RISK_OFF is
+deliberately NOT a veto here -- see SizingConfig.use_volatility_regime_
+sizing below, which shrinks size instead (brief Section 3: "RISK_OFF =
+size-down, bukan veto total"). Same causal trailing-window construction
+as trailing_drift() (realized_volatility()), but the population it's
+percentile-ranked against is built incrementally as candles are walked
+forward, never including the candle's own reading or any future one
+(volatility_regime_by_signal_index()). The brief's own Section 3 caveat
+applies to this gate's `promoted` field: a risk gate's real goal is
+reducing tail-risk, not raising PF, so a straight PF_PASS_FRACTION read
+here needs that caveat, not the "PF went up" reading the other gates'
+`promoted` field supports.
+
+KNN RISK MEMORY GATE (brief Section 4-6): vetoes a candidate signal when
+more than GateConfig.knn_loss_threshold of its GateConfig.knn_k nearest
+historical neighbors (by fit_weights.ALL_CANDIDATE_FEATURE_NAMES feature
+vector, sklearn.neighbors.NearestNeighbors) ended STOP_LOSS. Trained per-
+window on TRAIN-range LabeledSignals only (no lookahead, same split_by_
+window() convention as every other fitted gate here) -- reuses fit_
+weights.py's own 2,679-trade corpus/feature vectors, NOT trade_annotation
+(brief: 276 real rows judged too sparse for similarity matching).
+GateConfig.knn_distance_metric exposes the brief's Section 5 open
+question (euclidean vs cosine) as a config knob rather than picking one
+upfront -- both are meant to be compared, not assumed.
+
 Reuses fit_weights.build_labeled_signals()/split_by_window() to fit the
 confidence gate (full-hindsight-resolved outcomes for TRAIN, the same
 convention fit_weights.py itself already uses for fitting purposes --
@@ -126,12 +157,14 @@ synthetic tests alone.
 import bisect
 import dataclasses
 import datetime
+import math
 import os
 import statistics
 import sys
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import NearestNeighbors
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "skills", "strategy"))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -148,6 +181,45 @@ import trade_simulator as ts  # noqa: E402
 # signal's own ts rather than only at calendar-month boundaries.
 REGIME_LOOKBACK_DAYS = 30
 
+# --- Volatility regime gate (docs/regime-gate-knn-risk-memory-brief.md
+# Section 2-3) -- see module docstring's "VOLATILITY REGIME GATE"
+# paragraph for why this is a DIFFERENT "regime" concept from
+# REGIME_LOOKBACK_DAYS/trailing_drift() above (trend/direction, not
+# volatility/risk).
+
+# Shorter than REGIME_LOOKBACK_DAYS (30 days, trend) since volatility
+# regimes shift faster than trend regimes -- a starting point, not fit.
+VOLATILITY_LOOKBACK_DAYS = 14
+
+# Percentile thresholds against the EXPANDING population of prior
+# realized-volatility readings. Starting points, not fit -- same "initial
+# numbers are free, evidence decides adoption" convention as every other
+# new constant in this harness (module docstring).
+RISK_OFF_VOLATILITY_PERCENTILE = 0.90
+FREEZE_VOLATILITY_PERCENTILE = 0.975
+
+# Below this many prior readings, a percentile rank is too noisy to trust
+# -- same "skip, don't fabricate" discipline as fit_weights.MIN_TRAIN_SAMPLES.
+MIN_VOLATILITY_POPULATION = 30
+
+VOLATILITY_REGIME_NORMAL = "normal"
+VOLATILITY_REGIME_RISK_OFF = "risk_off"
+VOLATILITY_REGIME_FREEZE = "freeze"
+
+# Reuses position_sizing.HIGH_VOL_RISK_MULTIPLIER's exact value (0.5) for
+# SizingConfig.use_volatility_regime_sizing below -- same one-directional
+# "high-vol context can only shrink risk, never enlarge it" principle,
+# not an independently chosen number.
+VOLATILITY_REGIME_SIZE_MULTIPLIER = 0.5
+
+# --- kNN risk memory gate (brief Section 4-6) ---
+
+# Starting k/threshold, swept not asserted -- see GateConfig.knn_k/
+# knn_loss_threshold and the brief's Section 5 open question on distance
+# metric (GateConfig.knn_distance_metric).
+KNN_DEFAULT_K = 10
+KNN_DEFAULT_LOSS_THRESHOLD = 0.6
+
 
 @dataclasses.dataclass(frozen=True)
 class GateConfig:
@@ -160,6 +232,11 @@ class GateConfig:
     daily_bias_threshold: float = 0.5  # keep signals with daily_bias_alignment (F6b I1(b), literal) strictly above this
     use_regime_direction_gate: bool = False  # F6b I2 follow-up: veto SHORT signals fired during a causally-classified bull regime
     veto_both_counter_trend_directions: bool = False  # only meaningful with use_regime_direction_gate=True: ALSO veto LONG signals fired during a causally-classified bear regime (symmetric follow-up, module docstring)
+    use_volatility_regime_gate: bool = False  # brief Section 2-3: veto ALL signals (any direction) when the causal volatility-percentile classifier reads FREEZE; RISK_OFF is intentionally NOT vetoed here (see SizingConfig.use_volatility_regime_sizing instead)
+    use_knn_risk_memory_gate: bool = False  # brief Section 4-6: veto a signal when more than knn_loss_threshold of its knn_k nearest historical neighbors ended STOP_LOSS
+    knn_k: int = KNN_DEFAULT_K
+    knn_loss_threshold: float = KNN_DEFAULT_LOSS_THRESHOLD
+    knn_distance_metric: str = "euclidean"  # brief Section 5 open question -- exposed so "euclidean" vs "cosine" can be compared, not assumed upfront
 
 
 # Neither gate is assumed to help going in -- all run through the same
@@ -181,6 +258,12 @@ GATE_CONFIGS = (
     GateConfig(name="both_gates", use_confidence_gate=True, use_trend_alignment_gate=True),
     GateConfig(name="veto_short_bull", use_regime_direction_gate=True),
     GateConfig(name="veto_both_counter_trend", use_regime_direction_gate=True, veto_both_counter_trend_directions=True),
+    # brief Section 2-3: volatility-regime FREEZE veto -- a different
+    # "regime" concept from veto_short_bull/veto_both_counter_trend above
+    # (module docstring's "VOLATILITY REGIME GATE" paragraph).
+    GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True),
+    # brief Section 4-6: kNN similarity-to-past-losses veto.
+    GateConfig(name="knn_risk_memory_only", use_knn_risk_memory_gate=True),
 )
 
 
@@ -225,6 +308,130 @@ def regime_by_signal_index(signals: list[sr.Signal], candles: list[fgt.Candle], 
     return result
 
 
+def realized_volatility(
+    candle_ts: list[datetime.datetime], candles: list[fgt.Candle], as_of_ts: datetime.datetime, lookback_days: int = VOLATILITY_LOOKBACK_DAYS
+) -> float | None:
+    """Causal trailing realized volatility for the FREEZE/RISK_OFF regime
+    gate (brief Section 2) -- stdev of per-candle log returns over the
+    trailing `lookback_days` window ending at (and including) as_of_ts,
+    using ONLY candles with ts <= as_of_ts. Same bisect/None-when-too-
+    early shape as trailing_drift() above -- a volatility-regime sibling
+    of that trend-regime function, deliberately kept separate (module
+    docstring: these are two different "regime" concepts). None when
+    there isn't enough trailing history yet, or fewer than 2 valid
+    (positive-close) returns in the window -- never a fabricated 0.0."""
+    window_start = as_of_ts - datetime.timedelta(days=lookback_days)
+    end_idx = bisect.bisect_right(candle_ts, as_of_ts) - 1
+    if end_idx < 1:
+        return None
+    start_idx = bisect.bisect_left(candle_ts, window_start)
+    if start_idx > end_idx or candle_ts[start_idx] > window_start:
+        return None
+    window = candles[start_idx : end_idx + 1]
+    if len(window) < 2:
+        return None
+    returns = [
+        math.log(window[i].close / window[i - 1].close)
+        for i in range(1, len(window))
+        if window[i - 1].close > 0 and window[i].close > 0
+    ]
+    if len(returns) < 2:
+        return None
+    return statistics.pstdev(returns)
+
+
+def volatility_regime_by_signal_index(
+    signals: list[sr.Signal],
+    candles: list[fgt.Candle],
+    lookback_days: int = VOLATILITY_LOOKBACK_DAYS,
+    risk_off_percentile: float = RISK_OFF_VOLATILITY_PERCENTILE,
+    freeze_percentile: float = FREEZE_VOLATILITY_PERCENTILE,
+) -> dict[int, str]:
+    """signal.index -> VOLATILITY_REGIME_NORMAL/_RISK_OFF/_FREEZE (brief
+    Section 2), classified from realized_volatility()'s percentile rank
+    against the EXPANDING population of every PRIOR realized-volatility
+    reading up to (not including) that candle -- causal by construction,
+    same guarantee trailing_drift()/regime_by_signal_index() already
+    provide for trend. A candle's own volatility reading is inserted into
+    the population only AFTER its rank is computed, so a candle can never
+    rank itself.
+
+    Signals too early to have MIN_VOLATILITY_POPULATION prior readings
+    (or without enough trailing history for realized_volatility() itself)
+    are simply absent from the result -- same "unknown, never vetoed"
+    fallback every other gate in this module already follows."""
+    candle_ts = [c.ts for c in candles]
+    vol_series = [realized_volatility(candle_ts, candles, c.ts, lookback_days) for c in candles]
+
+    classification_by_candle_idx: dict[int, str] = {}
+    sorted_population: list[float] = []
+    for idx, vol in enumerate(vol_series):
+        if vol is not None and len(sorted_population) >= MIN_VOLATILITY_POPULATION:
+            rank = bisect.bisect_left(sorted_population, vol) / len(sorted_population)
+            if rank >= freeze_percentile:
+                classification_by_candle_idx[idx] = VOLATILITY_REGIME_FREEZE
+            elif rank >= risk_off_percentile:
+                classification_by_candle_idx[idx] = VOLATILITY_REGIME_RISK_OFF
+            else:
+                classification_by_candle_idx[idx] = VOLATILITY_REGIME_NORMAL
+        if vol is not None:
+            bisect.insort(sorted_population, vol)
+
+    result = {}
+    for signal in signals:
+        end_idx = bisect.bisect_right(candle_ts, signal.ts) - 1
+        if end_idx in classification_by_candle_idx:
+            result[signal.index] = classification_by_candle_idx[end_idx]
+    return result
+
+
+def _fit_knn_risk_memory(
+    train: list[fw.LabeledSignal],
+    feature_names: tuple[str, ...] = fw.ALL_CANDIDATE_FEATURE_NAMES,
+    k: int = KNN_DEFAULT_K,
+    metric: str = "euclidean",
+) -> tuple[NearestNeighbors, list[int]] | None:
+    """Fits a NearestNeighbors index on TRAIN-range signals only (brief
+    Section 4), same MIN_TRAIN_SAMPLES/TIMEOUT-excluded guards fit_
+    weights._fit_binary()/_fit_confidence_model() already use -- returns
+    None (caller passes every candidate through unfiltered) when there's
+    too little train data to support even one k-neighbor query, or when
+    TRAIN has no losing trades at all (nothing for a "similar to past
+    losses" veto to find), same "skip, don't fabricate" discipline as
+    every other fit in this module.
+
+    Reuses fit_weights.ALL_CANDIDATE_FEATURE_NAMES/_feature_vector()/
+    _binary_label() directly -- the SAME feature vectors/corpus fit_
+    weights.py's own LogisticRegression already fits against (brief
+    Section 4), not a new feature set invented for this gate."""
+    train_pairs = [(ls, fw._binary_label(ls.trade.label.outcome)) for ls in train]  # noqa: SLF001
+    train_pairs = [(ls, y) for ls, y in train_pairs if y is not None]
+    if len(train_pairs) < fw.MIN_TRAIN_SAMPLES or len(train_pairs) <= k:
+        return None
+    is_loss_train = [1 - y for _, y in train_pairs]  # _binary_label: 1=TAKE_PROFIT, 0=STOP_LOSS -- loss is the inverse
+    if sum(is_loss_train) == 0:
+        return None
+    x_train = np.array([fw._feature_vector(ls.signal, feature_names) for ls, _ in train_pairs])  # noqa: SLF001
+    model = NearestNeighbors(n_neighbors=k, metric=metric)
+    model.fit(x_train)
+    return model, is_loss_train
+
+
+def _knn_loss_fraction(
+    model: NearestNeighbors,
+    is_loss_train: list[int],
+    signal: sr.Signal,
+    k: int,
+    feature_names: tuple[str, ...] = fw.ALL_CANDIDATE_FEATURE_NAMES,
+) -> float:
+    """Fraction of `signal`'s k nearest TRAIN neighbors whose outcome was
+    STOP_LOSS -- the veto statistic apply_gates() compares against
+    GateConfig.knn_loss_threshold."""
+    x = np.array([fw._feature_vector(signal, feature_names)])  # noqa: SLF001
+    _, neighbor_idx = model.kneighbors(x, n_neighbors=k)
+    return sum(is_loss_train[i] for i in neighbor_idx[0]) / k
+
+
 def _fit_confidence_model(train: list[fw.LabeledSignal]) -> tuple[LogisticRegression, np.ndarray] | None:
     """Same fit fit_weights._fit_binary() performs (same solver/l1_ratio/
     guards), but returns the model itself (plus its train feature matrix,
@@ -258,12 +465,17 @@ def apply_gates(
     test: list[fw.LabeledSignal],
     gate_config: GateConfig,
     regime_by_index: dict[int, str] | None = None,
+    volatility_regime_by_index: dict[int, str] | None = None,
 ) -> list[fw.LabeledSignal]:
-    """regime_by_index (regime_by_signal_index()'s output) is only needed
-    when gate_config.use_regime_direction_gate is True -- every other gate
-    ignores it, same optional-until-needed shape as every other gate-
-    specific input this function already takes (e.g. train is unused
-    unless use_confidence_gate)."""
+    """regime_by_index (regime_by_signal_index()'s output, trend/direction)
+    is only needed when gate_config.use_regime_direction_gate is True;
+    volatility_regime_by_index (volatility_regime_by_signal_index()'s
+    output, volatility/risk -- a DIFFERENT "regime" concept, module
+    docstring) is only needed when gate_config.use_volatility_regime_gate
+    is True -- every other gate ignores whichever it doesn't need, same
+    optional-until-needed shape as every other gate-specific input this
+    function already takes (e.g. train is unused unless use_confidence_gate
+    or use_knn_risk_memory_gate)."""
     candidates = list(test)
 
     if gate_config.use_confidence_gate:
@@ -290,6 +502,21 @@ def apply_gates(
             candidates = [
                 ls for ls in candidates if not (ls.signal.direction is fgt.TradeDirection.LONG and regimes.get(ls.signal.index) == "bear")
             ]
+
+    if gate_config.use_volatility_regime_gate:
+        vol_regimes = volatility_regime_by_index or {}
+        candidates = [ls for ls in candidates if vol_regimes.get(ls.signal.index) != VOLATILITY_REGIME_FREEZE]
+
+    if gate_config.use_knn_risk_memory_gate:
+        fit = _fit_knn_risk_memory(train, k=gate_config.knn_k, metric=gate_config.knn_distance_metric)
+        if fit is not None:
+            model, is_loss_train = fit
+            candidates = [
+                ls
+                for ls in candidates
+                if _knn_loss_fraction(model, is_loss_train, ls.signal, k=gate_config.knn_k) <= gate_config.knn_loss_threshold
+            ]
+        # else: train data can't support k neighbors this window -- pass everything through (module docstring convention)
 
     return candidates
 
@@ -359,13 +586,17 @@ def _run_gated_series_prepared(
     # against the FULL candle list is still walk-forward-safe (no future
     # window's candles can affect an earlier signal's classification).
     regime_by_index = regime_by_signal_index(signals, candles) if gate_config.use_regime_direction_gate else {}
+    # Same walk-forward-safe reasoning as regime_by_index above --
+    # realized_volatility()/volatility_regime_by_signal_index() only ever
+    # look at candles <= a signal's own ts.
+    volatility_regime_by_index = volatility_regime_by_signal_index(signals, candles) if gate_config.use_volatility_regime_gate else {}
 
     pooled_trades = []
     total_kept = 0
     windows_passing = 0
     for window in windows:
         train, test = fw.split_by_window(labeled, window)
-        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index)
+        kept = apply_gates(train, test, gate_config, regime_by_index=regime_by_index, volatility_regime_by_index=volatility_regime_by_index)
         total_kept += len(kept)
 
         # Gate SELECTION uses the hindsight-resolved labeled signals above
@@ -484,6 +715,7 @@ def size_multiplier(confidence: float) -> float:
 class SizingConfig:
     name: str
     use_confidence_sizing: bool = False
+    use_volatility_regime_sizing: bool = False  # brief Section 3: RISK_OFF/FREEZE shrink size, composes with use_confidence_sizing rather than replacing it (one-directional, same VOLATILITY_REGIME_SIZE_MULTIPLIER convention as position_sizing.HIGH_VOL_RISK_MULTIPLIER)
 
 
 # no_sizing (multiplier always 1.0) is the baseline every other variant is
@@ -492,22 +724,45 @@ class SizingConfig:
 SIZING_CONFIGS = (
     SizingConfig(name="no_sizing"),
     SizingConfig(name="confidence_sizing", use_confidence_sizing=True),
+    SizingConfig(name="volatility_regime_sizing", use_volatility_regime_sizing=True),
 )
 
 
-def _size_multipliers(train: list[fw.LabeledSignal], test: list[fw.LabeledSignal], sizing_config: SizingConfig) -> dict[int, float]:
+def _size_multipliers(
+    train: list[fw.LabeledSignal],
+    test: list[fw.LabeledSignal],
+    sizing_config: SizingConfig,
+    volatility_regime_by_index: dict[int, str] | None = None,
+) -> dict[int, float]:
     """signal.index -> multiplier for every signal in `test` -- keyed by
     index (not list position) since simulate_trades() can drop a signal
     entirely (the very last candle in the series has no forward data to
     label), and SimulatedTrade.signal_index is the stable join key back to
-    whichever multiplier applies, regardless of any such drop."""
-    if not sizing_config.use_confidence_sizing:
-        return {ls.signal.index: 1.0 for ls in test}
-    fit = _fit_confidence_model(train)
-    if fit is None:
-        return {ls.signal.index: 1.0 for ls in test}  # can't fit this window -- no scaling, same fallback precedent as the gate
-    model, _ = fit
-    return {ls.signal.index: size_multiplier(_predict_proba(model, ls.signal)) for ls in test}
+    whichever multiplier applies, regardless of any such drop.
+
+    use_volatility_regime_sizing (brief Section 3) is applied AFTER
+    whatever use_confidence_sizing already decided, as a pure multiplicative
+    shrink for RISK_OFF/FREEZE signals -- never enlarging, same one-
+    directional principle as position_sizing.HIGH_VOL_RISK_MULTIPLIER. The
+    two sizing mechanisms compose rather than being mutually exclusive."""
+    if sizing_config.use_confidence_sizing:
+        fit = _fit_confidence_model(train)
+        if fit is None:
+            multipliers = {ls.signal.index: 1.0 for ls in test}  # can't fit this window -- no scaling, same fallback precedent as the gate
+        else:
+            model, _ = fit
+            multipliers = {ls.signal.index: size_multiplier(_predict_proba(model, ls.signal)) for ls in test}
+    else:
+        multipliers = {ls.signal.index: 1.0 for ls in test}
+
+    if sizing_config.use_volatility_regime_sizing:
+        regimes = volatility_regime_by_index or {}
+        multipliers = {
+            idx: (m * VOLATILITY_REGIME_SIZE_MULTIPLIER if regimes.get(idx) in (VOLATILITY_REGIME_RISK_OFF, VOLATILITY_REGIME_FREEZE) else m)
+            for idx, m in multipliers.items()
+        }
+
+    return multipliers
 
 
 @dataclasses.dataclass(frozen=True)
@@ -552,13 +807,17 @@ def run_sizing_series(
         step_months=campaign.exp.STEP_MONTHS,
         mode=campaign.exp.WINDOW_MODE,
     )
+    # Same walk-forward-safe precomputation as run_gated_series (module docstring).
+    volatility_regime_by_index = (
+        volatility_regime_by_signal_index(signals, candles) if sizing_config.use_volatility_regime_sizing else {}
+    )
 
     pooled_trades: list[ts.SimulatedTrade] = []
     weighted_returns: list[tuple[float, float]] = []
     applied_multipliers: list[float] = []
     for window in windows:
         train, test = fw.split_by_window(labeled, window)
-        multiplier_by_index = _size_multipliers(train, test, sizing_config)
+        multiplier_by_index = _size_multipliers(train, test, sizing_config, volatility_regime_by_index=volatility_regime_by_index)
 
         # Same walk-forward-strict re-simulation convention as apply_gates()
         # above (module docstring): sizing does not change WHICH signals

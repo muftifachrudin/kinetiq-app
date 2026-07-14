@@ -87,7 +87,7 @@ def mk_labeled(
 # --- GATE_CONFIGS ---
 
 
-def test_gate_configs_covers_seven_named_combinations():
+def test_gate_configs_covers_nine_named_combinations():
     names = {c.name for c in gc.GATE_CONFIGS}
     assert names == {
         "no_gate",
@@ -97,6 +97,8 @@ def test_gate_configs_covers_seven_named_combinations():
         "both_gates",
         "veto_short_bull",
         "veto_both_counter_trend",
+        "volatility_regime_only",
+        "knn_risk_memory_only",
     }
 
 
@@ -325,9 +327,9 @@ def test_size_multiplier_clamps_out_of_range_confidence():
 # --- SIZING_CONFIGS / _size_multipliers ---
 
 
-def test_sizing_configs_covers_two_named_variants():
+def test_sizing_configs_covers_three_named_variants():
     names = {c.name for c in gc.SIZING_CONFIGS}
-    assert names == {"no_sizing", "confidence_sizing"}
+    assert names == {"no_sizing", "confidence_sizing", "volatility_regime_sizing"}
 
 
 def test_size_multipliers_no_sizing_always_returns_one():
@@ -423,6 +425,28 @@ def rising_candles(n: int, start_price: float = 100.0, step: float = 0.5) -> lis
         o = price
         c = price + step
         candles.append(mk(i, o, max(o, c), min(o, c), c))
+        price = c
+    return candles
+
+
+def flat_candles(n: int, start_index: int = 0, price: float = 100.0) -> list[fgt.Candle]:
+    """Zero-volatility candles (constant close every bar) -- builds up a
+    near-zero realized_volatility population for volatility-regime tests."""
+    return [mk(start_index + i, price, price, price, price) for i in range(n)]
+
+
+def volatile_candles(n: int, start_index: int, start_price: float = 100.0, seed: int = 7) -> list[fgt.Candle]:
+    """Large, alternating-sign percentage moves -- deliberately far more
+    volatile than flat_candles() so realized_volatility() ranks clearly
+    higher against a flat-history population."""
+    rng = random.Random(seed)
+    candles = []
+    price = start_price
+    for i in range(n):
+        pct = rng.uniform(0.05, 0.12) * (1 if i % 2 == 0 else -1)
+        o = price
+        c = price * (1 + pct)
+        candles.append(mk(start_index + i, o, max(o, c), min(o, c), c))
         price = c
     return candles
 
@@ -609,3 +633,244 @@ def test_run_gated_series_batch_campaign_config_changes_signal_generation():
     default_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")])
     candidate_results = gc.run_gated_series_batch("synthetic", candles, [gc.GateConfig(name="no_gate")], campaign_config=f5_candidate)
     assert candidate_results[0].total_signals != default_results[0].total_signals
+
+
+# --- realized_volatility / volatility_regime_by_signal_index (docs/regime-gate-knn-risk-memory-brief.md Section 2) ---
+
+
+def test_realized_volatility_none_before_enough_history():
+    candles = flat_candles(24 * 10)  # 10 days -- fewer than the 14-day default lookback
+    candle_ts = [c.ts for c in candles]
+    assert gc.realized_volatility(candle_ts, candles, candles[-1].ts) is None
+
+
+def test_realized_volatility_is_zero_for_perfectly_flat_series():
+    candles = flat_candles(24 * 20)  # 20 days, past the 14-day lookback
+    candle_ts = [c.ts for c in candles]
+    vol = gc.realized_volatility(candle_ts, candles, candles[-1].ts)
+    assert vol == pytest.approx(0.0)
+
+
+def test_realized_volatility_higher_for_choppy_than_flat_segment():
+    flat = flat_candles(24 * 20)
+    choppy = volatile_candles(24 * 20, start_index=len(flat), start_price=flat[-1].close)
+    candles = flat + choppy
+    candle_ts = [c.ts for c in candles]
+    flat_vol = gc.realized_volatility(candle_ts, candles, flat[-1].ts)
+    choppy_vol = gc.realized_volatility(candle_ts, candles, choppy[-1].ts)
+    assert flat_vol == pytest.approx(0.0)
+    assert choppy_vol > flat_vol
+
+
+def test_realized_volatility_uses_only_candles_up_to_as_of_ts():
+    # Same causality guarantee as trailing_drift() -- a volatile stretch
+    # AFTER as_of_ts must not leak into a reading taken before it.
+    flat = flat_candles(24 * 20)
+    choppy = volatile_candles(24 * 20, start_index=len(flat), start_price=flat[-1].close)
+    candles = flat + choppy
+    candle_ts = [c.ts for c in candles]
+    vol_at_flat_end = gc.realized_volatility(candle_ts, candles, flat[-1].ts)
+    assert vol_at_flat_end == pytest.approx(0.0)
+
+
+def test_volatility_regime_by_signal_index_classifies_freeze_on_extreme_spike():
+    flat = flat_candles(24 * 40)  # 40 days flat -- builds a large near-zero-vol population
+    spike = volatile_candles(24 * 20, start_index=len(flat), start_price=flat[-1].close)
+    candles = flat + spike
+    signal_in_spike = mk_signal(len(flat) + 24 * 15)  # well into the spike section
+    regimes = gc.volatility_regime_by_signal_index([signal_in_spike], candles)
+    assert regimes[signal_in_spike.index] == gc.VOLATILITY_REGIME_FREEZE
+
+
+def test_volatility_regime_by_signal_index_classifies_normal_within_flat_history():
+    flat = flat_candles(24 * 40)
+    signal_late = mk_signal(24 * 35)  # deep into the flat history, past MIN_VOLATILITY_POPULATION warmup
+    regimes = gc.volatility_regime_by_signal_index([signal_late], flat)
+    assert regimes.get(signal_late.index) == gc.VOLATILITY_REGIME_NORMAL
+
+
+def test_volatility_regime_by_signal_index_omits_too_early_signals():
+    flat = flat_candles(24 * 40)
+    early_signal = mk_signal(24 * 5)  # too early for even the 14-day lookback
+    regimes = gc.volatility_regime_by_signal_index([early_signal], flat)
+    assert early_signal.index not in regimes
+
+
+# --- apply_gates: volatility_regime_only (FREEZE veto, RISK_OFF/NORMAL untouched) ---
+
+
+def test_apply_gates_volatility_regime_vetoes_freeze_regardless_of_direction():
+    test = [mk_labeled_dir(0, LONG), mk_labeled_dir(1, SHORT)]
+    config = gc.GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True)
+    kept = gc.apply_gates(
+        [], test, config, volatility_regime_by_index={0: gc.VOLATILITY_REGIME_FREEZE, 1: gc.VOLATILITY_REGIME_FREEZE}
+    )
+    assert kept == []
+
+
+def test_apply_gates_volatility_regime_keeps_risk_off_and_normal():
+    test = [mk_labeled_dir(0, LONG), mk_labeled_dir(1, SHORT)]
+    config = gc.GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True)
+    kept = gc.apply_gates(
+        [], test, config, volatility_regime_by_index={0: gc.VOLATILITY_REGIME_RISK_OFF, 1: gc.VOLATILITY_REGIME_NORMAL}
+    )
+    assert {ls.signal.index for ls in kept} == {0, 1}
+
+
+def test_apply_gates_volatility_regime_noop_without_dict_arg():
+    # volatility_regime_by_index defaults to None -- must behave as "no
+    # regimes known" (nothing vetoed), same fallback precedent as
+    # veto_short_bull's own regime_by_index default (test above).
+    test = [mk_labeled_dir(0, LONG)]
+    config = gc.GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True)
+    kept = gc.apply_gates([], test, config)
+    assert kept == test
+
+
+# --- run_gated_series: volatility_regime_only end-to-end (synthetic data) ---
+
+
+def test_run_gated_series_volatility_regime_never_increases_kept_count():
+    candles = noisy_zigzag()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True))
+    assert result.total_kept <= baseline.total_kept
+
+
+def test_run_gated_series_volatility_regime_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="volatility_regime_only", use_volatility_regime_gate=True))
+    assert result.gate_name == "volatility_regime_only"
+    assert result.total_windows >= 1
+    assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+# --- _fit_knn_risk_memory / _knn_loss_fraction (docs/regime-gate-knn-risk-memory-brief.md Section 4) ---
+
+
+def test_fit_knn_risk_memory_returns_none_with_too_few_train_samples():
+    train = [mk_labeled(i, 0.9, TP, 0.02) for i in range(3)]
+    assert gc._fit_knn_risk_memory(train) is None
+
+
+def test_fit_knn_risk_memory_returns_none_when_train_smaller_than_k():
+    train = [mk_labeled(i, 0.9 if i % 2 == 0 else 0.1, TP if i % 2 == 0 else SL, 0.02 if i % 2 == 0 else -0.01) for i in range(fw.MIN_TRAIN_SAMPLES + 2)]
+    assert gc._fit_knn_risk_memory(train, k=20) is None  # more than MIN_TRAIN_SAMPLES but fewer than k
+
+
+def test_fit_knn_risk_memory_returns_none_with_no_losses_in_train():
+    train = [mk_labeled(i, 0.9, TP, 0.02) for i in range(20)]  # every trade a winner
+    assert gc._fit_knn_risk_memory(train, k=5) is None
+
+
+def test_fit_knn_risk_memory_fits_with_enough_data():
+    train = [mk_labeled(i, 0.9 if i % 2 == 0 else 0.1, TP if i % 2 == 0 else SL, 0.02 if i % 2 == 0 else -0.01) for i in range(30)]
+    fit = gc._fit_knn_risk_memory(train, k=5)
+    assert fit is not None
+    model, is_loss_train = fit
+    assert len(is_loss_train) == 30
+    assert sum(is_loss_train) == 15  # half the trades (odd i, quality 0.1) are SL -> loss
+
+
+def test_knn_loss_fraction_high_for_signal_resembling_past_losers():
+    # two well-separated clusters by swing_quality: low quality -> always
+    # SL, high quality -> always TP -- an unambiguous case for the
+    # algorithm, not a claim about real market separability.
+    losers = [mk_labeled(i, 0.1, SL, -0.01) for i in range(15)]
+    winners = [mk_labeled(100 + i, 0.9, TP, 0.02) for i in range(15)]
+    train = losers + winners
+    fit = gc._fit_knn_risk_memory(train, k=5)
+    assert fit is not None
+    model, is_loss_train = fit
+
+    low_quality_query = mk_signal(1000, swing_quality=0.1)
+    high_quality_query = mk_signal(1001, swing_quality=0.9)
+    assert gc._knn_loss_fraction(model, is_loss_train, low_quality_query, k=5) == pytest.approx(1.0)
+    assert gc._knn_loss_fraction(model, is_loss_train, high_quality_query, k=5) == pytest.approx(0.0)
+
+
+# --- apply_gates: knn_risk_memory_only ---
+
+
+def test_apply_gates_knn_risk_memory_vetoes_signals_resembling_past_losers():
+    losers = [mk_labeled(i, 0.1, SL, -0.01) for i in range(15)]
+    winners = [mk_labeled(100 + i, 0.9, TP, 0.02) for i in range(15)]
+    train = losers + winners
+    test = [mk_labeled(1000, 0.1, TP, 0.02), mk_labeled(1001, 0.9, TP, 0.02)]  # first resembles losers, second resembles winners
+    config = gc.GateConfig(name="knn_risk_memory_only", use_knn_risk_memory_gate=True, knn_k=5)
+    kept = gc.apply_gates(train, test, config)
+    assert [ls.signal.index for ls in kept] == [1001]
+
+
+def test_apply_gates_knn_risk_memory_passes_through_when_train_cant_fit():
+    train = [mk_labeled(i, 0.9, TP, 0.02) for i in range(3)]  # too few samples
+    test = [mk_labeled(i, 0.5, TP, 0.02) for i in range(1000, 1003)]
+    config = gc.GateConfig(name="knn_risk_memory_only", use_knn_risk_memory_gate=True)
+    kept = gc.apply_gates(train, test, config)
+    assert kept == test  # fallback: pass everything through unfiltered
+
+
+# --- run_gated_series: knn_risk_memory_only end-to-end (synthetic data) ---
+
+
+def test_run_gated_series_knn_risk_memory_never_increases_kept_count():
+    candles = noisy_zigzag()
+    baseline = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="no_gate"))
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="knn_risk_memory_only", use_knn_risk_memory_gate=True))
+    assert result.total_kept <= baseline.total_kept
+
+
+def test_run_gated_series_knn_risk_memory_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_gated_series("synthetic", candles, gc.GateConfig(name="knn_risk_memory_only", use_knn_risk_memory_gate=True))
+    assert result.gate_name == "knn_risk_memory_only"
+    assert result.total_windows >= 1
+    assert 0 <= result.windows_passing_pf <= result.total_windows
+
+
+# --- _size_multipliers: volatility_regime_sizing (RISK_OFF/FREEZE shrink, never enlarges) ---
+
+
+def test_size_multipliers_volatility_regime_sizing_shrinks_risk_off_and_freeze():
+    test = [mk_labeled(0, 0.5, TP, 0.02), mk_labeled(1, 0.5, TP, 0.02), mk_labeled(2, 0.5, TP, 0.02)]
+    config = gc.SizingConfig(name="volatility_regime_sizing", use_volatility_regime_sizing=True)
+    regimes = {0: gc.VOLATILITY_REGIME_RISK_OFF, 1: gc.VOLATILITY_REGIME_FREEZE, 2: gc.VOLATILITY_REGIME_NORMAL}
+    multipliers = gc._size_multipliers([], test, config, volatility_regime_by_index=regimes)
+    assert multipliers[0] == pytest.approx(gc.VOLATILITY_REGIME_SIZE_MULTIPLIER)
+    assert multipliers[1] == pytest.approx(gc.VOLATILITY_REGIME_SIZE_MULTIPLIER)
+    assert multipliers[2] == pytest.approx(1.0)
+
+
+def test_size_multipliers_volatility_regime_sizing_noop_without_dict_arg():
+    test = [mk_labeled(0, 0.5, TP, 0.02)]
+    config = gc.SizingConfig(name="volatility_regime_sizing", use_volatility_regime_sizing=True)
+    multipliers = gc._size_multipliers([], test, config)
+    assert multipliers == {0: 1.0}
+
+
+def test_size_multipliers_volatility_regime_sizing_composes_with_confidence_sizing():
+    rng = random.Random(11)
+    train = []
+    for i in range(60):
+        quality = 0.9 if i % 2 == 0 else 0.1
+        outcome = TP if rng.random() < (0.9 if quality > 0.5 else 0.1) else SL
+        train.append(mk_labeled(i, quality, outcome, 0.02 if outcome is TP else -0.01))
+    test = [mk_labeled(1000, 0.95, TP, 0.02)]
+    config = gc.SizingConfig(name="both", use_confidence_sizing=True, use_volatility_regime_sizing=True)
+    without_regime = gc._size_multipliers(train, test, config, volatility_regime_by_index={})
+    with_freeze = gc._size_multipliers(train, test, config, volatility_regime_by_index={1000: gc.VOLATILITY_REGIME_FREEZE})
+    # rel=1e-3, not the default 1e-6 -- LogisticRegression(solver="saga") is
+    # refit independently for each _size_multipliers() call (no random_state
+    # pinned anywhere in this module, a pre-existing property of
+    # _fit_confidence_model()) and isn't bit-for-bit deterministic across
+    # separate fits on the same data; the composition itself (freeze
+    # multiplies by VOLATILITY_REGIME_SIZE_MULTIPLIER) is what's under test.
+    assert with_freeze[1000] == pytest.approx(without_regime[1000] * gc.VOLATILITY_REGIME_SIZE_MULTIPLIER, rel=1e-3)
+
+
+def test_run_sizing_series_volatility_regime_sizing_well_formed_result():
+    candles = noisy_zigzag()
+    result = gc.run_sizing_series("synthetic", candles, gc.SizingConfig(name="volatility_regime_sizing", use_volatility_regime_sizing=True))
+    assert result.sizing_name == "volatility_regime_sizing"
+    if result.avg_multiplier is not None:
+        assert gc.VOLATILITY_REGIME_SIZE_MULTIPLIER <= result.min_multiplier <= result.avg_multiplier <= result.max_multiplier <= 1.0
