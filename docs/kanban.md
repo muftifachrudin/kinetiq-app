@@ -49,23 +49,21 @@ sudah tidak relevan.
   ke `execution/risk_gate.py` — itu tetap menunggu evidence positif dulu.
   Path CODEOWNERS-protected, wajib human-in-the-loop penuh begitu masuk
   implementasi.
-- [ ] **Risk Hard Gate — implementasi daily-loss-limit/drawdown
-  kill-switch & exposure cap per `docs/daily-loss-limit-exposure-cap-
-  brief.md`** (desain selesai 14 Juli 2026) — brief sudah jawab definisi
-  running-PnL (realized+unrealized dari OHLCV yang sudah ada), skema
-  minimal yang perlu ditambah (`position.status`/`exit_price`/
-  `realized_pnl_usd`, tabel baru `equity_snapshot`), formula hard-coded
-  daily-loss & drawdown kill-switch (reuse `RiskMandate.max_daily_loss_
-  usd`/`max_drawdown_pct` yang SUDAH ADA di skema sejak migrasi 0001 tapi
-  belum pernah dipakai), dan exposure cap v1 = reuse formula margin-
-  ratio-cap `margin-mode-brief.md` §7 (bukan correlation-based
-  sungguhan — itu tetap tidak ada desain, ditunda terpisah). Ada
-  diskrepansi TERBUKA yang perlu keputusan founder: `max_drawdown_pct`
-  default DB 15% vs PRD "hard stop di 20%". Implementasi butuh migrasi
-  skema baru (CODEOWNERS-protected, `packages/db/migrations/`) DAN
-  orkestrator live (`custody/`/`graphs/` masih kosong) yang belum ada —
-  jadi masih terblokir prasyarat lain juga, bukan siap langsung
-  dieksekusi.
+- [ ] **Risk Hard Gate — wiring daily-loss-limit/drawdown kill-switch &
+  exposure cap ke `execution/risk_gate.py`** (migrasi 0011 sudah ada,
+  lihat Done) — skema (`position.status`/`exit_price`/`realized_pnl_usd`,
+  tabel `equity_snapshot`) sudah dimigrasikan dan diuji round-trip lokal,
+  TAPI belum diterapkan ke production Neon, dan belum ada apa pun yang
+  MENULIS ke kolom/tabel baru ini (butuh orkestrator live —
+  `execution/custody/`/`agent-orchestrator/graphs/` masih kosong — untuk
+  mencatat fill nyata). Setelah orkestrator ada: (1) jalankan migrasi
+  0011 ke production, (2) perluas `RiskMandateSnapshot`/
+  `evaluate_risk_gate()` dengan field baru (`max_daily_loss_usd`,
+  `max_drawdown_pct`, `max_margin_ratio`, `current_equity_usd`, dst,
+  sesuai brief §6), (3) putuskan diskrepansi TERBUKA `max_drawdown_pct`
+  15% (default DB) vs PRD "hard stop di 20%" — keputusan founder, belum
+  diasumsikan. Path CODEOWNERS-protected (`packages/db/migrations/`,
+  `execution/risk_gate.py`), wajib human-in-the-loop penuh.
 - [ ] **Arbiter / meta-model v2 per-regime** — `agent-orchestrator/graphs/`
   masih kosong; baseline yang ada sekarang cuma logistic meta-model lama
   (sudah dikonfirmasi anti-prediktif, lihat `CLAUDE.md`). Refs:
@@ -197,6 +195,17 @@ sudah tidak relevan.
   pernah didesain). Diskrepansi 15% vs 20% `max_drawdown_pct` dicatat
   utk keputusan founder, tidak diasumsikan. Docs-only, belum ada kode/
   migrasi. 14 Juli 2026.
+- [x] **Migrasi 0011: `position.status`/`exit_price`/`realized_pnl_usd` +
+  tabel `equity_snapshot`** — schema-only, persis sesuai
+  `docs/daily-loss-limit-exposure-cap-brief.md` §2. `status` di-backfill
+  dari konvensi lama `closed_at IS NULL` sebelum jadi NOT NULL (aman
+  terhadap baris yang sudah ada — diuji nyata dengan baris `open` &
+  `closed` sebelum migrasi dijalankan, bukan cuma tabel kosong).
+  Round-trip upgrade→downgrade→upgrade diuji thd Postgres 16 lokal.
+  **Belum diterapkan ke production Neon, belum ada yang menulis ke
+  kolom/tabel ini** (orkestrator live belum ada) — lihat card To Do utk
+  langkah wiring selanjutnya. Path CODEOWNERS-protected, PR wajib
+  human-in-the-loop review. 14 Juli 2026.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
 sesi masing-masing, bukan lewat board ini.)
