@@ -34,21 +34,23 @@ sudah tidak relevan.
   langsung, tapi benar-benar redesign. Refs: `docs/prd.md`
   (bagian shadow trading / Telegram monitor).
 - [ ] **Risk Hard Gate — regime gate & kNN risk memory: putuskan langkah
-  lanjutan setelah validasi walk-forward NYATA GAGAL promosi** (validasi
-  selesai 14 Juli 2026, angka lengkap di Done + `docs/validation-results/
-  gated_campaign.json`) — **kedua gate TIDAK lolos** kriteria adopsi
-  apapun di 4 seri produksi asli dengan setting default brief. Opsi yang
-  belum diputuskan: (a) sweep `knn_k`/`knn_loss_threshold` (brief §4 sudah
-  usulkan grid k∈{5,10,20}, threshold∈{0.5,0.6,0.7} — belum pernah
-  dijalankan, base rate SL corpus ~52% bikin threshold 0.6 diduga
-  terlalu rendah), (b) sweep `RISK_OFF_VOLATILITY_PERCENTILE`/
-  `FREEZE_VOLATILITY_PERCENTILE`, (c) ukur dampak drawdown/tail-risk
-  langsung (bukan cuma PF net) utk `volatility_regime_only` sesuai bar
-  dua-bagian brief §3 yang belum pernah dihitung, atau (d) deprioritas
-  pendekatan ini dan alokasikan sesi ke card lain. TIDAK ADA yang di-wire
-  ke `execution/risk_gate.py` — itu tetap menunggu evidence positif dulu.
-  Path CODEOWNERS-protected, wajib human-in-the-loop penuh begitu masuk
-  implementasi.
+  lanjutan setelah 2x validasi walk-forward NYATA GAGAL promosi** (default
+  + sweep, keduanya 14 Juli 2026, angka di Done + `docs/validation-
+  results/gated_campaign.json` & `gated_campaign_knn_sweep.json`) — sweep
+  kNN (grid brief §4: k∈{5,10,20} × threshold∈{0.5,0.6,0.7}, 4 seri) SUDAH
+  dijalankan: **tetap TIDAK ada satupun kombinasi yang lolos ambang 66,66%**
+  (terbaik 14/35 = 40%), tapi menemukan asimetri lintas-koin yang
+  konsisten — `k10,t0.7` MEMBAIK di kedua seri ETH (PF net di atas
+  baseline + window lolos naik 10→14) tapi MEMBURUK di kedua seri BTC.
+  Opsi yang belum diputuskan: (a) selidiki edge per-koin ETH itu lebih
+  lanjut (mungkin gate ini valid utk ETH tapi tidak BTC — selaras temuan
+  lama "edge tidak generalize lintas-koin"), (b) sweep threshold
+  `volatility_regime_only` (belum dilakukan), (c) ukur drawdown/tail-risk
+  langsung utk regime gate (bar dua-bagian brief §3, belum pernah
+  dihitung), atau (d) deprioritas & alokasikan sesi ke card lain. TIDAK
+  ADA yang di-wire ke `execution/risk_gate.py` — tetap menunggu evidence
+  yang lolos gate. Path CODEOWNERS-protected, wajib human-in-the-loop
+  penuh begitu masuk implementasi.
 - [ ] **Risk Hard Gate — wiring daily-loss-limit/drawdown kill-switch &
   exposure cap ke `execution/risk_gate.py`** (migrasi 0011 sudah ada,
   lihat Done) — skema (`position.status`/`exit_price`/`realized_pnl_usd`,
@@ -179,6 +181,28 @@ sudah tidak relevan.
     kelihatan masuk akal tetap harus tunduk ke bukti nyata, bukan
     diasumsikan benar. Langkah lanjutan (sweep threshold, ukur drawdown
     langsung, atau deprioritaskan) belum diputuskan -- lihat card To Do.
+- [x] **Sweep threshold/k kNN risk memory (data produksi real)**
+  (`docs/validation-results/gated_campaign_knn_sweep.json`, 14 Juli 2026)
+  — grid brief §4 (k∈{5,10,20} × threshold∈{0.5,0.6,0.7} = 9 kombinasi ×
+  4 seri), lewat Neon HTTP-SQL, reuse `run_gated_series_batch()` (generate_
+  signals ~21 mnt/seri dibayar sekali, 9 kombinasi berbagi biaya itu).
+  Hasil:
+  - **Tetap TIDAK ada satupun kombinasi lolos ambang promosi 66,66%**
+    (window lolos terbaik cuma 14/35 = 40%) — jadi masalahnya BUKAN
+    sekadar kalibrasi default, mekanismenya sendiri tidak cukup kuat.
+  - **Tapi ada asimetri lintas-koin yang konsisten & bukan kebetulan
+    satu seri**: kombinasi `k10,t0.7` MEMBAIK di KEDUA seri ETH
+    (binance_ETH baseline PF 1.039→1.100, window 10→14; bybit_ETH
+    1.046→1.113, window 10→14) tapi MEMBURUK di KEDUA seri BTC (PF net
+    turun di semua kombinasi BTC). Selaras temuan lama proyek "edge
+    robust lintas-venue tapi tidak generalize lintas-koin" (`CLAUDE.md`)
+    — arahnya di sini justru ETH yang untung.
+  - Dugaan kalibrasi terkonfirmasi sebagian: default lama `k10,t0.6`
+    memang buruk di mana-mana; threshold 0.7 jelas lebih baik dari 0.6
+    (base rate SL ~52% bikin 0.6 terlalu rendah, persis dugaan) — tapi
+    tetap tidak cukup untuk lolos gate.
+  - Tetap TIDAK di-wire ke `execution/risk_gate.py`. Langkah lanjutan
+    (selidiki edge per-koin ETH, atau deprioritas) di card To Do.
 - [x] **Desain daily-loss-limit/drawdown kill-switch & exposure cap**
   (`docs/daily-loss-limit-exposure-cap-brief.md`) — beda dari regime-
   gate/kNN: fondasi datanya sendiri belum ada (`Position` tanpa
