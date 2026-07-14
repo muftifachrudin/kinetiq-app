@@ -1,0 +1,506 @@
+[
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k5_t0.5",
+    "total_signals": 1142,
+    "total_kept": 59,
+    "total_windows": 35,
+    "windows_passing_pf": 2,
+    "promoted": false,
+    "pooled_pf_net": 0.5653040260992629,
+    "pooled_pf_net_ci90": [
+      0.2941857973864352,
+      1.0039574090961985
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k5_t0.6",
+    "total_signals": 1142,
+    "total_kept": 289,
+    "total_windows": 35,
+    "windows_passing_pf": 11,
+    "promoted": false,
+    "pooled_pf_net": 0.8104684704998872,
+    "pooled_pf_net_ci90": [
+      0.6111845393232689,
+      1.044891011937346
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k5_t0.7",
+    "total_signals": 1142,
+    "total_kept": 289,
+    "total_windows": 35,
+    "windows_passing_pf": 11,
+    "promoted": false,
+    "pooled_pf_net": 0.8104684704998872,
+    "pooled_pf_net_ci90": [
+      0.6111845393232689,
+      1.044891011937346
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k10_t0.5",
+    "total_signals": 1142,
+    "total_kept": 50,
+    "total_windows": 35,
+    "windows_passing_pf": 1,
+    "promoted": false,
+    "pooled_pf_net": 0.819642553591681,
+    "pooled_pf_net_ci90": [
+      0.399229287098627,
+      1.5629251943268168
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k10_t0.6",
+    "total_signals": 1142,
+    "total_kept": 118,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.8334283245530492,
+    "pooled_pf_net_ci90": [
+      0.5479080186058989,
+      1.2614583554345902
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k10_t0.7",
+    "total_signals": 1142,
+    "total_kept": 318,
+    "total_windows": 35,
+    "windows_passing_pf": 8,
+    "promoted": false,
+    "pooled_pf_net": 0.8236827712207796,
+    "pooled_pf_net_ci90": [
+      0.632935324401828,
+      1.0553665839090727
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k20_t0.5",
+    "total_signals": 1142,
+    "total_kept": 42,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.8641448388503891,
+    "pooled_pf_net_ci90": [
+      0.39862020001934256,
+      1.6795234279895872
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k20_t0.6",
+    "total_signals": 1142,
+    "total_kept": 48,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.7567083544762893,
+    "pooled_pf_net_ci90": [
+      0.36286026177930514,
+      1.4533515577657217
+    ]
+  },
+  {
+    "series": "binance_BTC",
+    "gate_name": "knn_k20_t0.7",
+    "total_signals": 1142,
+    "total_kept": 144,
+    "total_windows": 35,
+    "windows_passing_pf": 8,
+    "promoted": false,
+    "pooled_pf_net": 0.8060642364154293,
+    "pooled_pf_net_ci90": [
+      0.5417447428714193,
+      1.1666445314165934
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k5_t0.5",
+    "total_signals": 1134,
+    "total_kept": 69,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.9290728169285948,
+    "pooled_pf_net_ci90": [
+      0.5113123343501303,
+      1.5516945665027442
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k5_t0.6",
+    "total_signals": 1134,
+    "total_kept": 277,
+    "total_windows": 35,
+    "windows_passing_pf": 9,
+    "promoted": false,
+    "pooled_pf_net": 0.8763052164662296,
+    "pooled_pf_net_ci90": [
+      0.669370334682505,
+      1.1194773461863934
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k5_t0.7",
+    "total_signals": 1134,
+    "total_kept": 277,
+    "total_windows": 35,
+    "windows_passing_pf": 9,
+    "promoted": false,
+    "pooled_pf_net": 0.8763052164662296,
+    "pooled_pf_net_ci90": [
+      0.669370334682505,
+      1.1194773461863934
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k10_t0.5",
+    "total_signals": 1134,
+    "total_kept": 58,
+    "total_windows": 35,
+    "windows_passing_pf": 1,
+    "promoted": false,
+    "pooled_pf_net": 0.6979788908193265,
+    "pooled_pf_net_ci90": [
+      0.35972624131357084,
+      1.2246232225446156
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k10_t0.6",
+    "total_signals": 1134,
+    "total_kept": 139,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 0.7281239038768328,
+    "pooled_pf_net_ci90": [
+      0.48210392039875716,
+      1.038362042432376
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k10_t0.7",
+    "total_signals": 1134,
+    "total_kept": 370,
+    "total_windows": 35,
+    "windows_passing_pf": 9,
+    "promoted": false,
+    "pooled_pf_net": 0.8666749604773709,
+    "pooled_pf_net_ci90": [
+      0.696417698952096,
+      1.090461525053734
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k20_t0.5",
+    "total_signals": 1134,
+    "total_kept": 44,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.8585311508275177,
+    "pooled_pf_net_ci90": [
+      0.4183590919571928,
+      1.6244247934608766
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k20_t0.6",
+    "total_signals": 1134,
+    "total_kept": 60,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.6269714852056693,
+    "pooled_pf_net_ci90": [
+      0.3275519867717365,
+      1.0830806715083443
+    ]
+  },
+  {
+    "series": "bybit_BTC",
+    "gate_name": "knn_k20_t0.7",
+    "total_signals": 1134,
+    "total_kept": 228,
+    "total_windows": 35,
+    "windows_passing_pf": 7,
+    "promoted": false,
+    "pooled_pf_net": 0.7756984183585388,
+    "pooled_pf_net_ci90": [
+      0.5750860821620974,
+      1.0360187429766181
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k5_t0.5",
+    "total_signals": 1153,
+    "total_kept": 59,
+    "total_windows": 35,
+    "windows_passing_pf": 1,
+    "promoted": false,
+    "pooled_pf_net": 0.9032721283864704,
+    "pooled_pf_net_ci90": [
+      0.49462916627511205,
+      1.5571032806471117
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k5_t0.6",
+    "total_signals": 1153,
+    "total_kept": 194,
+    "total_windows": 35,
+    "windows_passing_pf": 12,
+    "promoted": false,
+    "pooled_pf_net": 1.1770932891479506,
+    "pooled_pf_net_ci90": [
+      0.8697171233824588,
+      1.5904101482470296
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k5_t0.7",
+    "total_signals": 1153,
+    "total_kept": 194,
+    "total_windows": 35,
+    "windows_passing_pf": 12,
+    "promoted": false,
+    "pooled_pf_net": 1.1770932891479506,
+    "pooled_pf_net_ci90": [
+      0.8697171233824588,
+      1.5904101482470296
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k10_t0.5",
+    "total_signals": 1153,
+    "total_kept": 41,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.8803921800213699,
+    "pooled_pf_net_ci90": [
+      0.42101533394495283,
+      1.7114198921877655
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k10_t0.6",
+    "total_signals": 1153,
+    "total_kept": 76,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.9262717755946839,
+    "pooled_pf_net_ci90": [
+      0.5152677075187131,
+      1.5774674832926445
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k10_t0.7",
+    "total_signals": 1153,
+    "total_kept": 211,
+    "total_windows": 35,
+    "windows_passing_pf": 14,
+    "promoted": false,
+    "pooled_pf_net": 1.1002742992626444,
+    "pooled_pf_net_ci90": [
+      0.8055946769961911,
+      1.4503701133916131
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k20_t0.5",
+    "total_signals": 1153,
+    "total_kept": 39,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.9767455724386612,
+    "pooled_pf_net_ci90": [
+      0.4575253803551792,
+      1.859159779467843
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k20_t0.6",
+    "total_signals": 1153,
+    "total_kept": 42,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.6143441513383483,
+    "pooled_pf_net_ci90": [
+      0.27482410411742425,
+      1.2040750410809637
+    ]
+  },
+  {
+    "series": "binance_ETH",
+    "gate_name": "knn_k20_t0.7",
+    "total_signals": 1153,
+    "total_kept": 90,
+    "total_windows": 35,
+    "windows_passing_pf": 4,
+    "promoted": false,
+    "pooled_pf_net": 0.9624163051037894,
+    "pooled_pf_net_ci90": [
+      0.57620409607905,
+      1.5756459541312846
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k5_t0.5",
+    "total_signals": 1155,
+    "total_kept": 69,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.8578614071360016,
+    "pooled_pf_net_ci90": [
+      0.46047484711147013,
+      1.4158060943358255
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k5_t0.6",
+    "total_signals": 1155,
+    "total_kept": 192,
+    "total_windows": 35,
+    "windows_passing_pf": 11,
+    "promoted": false,
+    "pooled_pf_net": 1.0352605737733596,
+    "pooled_pf_net_ci90": [
+      0.7501311186835907,
+      1.393625197322961
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k5_t0.7",
+    "total_signals": 1155,
+    "total_kept": 192,
+    "total_windows": 35,
+    "windows_passing_pf": 11,
+    "promoted": false,
+    "pooled_pf_net": 1.0352605737733596,
+    "pooled_pf_net_ci90": [
+      0.7501311186835907,
+      1.393625197322961
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k10_t0.5",
+    "total_signals": 1155,
+    "total_kept": 46,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.6342210238118633,
+    "pooled_pf_net_ci90": [
+      0.30043568721447145,
+      1.1626542460250788
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k10_t0.6",
+    "total_signals": 1155,
+    "total_kept": 79,
+    "total_windows": 35,
+    "windows_passing_pf": 3,
+    "promoted": false,
+    "pooled_pf_net": 0.7189957130267743,
+    "pooled_pf_net_ci90": [
+      0.392161148652802,
+      1.1861342705683238
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k10_t0.7",
+    "total_signals": 1155,
+    "total_kept": 214,
+    "total_windows": 35,
+    "windows_passing_pf": 14,
+    "promoted": false,
+    "pooled_pf_net": 1.1128411625379546,
+    "pooled_pf_net_ci90": [
+      0.8365966479042808,
+      1.486295260377359
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k20_t0.5",
+    "total_signals": 1155,
+    "total_kept": 45,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.6790809186412909,
+    "pooled_pf_net_ci90": [
+      0.31592991775118856,
+      1.2717939895862738
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k20_t0.6",
+    "total_signals": 1155,
+    "total_kept": 45,
+    "total_windows": 35,
+    "windows_passing_pf": 0,
+    "promoted": false,
+    "pooled_pf_net": 0.6790809186412909,
+    "pooled_pf_net_ci90": [
+      0.31592991775118856,
+      1.2717939895862738
+    ]
+  },
+  {
+    "series": "bybit_ETH",
+    "gate_name": "knn_k20_t0.7",
+    "total_signals": 1155,
+    "total_kept": 91,
+    "total_windows": 35,
+    "windows_passing_pf": 6,
+    "promoted": false,
+    "pooled_pf_net": 1.0294856299561632,
+    "pooled_pf_net_ci90": [
+      0.6020928021339821,
+      1.6219037679767638
+    ]
+  }
+]
