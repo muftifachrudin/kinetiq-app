@@ -47,12 +47,25 @@ sudah tidak relevan.
   dua-bagian brief §3 yang belum pernah dihitung, atau (d) deprioritas
   pendekatan ini dan alokasikan sesi ke card lain. TIDAK ADA yang di-wire
   ke `execution/risk_gate.py` — itu tetap menunggu evidence positif dulu.
-  Juga belum ada: daily-loss-limit/drawdown (`Position`/`OrderAuditLog`
-  belum tracking running-PnL) dan correlation-based exposure cap (butuh
-  multi-position tracking, sudah dideferred ke F7b di
-  `margin-mode-brief.md`) — 2 sub-gate ini beda kelas masalah, tetap di
-  luar scope brief di atas. Path CODEOWNERS-protected, wajib
-  human-in-the-loop penuh begitu masuk implementasi.
+  Path CODEOWNERS-protected, wajib human-in-the-loop penuh begitu masuk
+  implementasi.
+- [ ] **Risk Hard Gate — implementasi daily-loss-limit/drawdown
+  kill-switch & exposure cap per `docs/daily-loss-limit-exposure-cap-
+  brief.md`** (desain selesai 14 Juli 2026) — brief sudah jawab definisi
+  running-PnL (realized+unrealized dari OHLCV yang sudah ada), skema
+  minimal yang perlu ditambah (`position.status`/`exit_price`/
+  `realized_pnl_usd`, tabel baru `equity_snapshot`), formula hard-coded
+  daily-loss & drawdown kill-switch (reuse `RiskMandate.max_daily_loss_
+  usd`/`max_drawdown_pct` yang SUDAH ADA di skema sejak migrasi 0001 tapi
+  belum pernah dipakai), dan exposure cap v1 = reuse formula margin-
+  ratio-cap `margin-mode-brief.md` §7 (bukan correlation-based
+  sungguhan — itu tetap tidak ada desain, ditunda terpisah). Ada
+  diskrepansi TERBUKA yang perlu keputusan founder: `max_drawdown_pct`
+  default DB 15% vs PRD "hard stop di 20%". Implementasi butuh migrasi
+  skema baru (CODEOWNERS-protected, `packages/db/migrations/`) DAN
+  orkestrator live (`custody/`/`graphs/` masih kosong) yang belum ada —
+  jadi masih terblokir prasyarat lain juga, bukan siap langsung
+  dieksekusi.
 - [ ] **Arbiter / meta-model v2 per-regime** — `agent-orchestrator/graphs/`
   masih kosong; baseline yang ada sekarang cuma logistic meta-model lama
   (sudah dikonfirmasi anti-prediktif, lihat `CLAUDE.md`). Refs:
@@ -168,6 +181,22 @@ sudah tidak relevan.
     kelihatan masuk akal tetap harus tunduk ke bukti nyata, bukan
     diasumsikan benar. Langkah lanjutan (sweep threshold, ukur drawdown
     langsung, atau deprioritaskan) belum diputuskan -- lihat card To Do.
+- [x] **Desain daily-loss-limit/drawdown kill-switch & exposure cap**
+  (`docs/daily-loss-limit-exposure-cap-brief.md`) — beda dari regime-
+  gate/kNN: fondasi datanya sendiri belum ada (`Position` tanpa
+  `exit_price`, tanpa status open/closed eksplisit; tidak ada
+  orkestrator live). Temuan penting: `RiskMandate.max_daily_loss_usd`/
+  `max_drawdown_pct` sudah ada di skema sejak migrasi 0001, cuma belum
+  pernah dipakai. Brief usulkan: running-PnL dari OHLCV yang sudah ada
+  (bukan feed baru), skema tambahan minimal (`status`/`exit_price`/
+  `realized_pnl_usd` + tabel `equity_snapshot`), formula hard-coded utk
+  2 gate pertama (sesuai prinsip "wajib hard-coded, tidak pernah ML" di
+  `shadow-simulator-brief.md`), dan exposure cap v1 = reuse formula
+  margin-ratio-cap `margin-mode-brief.md` §7 (correlation-based
+  sungguhan tetap ditunda terpisah, tidak ada metodologi apa pun yang
+  pernah didesain). Diskrepansi 15% vs 20% `max_drawdown_pct` dicatat
+  utk keputusan founder, tidak diasumsikan. Docs-only, belum ada kode/
+  migrasi. 14 Juli 2026.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
 sesi masing-masing, bukan lewat board ini.)
