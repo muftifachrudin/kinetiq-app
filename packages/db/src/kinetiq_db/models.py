@@ -215,8 +215,19 @@ class Position(Base):
     liquidation_price = Column(Numeric(24, 10))
     opened_at = Column(DateTime(timezone=True))
     closed_at = Column(DateTime(timezone=True))
+    # docs/daily-loss-limit-exposure-cap-brief.md Section 2 -- explicit
+    # status replacing the fragile "closed_at IS NULL means open"
+    # convention; exit_price/realized_pnl_usd populated when a position
+    # closes (neither existed before this migration, so realized PnL was
+    # literally uncomputable even after the fact).
+    status = Column(Text, nullable=False)
+    exit_price = Column(Numeric(24, 10))
+    realized_pnl_usd = Column(Numeric(24, 4))
 
-    __table_args__ = (CheckConstraint("side in ('long','short')", name="ck_position_side"),)
+    __table_args__ = (
+        CheckConstraint("side in ('long','short')", name="ck_position_side"),
+        CheckConstraint("status in ('open', 'closed')", name="ck_position_status"),
+    )
 
 
 class OrderAuditLog(Base):
@@ -254,6 +265,25 @@ class RiskMandate(Base):
     risk_pct_per_trade = Column(Numeric(5, 4), server_default="0.01")
 
     __table_args__ = (CheckConstraint("default_margin_mode in ('cross', 'isolated')", name="ck_risk_mandate_default_margin_mode"),)
+
+
+class EquitySnapshot(Base):
+    """docs/daily-loss-limit-exposure-cap-brief.md Section 2 -- periodic
+    equity ledger (composite PK, no surrogate id, same time-series
+    convention as funding_rate/ohlcv/onchain_exchange_flow). Source of
+    truth for "equity at start of today"/"peak equity ever" that the
+    daily-loss-limit/drawdown-kill-switch formulas need -- recomputing
+    those from raw position history on every gate check would be
+    expensive and fragile. Nothing writes to this table yet; that's a
+    future implementation step once a live orchestration layer exists."""
+
+    __tablename__ = "equity_snapshot"
+
+    account_id = Column(Integer, primary_key=True)
+    ts = Column(DateTime(timezone=True), primary_key=True)
+    equity_usd = Column(Numeric(24, 4), nullable=False)
+    realized_pnl_usd = Column(Numeric(24, 4))
+    unrealized_pnl_usd = Column(Numeric(24, 4))
 
 
 class Credential(Base):
