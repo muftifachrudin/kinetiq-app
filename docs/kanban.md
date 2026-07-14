@@ -33,16 +33,21 @@ sudah tidak relevan.
   Kinetiq (read-only monitor, 5-layer guardrails); ini bukan sekadar port
   langsung, tapi benar-benar redesign. Refs: `docs/prd.md`
   (bagian shadow trading / Telegram monitor).
-- [ ] **Risk Hard Gate — implementasi regime gate + kNN risk memory
-  per `docs/regime-gate-knn-risk-memory-brief.md`** (desain selesai 14
-  Juli 2026) — brief sudah menjawab classifier/feature/distance-metric/
-  adoption-bar untuk keduanya, reuse infrastruktur `gated_campaign.py`
-  (causal regime + harness promosi) dan `fit_weights.py` (corpus 2.679
-  trade + feature vector). Yang masih perlu sesi implementasi terpisah:
-  (1) tulis `GateConfig` field baru + jalankan validasi walk-forward
-  nyata (belum ada angka PF/promoted sungguhan), (2) baru porting ke
-  `skills/strategy/market_regime.py`/`risk_memory.py` KALAU lolos ambang
-  adopsi masing-masing. Juga belum ada: daily-loss-limit/drawdown
+- [ ] **Risk Hard Gate — jalankan validasi walk-forward NYATA utk
+  `volatility_regime_only`/`knn_risk_memory_only`** (kode selesai 14 Juli
+  2026, lihat Done) — `gated_campaign.py` sudah punya kedua `GateConfig`
+  baru ini plus 24 test baru lolos di data sintetis, TAPI belum pernah
+  dijalankan lewat CLI `gated_campaign.py` melawan 4 seri produksi asli
+  (BTC/ETH x Binance/Bybit): sandbox sesi implementasi tidak punya
+  `DATABASE_URL`/akses Neon (lihat `docs/deployment-runbook.md`), jadi
+  belum ada angka PF/promoted sungguhan sama sekali. Butuh sesi dengan
+  akses DB nyata (kredensial `DATABASE_URL` atau lewat CI) untuk:
+  `python gated_campaign.py --gates volatility_regime_only,knn_risk_memory_only`,
+  baca hasilnya di `docs/validation-results/gated_campaign.json`, lalu
+  putuskan `promoted` (regime gate pakai bar dua-bagian per brief §3,
+  BUKAN `PF_PASS_FRACTION` polos seperti gate lain). Baru KALAU lolos:
+  porting ke `skills/strategy/market_regime.py`/`risk_memory.py` (brief
+  §7). Juga belum ada: daily-loss-limit/drawdown
   (`Position`/`OrderAuditLog` belum tracking running-PnL) dan
   correlation-based exposure cap (butuh multi-position tracking, sudah
   dideferred ke F7b di `margin-mode-brief.md`) — 2 sub-gate ini beda
@@ -122,6 +127,20 @@ sudah tidak relevan.
   jalur validasi reuse `gated_campaign.py`/`fit_weights.py`; jalur ke
   produksi eksplisit setelah lolos adopsi. Docs-only, belum ada kode/
   validasi nyata — itu jadi card implementasi terpisah di To Do. 14 Juli
+  2026.
+- [x] **Kode `volatility_regime_only` + `knn_risk_memory_only`
+  (`gated_campaign.py`)** — implementasi persis sesuai
+  `docs/regime-gate-knn-risk-memory-brief.md`: `realized_volatility()`/
+  `volatility_regime_by_signal_index()` (causal, percentile trailing thd
+  populasi volatilitas sebelumnya), `_fit_knn_risk_memory()`/
+  `_knn_loss_fraction()` (`sklearn.neighbors.NearestNeighbors` atas corpus
+  2.679 trade `fit_weights.py`, bukan `trade_annotation`). Keduanya jadi
+  `GateConfig` baru (`volatility_regime_only`, `knn_risk_memory_only`) +
+  `SizingConfig` baru (`volatility_regime_sizing`, size-down RISK_OFF/
+  FREEZE, komposisi dgn `confidence_sizing`, tidak pernah menaikkan size).
+  24 test baru (data sintetis) + 75/75 test `test_gated_campaign.py`
+  lolos, `ruff` bersih. **Validasi walk-forward NYATA belum jalan** (lihat
+  card To Do di atas) — sandbox sesi ini tidak punya akses Neon. 14 Juli
   2026.
 
 (Semua yang terjadi sebelum 7 Juli 2026 dilacak lewat task list milik
